@@ -1,0 +1,12 @@
+[package]
+name = "agentlock-bundle"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+agentlock-core = { path = "../agentlock-core" }
+tar.workspace = true
+tempfile.workspace = true
+zstd.workspace = true

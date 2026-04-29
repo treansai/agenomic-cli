@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AgentLock Trace Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["trace_id", "step", "event"],
+  "properties": {
+    "trace_id": { "type": "string", "minLength": 1 },
+    "step": { "type": "integer", "minimum": 1 },
+    "event": {
+      "type": "string",
+      "enum": ["user_message", "assistant_output", "tool_call", "tool_result"]
+    },
+    "role": { "type": "string" },
+    "tool": { "type": "string" },
+    "content": { "type": "string" },
+    "metadata": { "type": "object" }
+  }
+}

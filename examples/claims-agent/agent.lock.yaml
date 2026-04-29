@@ -1,0 +1,10 @@
+schema_version: 1
+agent_id: claims-agent
+behavior_contract_id: claims-agent-contract-v1
+tracked_files:
+  - path: genome.yaml
+    blake3: null
+  - path: behavior.contract.yaml
+    blake3: null
+  - path: prompts/system.md
+    blake3: null

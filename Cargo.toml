@@ -1,0 +1,46 @@
+[package]
+name = "agentlock-workspace"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+members = [
+    "crates/agentlock-core",
+    "crates/agentlock-bundle",
+    "crates/agentlock-diff",
+    "crates/agentlock-replay-local",
+    "crates/agentlock-cli",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.82"
+
+[workspace.dependencies]
+anyhow = "1.0"
+assert_cmd = "2.0"
+blake3 = "1.5"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.5", features = ["derive"] }
+jsonschema = "0.17"
+predicates = "3.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+tar = "0.4"
+tempfile = "3.10"
+thiserror = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+walkdir = "2.5"
+zstd = "0.13"
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true

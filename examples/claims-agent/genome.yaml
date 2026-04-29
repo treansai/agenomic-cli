@@ -1,0 +1,23 @@
+schema_version: 1
+agent:
+  id: claims-agent
+  name: Claims Agent
+  version: 0.1.0
+  description: Reviews a customer claim and explains the status.
+model:
+  provider: local-stub
+  model: deterministic-replay
+  temperature: 0.0
+  max_output_tokens: 256
+tools:
+  - id: claims.lookup
+    kind: read_only
+    description: Look up a claim by claim id.
+  - id: policy.lookup
+    kind: read_only
+    description: Look up the policy coverage for a claim.
+knowledge_snapshots:
+  - id: claims-handbook-2026-04
+    digest: sha256:claims-handbook-2026-04
+    description: Snapshot of the claims decision handbook.
+    uri: local://knowledge/claims-handbook-2026-04

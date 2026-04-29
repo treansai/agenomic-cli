@@ -1,0 +1,25 @@
+[package]
+name = "agentlock-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "agentlock_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agentlock"
+path = "src/main.rs"
+
+[dependencies]
+agentlock-bundle = { path = "../agentlock-bundle" }
+agentlock-core = { path = "../agentlock-core" }
+agentlock-diff = { path = "../agentlock-diff" }
+agentlock-replay-local = { path = "../agentlock-replay-local" }
+anyhow.workspace = true
+chrono.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

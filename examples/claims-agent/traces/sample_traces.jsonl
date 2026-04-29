@@ -1,0 +1,4 @@
+{"trace_id":"claim-approved-001","step":1,"event":"user_message","role":"user","content":"Please review claim CLM-100 and tell me the status."}
+{"trace_id":"claim-approved-001","step":2,"event":"tool_call","tool":"claims.lookup","content":"{\"claim_id\":\"CLM-100\"}"}
+{"trace_id":"claim-approved-001","step":3,"event":"tool_result","tool":"claims.lookup","content":"{\"claim_id\":\"CLM-100\",\"status\":\"approved\",\"reason\":\"covered loss\"}"}
+{"trace_id":"claim-approved-001","step":4,"event":"assistant_output","role":"assistant","content":"Claim CLM-100 is approved because the loss is covered under the policy."}

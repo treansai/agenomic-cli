@@ -1,0 +1,8 @@
+[package]
+name = "agentlock-diff"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agentlock-core = { path = "../agentlock-core" }
