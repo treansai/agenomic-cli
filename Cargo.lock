@@ -143,6 +143,17 @@ dependencies = [
 [[package]]
 name = "agentlock-validate"
 version = "0.1.0"
+dependencies = [
+ "agentlock-bundle",
+ "agentlock-core",
+ "agentlock-fs",
+ "agentlock-spec",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "walkdir",
+]
 
 [[package]]
 name = "ahash"

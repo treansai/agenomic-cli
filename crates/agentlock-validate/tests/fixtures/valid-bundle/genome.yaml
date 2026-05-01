@@ -1,0 +1,19 @@
+spec_version: '0.1'
+agent:
+  id: 'agent://acme/foo'
+  name: 'Foo Agent'
+  domain: 'general'
+  criticality: 'medium'
+runtime:
+  model_provider: 'openai'
+  model_id: 'gpt-4o'
+  model_fingerprint: 'fp_abc123'
+tools:
+  - name: 'web_search'
+    protocol: 'mcp'
+skills:
+  - name: 'classify'
+knowledge:
+  - name: 'docs'
+    snapshot_hash: 'b3:00112233'
+policies: []

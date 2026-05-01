@@ -1,0 +1,7 @@
+spec_version: '0.1'
+contract:
+  id: 'c1'
+  rules:
+    - id: 'r1'
+      type: 'required_output_field'
+      severity: 'high'
