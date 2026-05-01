@@ -1,10 +1,19 @@
-schema_version: 1
-agent_id: claims-agent
-behavior_contract_id: claims-agent-contract-v1
-tracked_files:
-  - path: genome.yaml
-    blake3: null
-  - path: behavior.contract.yaml
-    blake3: null
-  - path: prompts/system.md
-    blake3: null
+spec_version: '0.1'
+agent_id: 'agent://treans/claims-agent'
+model:
+  provider: 'openai'
+  model_id: 'gpt-4o-2024-08-06'
+  fingerprint: 'fp_2024_08_06_a1b2c3'
+  temperature: 0.0
+tools:
+  - name: 'classify_claim'
+    protocol: 'mcp'
+    server: 'mcp://internal/claims'
+    version: '1.2.0'
+  - name: 'compensation_lookup'
+    protocol: 'mcp'
+    server: 'mcp://internal/policy'
+    version: '0.9.4'
+knowledge:
+  - name: 'policy_book'
+    snapshot_hash: 'b3:9f0d1e7a8b2c4d5e6f7a8b9c0d1e2f3a'

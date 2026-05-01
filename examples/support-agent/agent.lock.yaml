@@ -1,0 +1,12 @@
+spec_version: '0.1'
+agent_id: 'agent://acme/support'
+model:
+  provider: 'openai'
+  model_id: 'gpt-4o-mini-2024-07-18'
+  fingerprint: 'fp_2024_07_18_d4e5f6'
+tools:
+  - name: 'kb_search'
+    protocol: 'mcp'
+knowledge:
+  - name: 'kb'
+    snapshot_hash: 'b3:1234567890abcdef0011223344556677'

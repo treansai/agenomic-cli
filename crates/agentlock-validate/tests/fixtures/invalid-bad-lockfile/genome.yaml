@@ -1,0 +1,13 @@
+spec_version: '0.1'
+agent:
+  id: 'agent://acme/foo'
+  name: 'Foo'
+  domain: 'general'
+  criticality: 'low'
+runtime:
+  model_provider: 'openai'
+  model_id: 'gpt-4o'
+tools: []
+skills: []
+knowledge: []
+policies: []

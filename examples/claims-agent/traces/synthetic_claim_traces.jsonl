@@ -1,0 +1,3 @@
+{"trace_id":"t1","agent_id":"agent://treans/claims-agent","input":{"claim":"Rear-ended at low speed; bumper damage."},"output":{"language":"en","claim_class":"auto.collision","compensation_amount":1500,"policy_source":"pol/auto/collision/v3"}}
+{"trace_id":"t2","agent_id":"agent://treans/claims-agent","input":{"claim":"Stolen vehicle reported at parking lot."},"output":{"language":"en","claim_class":"auto.theft","compensation_amount":12000,"policy_source":"pol/auto/theft/v3"}}
+{"trace_id":"t3","agent_id":"agent://treans/claims-agent","input":{"claim":"Burst pipe in basement."},"output":{"language":"en","claim_class":"home.water_damage","compensation_amount":4200,"policy_source":"pol/home/water/v3"}}

@@ -3,10 +3,22 @@ name = "agentlock-bundle"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Build, extract and inspect AgentLock bundle archives"
 
 [dependencies]
-anyhow.workspace = true
-agentlock-core = { path = "../agentlock-core" }
-tar.workspace = true
-tempfile.workspace = true
-zstd.workspace = true
+agentlock-core = { workspace = true }
+agentlock-fs = { workspace = true }
+agentlock-hash = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+tar = { workspace = true }
+zstd = { workspace = true }
+blake3 = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

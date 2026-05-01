@@ -3,8 +3,24 @@ name = "agentlock-replay-local"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Deterministic offline replay for AgentLock bundles"
 
 [dependencies]
-agentlock-core = { path = "../agentlock-core" }
-anyhow.workspace = true
-chrono.workspace = true
+agentlock-core = { workspace = true }
+agentlock-bundle = { workspace = true }
+agentlock-contract = { workspace = true }
+agentlock-hash = { workspace = true }
+agentlock-atep = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+chrono = { workspace = true }
+ciborium = { workspace = true }
+hex = { workspace = true }
+ulid = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

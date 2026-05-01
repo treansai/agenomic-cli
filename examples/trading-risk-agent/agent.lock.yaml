@@ -1,0 +1,12 @@
+spec_version: '0.1'
+agent_id: 'agent://capitalcorp/trading-risk'
+model:
+  provider: 'anthropic'
+  model_id: 'claude-sonnet-4-6'
+  fingerprint: 'fp_csonn_4_6_aabbccdd'
+tools:
+  - name: 'risk_calculator'
+    protocol: 'mcp'
+knowledge:
+  - name: 'risk_book'
+    snapshot_hash: 'b3:0011002200330044005500660077008811'

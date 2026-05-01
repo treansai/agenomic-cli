@@ -1,134 +1,50 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentlock.dev/schemas/v0.1/behavior-contract.schema.json",
   "title": "AgentLock Behavior Contract",
   "type": "object",
-  "additionalProperties": false,
-  "required": ["schema_version", "contract"],
+  "required": ["spec_version", "contract"],
   "properties": {
-    "schema_version": {
-      "type": "integer",
-      "minimum": 1
-    },
+    "spec_version": { "type": "string", "enum": ["0.1"] },
     "contract": {
       "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "checks"],
+      "required": ["id", "rules"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "description": { "type": "string" },
-        "policies": {
+        "rules": {
           "type": "array",
           "items": {
             "type": "object",
-            "additionalProperties": false,
-            "required": ["id", "description"],
+            "required": ["id", "type", "severity"],
             "properties": {
               "id": { "type": "string", "minLength": 1 },
-              "description": { "type": "string", "minLength": 1 }
-            }
-          }
-        },
-        "checks": {
-          "type": "array",
-          "items": {
-            "oneOf": [
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["id", "type"],
-                "properties": {
-                  "id": { "type": "string", "minLength": 1 },
-                  "description": { "type": "string" },
-                  "type": { "const": "require_final_output" }
-                }
+              "type": { "type": "string", "minLength": 1 },
+              "severity": {
+                "type": "string",
+                "enum": ["info", "low", "medium", "high", "critical"]
               },
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["id", "type", "tools"],
-                "properties": {
-                  "id": { "type": "string", "minLength": 1 },
-                  "description": { "type": "string" },
-                  "type": { "const": "required_tool_calls" },
-                  "tools": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": { "type": "string", "minLength": 1 }
-                  },
-                  "min_calls": { "type": "integer", "minimum": 1 }
-                }
+              "description": { "type": "string" },
+              "required_fields": {
+                "type": "array",
+                "items": { "type": "string" }
               },
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["id", "type", "tools"],
-                "properties": {
-                  "id": { "type": "string", "minLength": 1 },
-                  "description": { "type": "string" },
-                  "type": { "const": "forbidden_tool_calls" },
-                  "tools": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": { "type": "string", "minLength": 1 }
-                  }
-                }
+              "forbidden_tools": {
+                "type": "array",
+                "items": { "type": "string" }
               },
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["id", "type", "values"],
-                "properties": {
-                  "id": { "type": "string", "minLength": 1 },
-                  "description": { "type": "string" },
-                  "type": { "const": "required_output_contains_all" },
-                  "values": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": { "type": "string", "minLength": 1 }
-                  }
-                }
+              "sensitive_tools": {
+                "type": "array",
+                "items": { "type": "string" }
               },
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["id", "type", "values"],
-                "properties": {
-                  "id": { "type": "string", "minLength": 1 },
-                  "description": { "type": "string" },
-                  "type": { "const": "forbidden_output_contains_any" },
-                  "values": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": { "type": "string", "minLength": 1 }
-                  }
-                }
-              },
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["id", "type", "max"],
-                "properties": {
-                  "id": { "type": "string", "minLength": 1 },
-                  "description": { "type": "string" },
-                  "type": { "const": "max_tool_calls" },
-                  "max": { "type": "integer", "minimum": 0 }
-                }
-              },
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["id", "type", "max"],
-                "properties": {
-                  "id": { "type": "string", "minLength": 1 },
-                  "description": { "type": "string" },
-                  "type": { "const": "max_total_events" },
-                  "max": { "type": "integer", "minimum": 1 }
-                }
-              }
-            ]
+              "output_format": { "type": "string" }
+            },
+            "additionalProperties": true
           }
         }
-      }
+      },
+      "additionalProperties": true
     }
-  }
+  },
+  "additionalProperties": true
 }

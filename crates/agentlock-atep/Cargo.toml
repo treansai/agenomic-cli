@@ -1,0 +1,28 @@
+[package]
+name = "agentlock-atep"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Agentic Trajectory Event Protocol (ATEP) — binary event format for agent histories"
+
+[dependencies]
+agentlock-core = { workspace = true }
+agentlock-fs = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ciborium = { workspace = true }
+blake3 = { workspace = true }
+ed25519-dalek = { workspace = true }
+hex = { workspace = true }
+ulid = { workspace = true }
+crc32fast = { workspace = true }
+chrono = { workspace = true }
+rand_core = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+proptest = { workspace = true }
+rand = { workspace = true }

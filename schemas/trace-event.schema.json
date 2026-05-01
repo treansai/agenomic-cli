@@ -1,19 +1,29 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "AgentLock Trace Event",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentlock.dev/schemas/v0.1/trace-event.schema.json",
+  "title": "AgentLock Trace Envelope",
   "type": "object",
-  "additionalProperties": false,
-  "required": ["trace_id", "step", "event"],
+  "required": ["trace_id", "agent_id", "input"],
   "properties": {
     "trace_id": { "type": "string", "minLength": 1 },
-    "step": { "type": "integer", "minimum": 1 },
-    "event": {
-      "type": "string",
-      "enum": ["user_message", "assistant_output", "tool_call", "tool_result"]
+    "agent_id": { "type": "string", "minLength": 1 },
+    "input": { "type": "object" },
+    "output": { "type": "object" },
+    "tool_calls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "arguments": { "type": "object" },
+          "result": {},
+          "human_approval_present": { "type": "boolean" }
+        },
+        "additionalProperties": true
+      }
     },
-    "role": { "type": "string" },
-    "tool": { "type": "string" },
-    "content": { "type": "string" },
     "metadata": { "type": "object" }
-  }
+  },
+  "additionalProperties": true
 }

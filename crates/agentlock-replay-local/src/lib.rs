@@ -1,330 +1,380 @@
-use std::collections::BTreeMap;
+//! Deterministic offline replay for AgentLock bundles.
+//!
+//! This crate does NOT call any LLM. It evaluates a stored corpus of
+//! [`TraceEnvelope`]s against a [`BehaviorContract`]'s deterministic checks
+//! and produces a [`ReplayReport`].
 
-use agentlock_core::{
-    BehaviorContract, CheckResult, DeterministicCheck, LoadedBundle, ReplayReport, ReplayRun,
-    ReplaySummary, TraceEvent, TraceEventKind,
+use std::path::{Path, PathBuf};
+
+use agentlock_atep::{AtepStore, StreamId};
+use agentlock_bundle::{inspect_bundle, read_archive_to_pairs};
+use agentlock_contract::{
+    evaluate_contract, parse_contract_yaml, parse_traces_jsonl, BehaviorContract,
+    ContractEvaluation, TraceEnvelope, TraceViolation,
 };
-use anyhow::Result;
-use chrono::Utc;
+use agentlock_core::{io_at, CliError, CliResult, Severity, ValidationIssue};
+use agentlock_hash::{compute_manifest, compute_manifest_from_pairs, BundleManifest};
+use serde::{Deserialize, Serialize};
 
-pub trait ReplayProvider {
-    fn name(&self) -> &'static str;
-    fn replay(
-        &self,
-        bundle: &LoadedBundle,
-        traces: &[TraceEvent],
-        runs: u32,
-    ) -> Result<ReplayReport>;
+/// Replay options.
+#[derive(Debug, Clone)]
+pub struct ReplayOptions {
+    pub bundle: PathBuf,
+    pub traces: Option<PathBuf>,
+    pub atep_store: Option<PathBuf>,
+    pub contract: Option<PathBuf>,
+    pub runs_per_trace: u32,
+    pub fail_on: Severity,
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-pub struct LocalDeterministicProvider;
+/// One violation in the replay report.
+pub type ReplayViolation = TraceViolation;
 
-impl ReplayProvider for LocalDeterministicProvider {
-    fn name(&self) -> &'static str {
-        "local-deterministic"
-    }
-
-    fn replay(
-        &self,
-        bundle: &LoadedBundle,
-        traces: &[TraceEvent],
-        runs: u32,
-    ) -> Result<ReplayReport> {
-        run_local_replay(bundle, traces, runs)
-    }
+/// Aggregate counters for a replay.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ReplayAggregates {
+    pub critical: u32,
+    pub high: u32,
+    pub medium: u32,
+    pub low: u32,
 }
 
-pub fn run_local_replay(
-    bundle: &LoadedBundle,
-    traces: &[TraceEvent],
-    runs: u32,
-) -> Result<ReplayReport> {
-    anyhow::ensure!(runs > 0, "--runs must be greater than zero");
+/// Replay report (matches `replay-report.schema.json`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ReplayReport {
+    pub report_version: String,
+    pub bundle_hash: String,
+    pub bundle_logical_hash: String,
+    pub contract_id: String,
+    pub total_traces: usize,
+    pub total_runs: usize,
+    pub mode: String,
+    pub contract_passed: bool,
+    pub violations: Vec<ReplayViolation>,
+    pub aggregates: ReplayAggregates,
+    pub generated_at: chrono::DateTime<chrono::Utc>,
+    /// Honesty disclaimers and other diagnostic notes.
+    #[serde(default)]
+    pub notes: Vec<ValidationIssue>,
+}
 
-    let grouped = group_traces(traces);
-    let mut report_runs = Vec::new();
+const REPORT_VERSION: &str = "agentlock.replay/v0.1";
 
-    for run_index in 1..=runs {
-        for (trace_id, events) in &grouped {
-            let checks = evaluate_trace(&bundle.behavior_contract, events);
-            let passed = checks.iter().all(|check| check.passed);
-            report_runs.push(ReplayRun {
-                run_index,
-                trace_id: trace_id.clone(),
-                passed,
-                checks,
-            });
-        }
+/// Run a local replay and produce a [`ReplayReport`].
+///
+/// ```no_run
+/// use agentlock_replay_local::{run_local_replay, ReplayOptions};
+/// use agentlock_core::Severity;
+/// let opts = ReplayOptions {
+///     bundle: "./examples/claims-agent".into(),
+///     traces: Some("./examples/claims-agent/traces/synthetic_claim_traces.jsonl".into()),
+///     atep_store: None,
+///     contract: None,
+///     runs_per_trace: 1,
+///     fail_on: Severity::Critical,
+/// };
+/// let _r = run_local_replay(opts).unwrap();
+/// ```
+pub fn run_local_replay(options: ReplayOptions) -> CliResult<ReplayReport> {
+    let manifest = load_manifest(&options.bundle)?;
+    let summary = inspect_bundle(&options.bundle)?;
+
+    // Contract resolution: explicit override > bundle's behavior.contract.yaml
+    let contract_text = match &options.contract {
+        Some(p) => std::fs::read_to_string(p).map_err(|e| io_at(p, e))?,
+        None => read_bundle_contract(&options.bundle)?,
+    };
+    let contract: BehaviorContract = parse_contract_yaml(&contract_text)?;
+
+    // Trace source
+    let mut traces: Vec<TraceEnvelope> = Vec::new();
+    if let Some(traces_path) = &options.traces {
+        let text = std::fs::read_to_string(traces_path).map_err(|e| io_at(traces_path, e))?;
+        traces.extend(parse_traces_jsonl(&text)?);
+    }
+    if let Some(store_path) = &options.atep_store {
+        traces.extend(traces_from_atep(store_path)?);
     }
 
-    let total_checks = report_runs
-        .iter()
-        .map(|run| run.checks.len())
-        .sum::<usize>();
-    let passed_checks = report_runs
-        .iter()
-        .flat_map(|run| run.checks.iter())
-        .filter(|check| check.passed)
-        .count();
-    let failed_checks = total_checks.saturating_sub(passed_checks);
+    let mut notes: Vec<ValidationIssue> = Vec::new();
+    if options.runs_per_trace > 1 {
+        notes.push(ValidationIssue {
+            code: "agentlock::replay::runs_per_trace_no_op".into(),
+            severity: Severity::Medium,
+            message: "Local replay v0.1 only validates stored traces against deterministic contract checks. \
+                runs_per_trace > 1 has no effect without a runtime adapter (provider plugin). \
+                For statistical replay across LLM stochasticity, use AgentLock Cloud or a custom runtime adapter."
+                .into(),
+            path: None,
+            hint: None,
+            doc: None,
+        });
+    }
+
+    let evaluation: ContractEvaluation = evaluate_contract(&contract, &traces)?;
+
+    let mut violations: Vec<ReplayViolation> = Vec::new();
+    for vs in evaluation.violations_by_check.values() {
+        violations.extend(vs.iter().cloned());
+    }
+
+    let aggregates = ReplayAggregates {
+        critical: evaluation.critical_count,
+        high: evaluation.high_count,
+        medium: evaluation.medium_count,
+        low: evaluation.low_count,
+    };
+
+    let max_sev = aggregates_max(&aggregates);
+    let contract_passed = max_sev < options.fail_on
+        || (matches!(options.fail_on, Severity::Critical) && aggregates.critical == 0);
 
     Ok(ReplayReport {
-        report_version: 1,
-        provider: "local-deterministic".to_owned(),
-        bundle_hash: String::new(),
-        contract_id: bundle.behavior_contract.contract.id.clone(),
-        generated_at: Utc::now(),
-        summary: ReplaySummary {
-            runs_requested: runs,
-            traces: grouped.len(),
-            total_checks,
-            passed_checks,
-            failed_checks,
-            contract_passed: failed_checks == 0,
-        },
-        runs: report_runs,
+        report_version: REPORT_VERSION.into(),
+        bundle_hash: summary.logical_bundle_hash,
+        bundle_logical_hash: manifest.root_hash,
+        contract_id: contract.id,
+        total_traces: traces.len(),
+        total_runs: traces.len() * options.runs_per_trace as usize,
+        mode: "deterministic_offline".into(),
+        contract_passed,
+        violations,
+        aggregates,
+        generated_at: chrono::Utc::now(),
+        notes,
     })
 }
 
-fn group_traces(traces: &[TraceEvent]) -> BTreeMap<String, Vec<TraceEvent>> {
-    let mut grouped = BTreeMap::new();
-    for trace in traces {
-        grouped
-            .entry(trace.trace_id.clone())
-            .or_insert_with(Vec::new)
-            .push(trace.clone());
-    }
-
-    for events in grouped.values_mut() {
-        events.sort_by_key(|event| event.step);
-    }
-
-    grouped
-}
-
-fn evaluate_trace(contract: &BehaviorContract, events: &[TraceEvent]) -> Vec<CheckResult> {
-    contract
-        .contract
-        .checks
-        .iter()
-        .map(|check| evaluate_check(check, events))
-        .collect()
-}
-
-fn evaluate_check(check: &DeterministicCheck, events: &[TraceEvent]) -> CheckResult {
-    match check {
-        DeterministicCheck::RequireFinalOutput { id, .. } => {
-            let passed = final_outputs(events).next().is_some();
-            CheckResult {
-                id: id.clone(),
-                passed,
-                message: if passed {
-                    "found at least one assistant output event".to_owned()
-                } else {
-                    "missing assistant output event".to_owned()
-                },
-            }
-        }
-        DeterministicCheck::RequiredToolCalls {
-            id,
-            tools,
-            min_calls,
-            ..
-        } => {
-            let count = tool_calls(events)
-                .filter(|tool| tools.iter().any(|expected| expected == *tool))
-                .count() as u32;
-            let required = min_calls.unwrap_or(1);
-            let passed = count >= required;
-            CheckResult {
-                id: id.clone(),
-                passed,
-                message: if passed {
-                    format!("observed {count} required tool call(s)")
-                } else {
-                    format!("expected at least {required} required tool call(s), observed {count}")
-                },
-            }
-        }
-        DeterministicCheck::ForbiddenToolCalls { id, tools, .. } => {
-            let observed = tool_calls(events)
-                .filter(|tool| tools.iter().any(|forbidden| forbidden == *tool))
-                .cloned()
-                .collect::<Vec<_>>();
-            let passed = observed.is_empty();
-            CheckResult {
-                id: id.clone(),
-                passed,
-                message: if passed {
-                    "no forbidden tool calls observed".to_owned()
-                } else {
-                    format!("forbidden tool calls observed: {}", observed.join(", "))
-                },
-            }
-        }
-        DeterministicCheck::RequiredOutputContainsAll { id, values, .. } => {
-            let haystack = final_outputs(events)
-                .collect::<Vec<_>>()
-                .join("\n")
-                .to_lowercase();
-            let missing = values
-                .iter()
-                .filter(|value| !haystack.contains(&value.to_lowercase()))
-                .cloned()
-                .collect::<Vec<_>>();
-            let passed = missing.is_empty();
-            CheckResult {
-                id: id.clone(),
-                passed,
-                message: if passed {
-                    "assistant output contains all required values".to_owned()
-                } else {
-                    format!("assistant output is missing: {}", missing.join(", "))
-                },
-            }
-        }
-        DeterministicCheck::ForbiddenOutputContainsAny { id, values, .. } => {
-            let haystack = final_outputs(events)
-                .collect::<Vec<_>>()
-                .join("\n")
-                .to_lowercase();
-            let observed = values
-                .iter()
-                .filter(|value| haystack.contains(&value.to_lowercase()))
-                .cloned()
-                .collect::<Vec<_>>();
-            let passed = observed.is_empty();
-            CheckResult {
-                id: id.clone(),
-                passed,
-                message: if passed {
-                    "assistant output avoids all forbidden values".to_owned()
-                } else {
-                    format!(
-                        "assistant output contains forbidden values: {}",
-                        observed.join(", ")
-                    )
-                },
-            }
-        }
-        DeterministicCheck::MaxToolCalls { id, max, .. } => {
-            let count = tool_calls(events).count() as u32;
-            let passed = count <= *max;
-            CheckResult {
-                id: id.clone(),
-                passed,
-                message: if passed {
-                    format!("tool call count {count} is within limit {max}")
-                } else {
-                    format!("tool call count {count} exceeds limit {max}")
-                },
-            }
-        }
-        DeterministicCheck::MaxTotalEvents { id, max, .. } => {
-            let count = events.len() as u32;
-            let passed = count <= *max;
-            CheckResult {
-                id: id.clone(),
-                passed,
-                message: if passed {
-                    format!("event count {count} is within limit {max}")
-                } else {
-                    format!("event count {count} exceeds limit {max}")
-                },
-            }
-        }
+fn aggregates_max(a: &ReplayAggregates) -> Severity {
+    if a.critical > 0 {
+        Severity::Critical
+    } else if a.high > 0 {
+        Severity::High
+    } else if a.medium > 0 {
+        Severity::Medium
+    } else if a.low > 0 {
+        Severity::Low
+    } else {
+        Severity::Info
     }
 }
 
-fn tool_calls(events: &[TraceEvent]) -> impl Iterator<Item = &String> {
-    events.iter().filter_map(|event| match event.event {
-        TraceEventKind::ToolCall => event.tool.as_ref(),
-        _ => None,
-    })
+fn load_manifest(target: &Path) -> CliResult<BundleManifest> {
+    if target.is_dir() {
+        compute_manifest(target)
+    } else {
+        let pairs = read_archive_to_pairs(target)?;
+        compute_manifest_from_pairs(pairs.into_iter().map(|(p, c)| (p, c)))
+    }
 }
 
-fn final_outputs(events: &[TraceEvent]) -> impl Iterator<Item = &str> {
-    events.iter().filter_map(|event| match event.event {
-        TraceEventKind::AssistantOutput => Some(event.content.as_str()),
-        _ => None,
+fn read_bundle_contract(target: &Path) -> CliResult<String> {
+    if target.is_dir() {
+        let p = target.join("behavior.contract.yaml");
+        std::fs::read_to_string(&p).map_err(|e| io_at(&p, e))
+    } else {
+        let pairs = read_archive_to_pairs(target)?;
+        for (p, c) in pairs {
+            if p == "behavior.contract.yaml" {
+                return String::from_utf8(c)
+                    .map_err(|e| CliError::Internal(format!("contract not utf-8: {e}")));
+            }
+        }
+        Err(CliError::Internal(
+            "behavior.contract.yaml not found in archive".into(),
+        ))
+    }
+}
+
+fn traces_from_atep(store_path: &Path) -> CliResult<Vec<TraceEnvelope>> {
+    // Read the manifest first to learn the agent_id.
+    let manifest_path = store_path.join("manifest.json");
+    let manifest_bytes = std::fs::read(&manifest_path).map_err(|e| io_at(&manifest_path, e))?;
+    let manifest: agentlock_atep::AtepManifest = serde_json::from_slice(&manifest_bytes)
+        .map_err(|e| CliError::Internal(format!("atep manifest parse: {e}")))?;
+    let store = AtepStore::open_or_init(store_path, &manifest.agent_id)?;
+    let interactions = store.read_stream(StreamId::Interaction)?;
+
+    let mut out: Vec<TraceEnvelope> = Vec::new();
+    for ev in interactions {
+        // Convert CBOR payload to JSON; skip events that fail conversion.
+        let json = match cbor_to_json(&ev.payload.0) {
+            Ok(j) => j,
+            Err(_) => continue,
+        };
+        let trace_id = json
+            .get("trace_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| ulid::Ulid::from_bytes(ev.header.event_id).to_string());
+        let input = json
+            .get("input")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let output = json.get("output").cloned();
+        let tool_calls: Vec<agentlock_contract::ToolCall> = json
+            .get("tool_calls")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let metadata = json.get("metadata").cloned();
+        out.push(TraceEnvelope {
+            trace_id,
+            agent_id: ev.header.agent_id,
+            input,
+            output,
+            tool_calls,
+            metadata,
+        });
+    }
+    Ok(out)
+}
+
+fn cbor_to_json(v: &ciborium::value::Value) -> CliResult<serde_json::Value> {
+    use ciborium::value::Value as C;
+    Ok(match v {
+        C::Null => serde_json::Value::Null,
+        C::Bool(b) => serde_json::Value::Bool(*b),
+        C::Integer(i) => {
+            let as_i128: i128 = (*i).into();
+            if let Ok(n) = i64::try_from(as_i128) {
+                serde_json::Value::Number(n.into())
+            } else {
+                serde_json::Value::String(as_i128.to_string())
+            }
+        }
+        C::Float(f) => serde_json::Number::from_f64(*f)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        C::Bytes(b) => serde_json::Value::String(hex::encode(b)),
+        C::Text(s) => serde_json::Value::String(s.clone()),
+        C::Array(a) => {
+            let mut out = Vec::with_capacity(a.len());
+            for x in a {
+                out.push(cbor_to_json(x)?);
+            }
+            serde_json::Value::Array(out)
+        }
+        C::Map(m) => {
+            let mut out = serde_json::Map::with_capacity(m.len());
+            for (k, val) in m {
+                let key = match k {
+                    C::Text(s) => s.clone(),
+                    C::Integer(i) => i128::from(*i).to_string(),
+                    _ => continue,
+                };
+                out.insert(key, cbor_to_json(val)?);
+            }
+            serde_json::Value::Object(out)
+        }
+        C::Tag(_, inner) => cbor_to_json(inner)?,
+        _ => serde_json::Value::Null,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
 
-    use agentlock_core::{
-        AgentLock, AgentMetadata, BehaviorContract, ContractDefinition, DeterministicCheck, Genome,
-        LoadedBundle, ModelConfig, TraceEvent, TraceEventKind,
-    };
-    use anyhow::Result;
-
-    use super::run_local_replay;
+    fn write_bundle(dir: &Path) {
+        fs::create_dir_all(dir).unwrap();
+        fs::write(
+            dir.join("genome.yaml"),
+            "spec_version: '0.1'\nagent:\n  id: 'agent://acme/foo'\n  name: 'Foo'\n  domain: 'general'\n  criticality: 'low'\nruntime:\n  model_provider: 'openai'\n  model_id: 'gpt-4o'\ntools: []\nskills: []\nknowledge: []\npolicies: []\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("agent.lock.yaml"),
+            "spec_version: '0.1'\nagent_id: 'agent://acme/foo'\nmodel:\n  provider: 'openai'\n  model_id: 'gpt-4o'\ntools: []\nknowledge: []\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("behavior.contract.yaml"),
+            "spec_version: '0.1'\ncontract:\n  id: 'c1'\n  rules:\n    - id: r1\n      type: required_output_field\n      severity: high\n      required_fields: [language]\n",
+        )
+        .unwrap();
+        fs::create_dir_all(dir.join("prompts")).unwrap();
+        fs::write(dir.join("prompts/system.md"), "x").unwrap();
+    }
 
     #[test]
-    fn replay_evaluates_contract_checks() -> Result<()> {
-        let bundle = LoadedBundle {
-            root: std::path::PathBuf::from("."),
-            genome: Genome {
-                schema_version: 1,
-                agent: AgentMetadata {
-                    id: "agent".to_owned(),
-                    name: "Agent".to_owned(),
-                    version: "0.1.0".to_owned(),
-                    description: None,
-                },
-                model: ModelConfig {
-                    provider: "local".to_owned(),
-                    model: "stub".to_owned(),
-                    temperature: Some(0.0),
-                    max_input_tokens: None,
-                    max_output_tokens: Some(32),
-                },
-                tools: Vec::new(),
-                knowledge_snapshots: Vec::new(),
-            },
-            agent_lock: AgentLock {
-                schema_version: 1,
-                agent_id: "agent".to_owned(),
-                behavior_contract_id: "contract".to_owned(),
-                tracked_files: Vec::new(),
-            },
-            behavior_contract: BehaviorContract {
-                schema_version: 1,
-                contract: ContractDefinition {
-                    id: "contract".to_owned(),
-                    description: None,
-                    policies: Vec::new(),
-                    checks: vec![
-                        DeterministicCheck::RequireFinalOutput {
-                            id: "answer".to_owned(),
-                            description: None,
-                        },
-                        DeterministicCheck::RequiredOutputContainsAll {
-                            id: "contains".to_owned(),
-                            description: None,
-                            values: vec!["approved".to_owned()],
-                        },
-                    ],
-                },
-            },
-            prompts: BTreeMap::new(),
-        };
-        let traces = vec![TraceEvent {
-            trace_id: "trace-1".to_owned(),
-            step: 1,
-            event: TraceEventKind::AssistantOutput,
-            role: Some("assistant".to_owned()),
-            tool: None,
-            content: "approved".to_owned(),
-            metadata: None,
-        }];
+    fn passing_replay() {
+        let d = tempdir().unwrap();
+        write_bundle(d.path());
 
-        let report = run_local_replay(&bundle, &traces, 2)?;
-        assert_eq!(report.summary.runs_requested, 2);
-        assert!(report.summary.contract_passed);
-        Ok(())
+        let traces = d.path().join("traces.jsonl");
+        fs::write(
+            &traces,
+            r#"{"trace_id":"t1","agent_id":"agent://acme/foo","input":{},"output":{"language":"en"}}"#,
+        )
+        .unwrap();
+
+        let r = run_local_replay(ReplayOptions {
+            bundle: d.path().to_path_buf(),
+            traces: Some(traces),
+            atep_store: None,
+            contract: None,
+            runs_per_trace: 1,
+            fail_on: Severity::Critical,
+        })
+        .unwrap();
+        assert!(r.contract_passed);
+        assert_eq!(r.aggregates.high, 0);
+    }
+
+    #[test]
+    fn failing_replay() {
+        let d = tempdir().unwrap();
+        write_bundle(d.path());
+
+        let traces = d.path().join("traces.jsonl");
+        fs::write(
+            &traces,
+            r#"{"trace_id":"t1","agent_id":"agent://acme/foo","input":{},"output":{}}"#,
+        )
+        .unwrap();
+
+        let r = run_local_replay(ReplayOptions {
+            bundle: d.path().to_path_buf(),
+            traces: Some(traces),
+            atep_store: None,
+            contract: None,
+            runs_per_trace: 1,
+            fail_on: Severity::High,
+        })
+        .unwrap();
+        assert!(!r.contract_passed);
+        assert_eq!(r.aggregates.high, 1);
+    }
+
+    #[test]
+    fn runs_per_trace_emits_disclaimer() {
+        let d = tempdir().unwrap();
+        write_bundle(d.path());
+        let traces = d.path().join("traces.jsonl");
+        fs::write(
+            &traces,
+            r#"{"trace_id":"t1","agent_id":"agent://acme/foo","input":{},"output":{"language":"en"}}"#,
+        )
+        .unwrap();
+        let r = run_local_replay(ReplayOptions {
+            bundle: d.path().to_path_buf(),
+            traces: Some(traces),
+            atep_store: None,
+            contract: None,
+            runs_per_trace: 5,
+            fail_on: Severity::Critical,
+        })
+        .unwrap();
+        assert!(r
+            .notes
+            .iter()
+            .any(|n| n.code == "agentlock::replay::runs_per_trace_no_op"));
     }
 }

@@ -1,1 +1,13 @@
 /target
+**/*.rs.bk
+.DS_Store
+
+# AgentLock-specific
+.agentlock/
+dist/
+*.bundle.tar.zst
+*.atep
+
+# Test artifacts
+.pending-snap*
+*.profraw
