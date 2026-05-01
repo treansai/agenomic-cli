@@ -93,7 +93,12 @@ pub fn diff_bundles(
     diff_policies(&b_genome, &c_genome, &mut changes);
     diff_memory(&b_genome, &c_genome, &mut changes);
     diff_contract_rules(&b_contract, &c_contract, &mut changes);
-    diff_prompts(&b_pairs, &c_pairs, options.ignore_prompts_whitespace, &mut changes);
+    diff_prompts(
+        &b_pairs,
+        &c_pairs,
+        options.ignore_prompts_whitespace,
+        &mut changes,
+    );
 
     if !options.include.is_empty() {
         changes.retain(|c| options.include.contains(&c.category));
@@ -578,11 +583,9 @@ mod tests {
         write_bundle(c.path(), "fp2", &["a"]);
         let r = diff_bundles(b.path(), c.path(), &DiffOptions::default()).unwrap();
         assert!(r.replay_required);
-        assert!(r
-            .changes
-            .iter()
-            .any(|c| c.change_type == "model_fingerprint_changed"
-                && c.severity == Severity::Medium));
+        assert!(r.changes.iter().any(
+            |c| c.change_type == "model_fingerprint_changed" && c.severity == Severity::Medium
+        ));
     }
 
     #[test]

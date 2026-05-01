@@ -75,9 +75,11 @@ pub fn build_bundle(options: BuildBundleOptions) -> CliResult<BundleBuildResult>
     // for tar packing.
     let mut pairs: Vec<(String, Vec<u8>)> = Vec::with_capacity(entries.len());
     for e in &entries {
-        let mut f = std::fs::File::open(&e.absolute_path).map_err(|err| io_at(&e.absolute_path, err))?;
+        let mut f =
+            std::fs::File::open(&e.absolute_path).map_err(|err| io_at(&e.absolute_path, err))?;
         let mut buf = Vec::with_capacity(e.size as usize);
-        f.read_to_end(&mut buf).map_err(|err| io_at(&e.absolute_path, err))?;
+        f.read_to_end(&mut buf)
+            .map_err(|err| io_at(&e.absolute_path, err))?;
         pairs.push((e.relative_path.clone(), buf));
     }
 
@@ -90,9 +92,9 @@ pub fn build_bundle(options: BuildBundleOptions) -> CliResult<BundleBuildResult>
         tar.mode(tar::HeaderMode::Deterministic);
         for (path, content) in &pairs {
             let mut header = tar::Header::new_gnu();
-            header.set_path(path).map_err(|e| {
-                CliError::Internal(format!("tar set_path {path}: {e}"))
-            })?;
+            header
+                .set_path(path)
+                .map_err(|e| CliError::Internal(format!("tar set_path {path}: {e}")))?;
             header.set_size(content.len() as u64);
             header.set_mode(0o644);
             header.set_mtime(0);

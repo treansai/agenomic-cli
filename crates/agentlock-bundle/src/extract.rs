@@ -18,8 +18,7 @@ pub struct ExtractOptions {
 /// Path traversal in archive entries is rejected.
 pub fn extract_bundle(options: ExtractOptions) -> CliResult<()> {
     let pairs = read_archive_to_pairs(&options.archive)?;
-    std::fs::create_dir_all(&options.destination)
-        .map_err(|e| io_at(&options.destination, e))?;
+    std::fs::create_dir_all(&options.destination).map_err(|e| io_at(&options.destination, e))?;
     for (rel, content) in pairs {
         if rel.split('/').any(|s| s == "..") {
             return Err(CliError::PathTraversal { path: rel });

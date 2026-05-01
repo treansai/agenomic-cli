@@ -9,23 +9,12 @@ use walkdir::WalkDir;
 pub const DEFAULT_MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
 
 /// File-name patterns that signal a credential or key.
-const SECRET_NAMES: &[&str] = &[
-    ".env",
-    "id_rsa",
-    "id_dsa",
-    "id_ecdsa",
-    "id_ed25519",
-];
+const SECRET_NAMES: &[&str] = &[".env", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519"];
 
 const SECRET_EXTENSIONS: &[&str] = &["pem", "key", "p12", "pfx"];
 
-const SECRET_FIELD_PREFIXES: &[&str] = &[
-    "api_key:",
-    "secret:",
-    "password:",
-    "token:",
-    "private_key:",
-];
+const SECRET_FIELD_PREFIXES: &[&str] =
+    &["api_key:", "secret:", "password:", "token:", "private_key:"];
 
 /// Run a security scan over `dir` and return issues found.
 pub fn security_scan(dir: &Path) -> CliResult<Vec<ValidationIssue>> {
@@ -66,7 +55,9 @@ pub fn security_scan(dir: &Path) -> CliResult<Vec<ValidationIssue>> {
                 severity: Severity::High,
                 message: format!("symlink found: {rel}"),
                 path: Some(rel),
-                hint: Some("symlinks are excluded by default; remove or use --allow-symlinks".into()),
+                hint: Some(
+                    "symlinks are excluded by default; remove or use --allow-symlinks".into(),
+                ),
                 doc: None,
             });
             continue;
@@ -128,7 +119,8 @@ pub fn security_scan(dir: &Path) -> CliResult<Vec<ValidationIssue>> {
                             if let Some(rest) = l.strip_prefix(prefix) {
                                 let val = rest.trim();
                                 if !val.is_empty()
-                                    && !val.starts_with('"')
+                                    && !val
+                                        .starts_with('"')
                                         .then(|| val.trim_matches('"'))
                                         .map(|s| s.is_empty())
                                         .unwrap_or(false)

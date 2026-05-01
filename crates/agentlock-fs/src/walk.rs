@@ -139,9 +139,9 @@ pub fn walk_bundle(root: &Path, options: &WalkOptions) -> CliResult<Vec<WalkEntr
             });
         }
 
-        let rel = path.strip_prefix(root).map_err(|_| CliError::Internal(
-            format!("strip_prefix failed for {}", path.display()),
-        ))?;
+        let rel = path.strip_prefix(root).map_err(|_| {
+            CliError::Internal(format!("strip_prefix failed for {}", path.display()))
+        })?;
 
         let rel_str = posix_relative(rel)?;
 
@@ -284,7 +284,10 @@ mod tests {
 
     #[test]
     fn rejects_missing_dir() {
-        let r = walk_bundle(Path::new("/nonexistent/agentlock/test"), &WalkOptions::default());
+        let r = walk_bundle(
+            Path::new("/nonexistent/agentlock/test"),
+            &WalkOptions::default(),
+        );
         assert!(r.is_err());
     }
 
@@ -301,7 +304,10 @@ mod tests {
 
         let entries = walk_bundle(d.path(), &WalkOptions::default()).unwrap();
         let names: Vec<_> = entries.iter().map(|e| e.relative_path.clone()).collect();
-        assert_eq!(names, vec!["a.txt", "b.txt", "c.txt", "z/m.txt", "z/y/x.txt"]);
+        assert_eq!(
+            names,
+            vec!["a.txt", "b.txt", "c.txt", "z/m.txt", "z/y/x.txt"]
+        );
     }
 
     #[test]

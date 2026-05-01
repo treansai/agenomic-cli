@@ -29,6 +29,8 @@ fn golden_root_is_stable() {
         eprintln!("captured golden root: {}", m.root_hash);
         return;
     }
-    assert_eq!(m.root_hash, GOLDEN_ROOT,
-        "BREAKING CHANGE to bundle hashing detected. Bump MANIFEST_VERSION.");
+    assert_eq!(
+        m.root_hash, GOLDEN_ROOT,
+        "BREAKING CHANGE to bundle hashing detected. Bump MANIFEST_VERSION."
+    );
 }

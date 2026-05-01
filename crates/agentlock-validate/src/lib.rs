@@ -179,7 +179,10 @@ pub fn validate_bundle(dir: &Path, level: ValidationLevel) -> CliResult<Validati
             }
             if let Some(arr) = v.get("knowledge").and_then(|x| x.as_sequence()) {
                 for k in arr {
-                    let snap = k.get("snapshot_hash").and_then(|x| x.as_str()).unwrap_or("");
+                    let snap = k
+                        .get("snapshot_hash")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("");
                     let name = k.get("name").and_then(|x| x.as_str()).unwrap_or("?");
                     if snap.is_empty() {
                         report.push_error(ValidationIssue {
@@ -209,11 +212,7 @@ pub fn validate_bundle(dir: &Path, level: ValidationLevel) -> CliResult<Validati
 
     if !report.errors.is_empty() {
         report.valid = false;
-    } else if report
-        .warnings
-        .iter()
-        .any(|i| i.severity >= Severity::High)
-    {
+    } else if report.warnings.iter().any(|i| i.severity >= Severity::High) {
         report.valid = false;
     }
 

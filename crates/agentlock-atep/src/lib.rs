@@ -27,6 +27,5 @@ pub use segment::{
     SEGMENT_MAGIC_HEAD, SEGMENT_MAGIC_TAIL, SEGMENT_VERSION,
 };
 pub use store::{
-    AgentState, AtepManifest, AtepStore, SegmentRecord, VerificationReport,
-    ATEP_MANIFEST_VERSION,
+    AgentState, AtepManifest, AtepStore, SegmentRecord, VerificationReport, ATEP_MANIFEST_VERSION,
 };

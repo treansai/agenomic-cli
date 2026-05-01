@@ -140,17 +140,13 @@ mod tests {
 
     #[test]
     fn path_traversal_maps_to_4() {
-        let e = CliError::PathTraversal {
-            path: "x".into(),
-        };
+        let e = CliError::PathTraversal { path: "x".into() };
         assert_eq!(e.exit_code().as_i32(), 4);
     }
 
     #[test]
     fn atep_integrity_maps_to_10() {
-        let e = CliError::AtepIntegrity {
-            reason: "x".into(),
-        };
+        let e = CliError::AtepIntegrity { reason: "x".into() };
         assert_eq!(e.exit_code().as_i32(), 10);
     }
 }

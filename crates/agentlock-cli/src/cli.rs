@@ -50,7 +50,13 @@ pub struct Cli {
     #[arg(global = true, long, env = "AGENTLOCK_NO_COLOR")]
     pub no_color: bool,
 
-    #[arg(global = true, long = "format", value_enum, env = "AGENTLOCK_FORMAT", default_value = "human")]
+    #[arg(
+        global = true,
+        long = "format",
+        value_enum,
+        env = "AGENTLOCK_FORMAT",
+        default_value = "human"
+    )]
     pub format: OutputFormat,
 
     #[command(subcommand)]
@@ -88,9 +94,7 @@ pub enum Commands {
     /// Run system diagnostics.
     Doctor,
     /// Print shell completion script.
-    Completions {
-        shell: clap_complete::Shell,
-    },
+    Completions { shell: clap_complete::Shell },
 }
 
 #[derive(Debug, Parser)]

@@ -125,8 +125,7 @@ impl CloudClient {
                     if status == reqwest::StatusCode::UNAUTHORIZED {
                         return Err(CliError::AuthFailed);
                     }
-                    if status == reqwest::StatusCode::TOO_MANY_REQUESTS
-                        || status.is_server_error()
+                    if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
                     {
                         if attempt < backoffs.len() {
                             let retry_after = resp
@@ -181,8 +180,7 @@ impl CloudClient {
         archive: &Path,
     ) -> CliResult<UploadBundleResponse> {
         let url = self.url(&format!("/v1/agents/{agent_id}/bundles"));
-        let bytes = std::fs::read(archive)
-            .map_err(|e| agentlock_core::io_at(archive, e))?;
+        let bytes = std::fs::read(archive).map_err(|e| agentlock_core::io_at(archive, e))?;
         let idemp = Self::idempotency_key();
         let resp = self
             .send_with_retry(|| {
@@ -215,8 +213,7 @@ impl CloudClient {
         segment: &Path,
     ) -> CliResult<UploadAtepResponse> {
         let url = self.url(&format!("/v1/agents/{agent_id}/atep"));
-        let bytes = std::fs::read(segment)
-            .map_err(|e| agentlock_core::io_at(segment, e))?;
+        let bytes = std::fs::read(segment).map_err(|e| agentlock_core::io_at(segment, e))?;
         let idemp = Self::idempotency_key();
         let resp = self
             .send_with_retry(|| {
@@ -421,12 +418,10 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/v1/releases"))
             .and(header("authorization", "Bearer s"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                    "release_id": "r1",
-                    "status": "created"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "release_id": "r1",
+                "status": "created"
+            })))
             .expect(1)
             .mount(&server)
             .await;

@@ -9,8 +9,7 @@ fn arb_segment() -> impl Strategy<Value = String> {
 }
 
 fn arb_path() -> impl Strategy<Value = String> {
-    proptest::collection::vec(arb_segment(), 1..4)
-        .prop_map(|segs| segs.join("/"))
+    proptest::collection::vec(arb_segment(), 1..4).prop_map(|segs| segs.join("/"))
 }
 
 fn arb_content() -> impl Strategy<Value = Vec<u8>> {

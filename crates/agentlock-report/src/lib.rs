@@ -418,12 +418,7 @@ impl Renderable for VerificationResult {
 
     fn render_markdown(&self, w: &mut dyn Write) -> CliResult<()> {
         writeln!(w, "# Verification result").map_err(io)?;
-        writeln!(
-            w,
-            "- valid: **{}**",
-            if self.valid { "yes" } else { "no" }
-        )
-        .map_err(io)?;
+        writeln!(w, "- valid: **{}**", if self.valid { "yes" } else { "no" }).map_err(io)?;
         for c in &self.checks {
             writeln!(
                 w,

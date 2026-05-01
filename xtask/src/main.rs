@@ -27,12 +27,7 @@ fn workspace_root() -> PathBuf {
 fn dist() -> Result<()> {
     let root = workspace_root();
     let status = Command::new(env!("CARGO"))
-        .args([
-            "build",
-            "-p",
-            "agentlock-cli",
-            "--release",
-        ])
+        .args(["build", "-p", "agentlock-cli", "--release"])
         .current_dir(&root)
         .status()
         .context("cargo build")?;

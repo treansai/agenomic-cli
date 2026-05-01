@@ -132,9 +132,8 @@ pub fn create_attestation(options: AttestationOptions) -> CliResult<ReleaseAttes
         (Some(store_path), _) => {
             let manifest_bytes = std::fs::read(store_path.join("manifest.json"))
                 .map_err(|e| io_at(&store_path.join("manifest.json"), e))?;
-            let manifest: agentlock_atep::AtepManifest =
-                serde_json::from_slice(&manifest_bytes)
-                    .map_err(|e| CliError::Internal(format!("atep manifest parse: {e}")))?;
+            let manifest: agentlock_atep::AtepManifest = serde_json::from_slice(&manifest_bytes)
+                .map_err(|e| CliError::Internal(format!("atep manifest parse: {e}")))?;
             let store = AtepStore::open_or_init(store_path, &manifest.agent_id)?;
             Some(hex::encode(store.store_merkle_root()))
         }
@@ -234,7 +233,10 @@ pub fn verify_attestation(
     checks.push(VerificationCheck {
         name: "logical_hash_format".into(),
         passed: att.bundle_logical_hash.len() == 64
-            && att.bundle_logical_hash.chars().all(|c| c.is_ascii_hexdigit()),
+            && att
+                .bundle_logical_hash
+                .chars()
+                .all(|c| c.is_ascii_hexdigit()),
         detail: None,
     });
 
@@ -282,7 +284,11 @@ pub fn verify_attestation(
         checks.push(VerificationCheck {
             name: "signature_valid".into(),
             passed: ok,
-            detail: if ok { None } else { Some("ed25519 verify failed".into()) },
+            detail: if ok {
+                None
+            } else {
+                Some("ed25519 verify failed".into())
+            },
         });
     } else {
         checks.push(VerificationCheck {
@@ -332,9 +338,9 @@ fn finalize(checks: Vec<VerificationCheck>) -> CliResult<VerificationResult> {
     // An attestation is "valid" if every non-informational check passed.
     // The "signature_present=false" check for unsigned attestations is the
     // only allowed informational failure.
-    let valid = checks.iter().all(|c| {
-        c.passed || c.name == "signature_present"
-    });
+    let valid = checks
+        .iter()
+        .all(|c| c.passed || c.name == "signature_present");
     Ok(VerificationResult { valid, checks })
 }
 
@@ -415,7 +421,10 @@ mod tests {
         .unwrap();
         let r = verify_attestation(&out, None).unwrap();
         assert!(r.valid);
-        assert!(r.checks.iter().any(|c| c.name == "signature_valid" && c.passed));
+        assert!(r
+            .checks
+            .iter()
+            .any(|c| c.name == "signature_valid" && c.passed));
     }
 
     #[test]

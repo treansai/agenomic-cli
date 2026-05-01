@@ -132,14 +132,12 @@ pub fn load(profile: Option<&str>) -> CliResult<EffectiveConfig> {
     let endpoint = std::env::var("AGENTLOCK_ENDPOINT")
         .ok()
         .or(file_profile.endpoint.clone());
-    let api_key_str = std::env::var("AGENTLOCK_API_KEY")
-        .ok()
-        .or_else(|| {
-            creds
-                .credentials
-                .get(&chosen_profile_name)
-                .map(|c| c.api_key.clone())
-        });
+    let api_key_str = std::env::var("AGENTLOCK_API_KEY").ok().or_else(|| {
+        creds
+            .credentials
+            .get(&chosen_profile_name)
+            .map(|c| c.api_key.clone())
+    });
 
     let mode = match (&file_profile.mode, &api_key_str, &endpoint) {
         (ProfileMode::Cloud, _, _) => ProfileMode::Cloud,

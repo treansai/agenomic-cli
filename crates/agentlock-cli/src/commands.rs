@@ -9,9 +9,7 @@ use agentlock_attestation::{
 use agentlock_bundle::{
     build_bundle, extract_bundle, inspect_bundle, BuildBundleOptions, ExtractOptions,
 };
-use agentlock_core::{
-    io_at, CliError, CliResult, ExitCode, Severity, ValidationLevel,
-};
+use agentlock_core::{io_at, CliError, CliResult, ExitCode, Severity, ValidationLevel};
 use agentlock_diff::{diff_bundles, DiffOptions};
 use agentlock_replay_local::{run_local_replay, ReplayOptions};
 use agentlock_validate::{validate_archive, validate_bundle};
@@ -73,7 +71,11 @@ fn write_if_missing(path: &Path, content: &[u8]) -> CliResult<()> {
     agentlock_fs::write_atomic(path, content)
 }
 
-pub fn cmd_validate(args: &ValidateArgs, format: OutputFormat, no_color: bool) -> CliResult<ExitCode> {
+pub fn cmd_validate(
+    args: &ValidateArgs,
+    format: OutputFormat,
+    no_color: bool,
+) -> CliResult<ExitCode> {
     let level = match args.level {
         LevelArg::Basic => ValidationLevel::Basic,
         LevelArg::Strict => ValidationLevel::Strict,
@@ -141,7 +143,11 @@ pub fn cmd_build(args: &BuildArgs, format: OutputFormat, no_color: bool) -> CliR
     Ok(ExitCode::Success)
 }
 
-pub fn cmd_inspect(args: &InspectArgs, format: OutputFormat, no_color: bool) -> CliResult<ExitCode> {
+pub fn cmd_inspect(
+    args: &InspectArgs,
+    format: OutputFormat,
+    no_color: bool,
+) -> CliResult<ExitCode> {
     let s = inspect_bundle(&args.target)?;
     render(&s, format, no_color)?;
     Ok(ExitCode::Success)
@@ -190,8 +196,8 @@ pub fn cmd_replay(args: &ReplayArgs, format: OutputFormat, no_color: bool) -> Cl
     };
     let report = run_local_replay(opts)?;
     if let Some(out) = &args.output {
-        let bytes = serde_json::to_vec_pretty(&report)
-            .map_err(|e| CliError::Internal(format!("{e}")))?;
+        let bytes =
+            serde_json::to_vec_pretty(&report).map_err(|e| CliError::Internal(format!("{e}")))?;
         agentlock_fs::write_atomic(out, &bytes)?;
     }
     render(&report, format, no_color)?;
@@ -207,10 +213,9 @@ pub fn cmd_attest(args: &AttestArgs, format: OutputFormat, no_color: bool) -> Cl
         println!("generated key {id} at {}", path.display());
         return Ok(ExitCode::Success);
     }
-    let sign_with = args
-        .sign_with
-        .as_ref()
-        .map(|p| SigningMode::LocalEd25519 { key_path: p.clone() });
+    let sign_with = args.sign_with.as_ref().map(|p| SigningMode::LocalEd25519 {
+        key_path: p.clone(),
+    });
     let opts = AttestationOptions {
         bundle: args.bundle.clone(),
         replay_report: args.replay_report.clone(),
@@ -259,7 +264,8 @@ pub fn cmd_atep(args: &AtepCommand) -> CliResult<ExitCode> {
             signing_key,
         } => {
             let manifest_path = path.join("manifest.json");
-            let manifest_bytes = std::fs::read(&manifest_path).map_err(|e| io_at(&manifest_path, e))?;
+            let manifest_bytes =
+                std::fs::read(&manifest_path).map_err(|e| io_at(&manifest_path, e))?;
             let manifest: agentlock_atep::AtepManifest = serde_json::from_slice(&manifest_bytes)
                 .map_err(|e| CliError::Internal(format!("{e}")))?;
             let mut store = AtepStore::open_or_init(path, &manifest.agent_id)?;
@@ -280,11 +286,7 @@ pub fn cmd_atep(args: &AtepCommand) -> CliResult<ExitCode> {
                 agent_id: manifest.agent_id.clone(),
                 stream,
                 stream_seq: 0,
-                clock: Hlc::new(
-                    chrono::Utc::now().timestamp_millis() as u64,
-                    0,
-                    1,
-                ),
+                clock: Hlc::new(chrono::Utc::now().timestamp_millis() as u64, 0, 1),
                 parents: vec![],
                 event_type: event_type.clone(),
                 payload_schema_uri: format!("atep://schemas/v1/{event_type}"),
@@ -292,25 +294,31 @@ pub fn cmd_atep(args: &AtepCommand) -> CliResult<ExitCode> {
             let payload = EventPayload(payload_value);
             let event = AtepEvent::seal(header, payload, &sk, short_key_id(&sk.verifying_key()))?;
             store.append_event(event)?;
-            println!("appended event to {} stream {}", path.display(), stream.label());
+            println!(
+                "appended event to {} stream {}",
+                path.display(),
+                stream.label()
+            );
             Ok(ExitCode::Success)
         }
         AtepSub::Verify { path, public_key } => {
             let manifest_path = path.join("manifest.json");
-            let manifest_bytes = std::fs::read(&manifest_path).map_err(|e| io_at(&manifest_path, e))?;
+            let manifest_bytes =
+                std::fs::read(&manifest_path).map_err(|e| io_at(&manifest_path, e))?;
             let manifest: agentlock_atep::AtepManifest = serde_json::from_slice(&manifest_bytes)
                 .map_err(|e| CliError::Internal(format!("{e}")))?;
             let store = AtepStore::open_or_init(path, &manifest.agent_id)?;
             let vk = load_verifying_key(public_key)?;
             let r = store.verify_all(&vk)?;
-            let s = serde_json::to_string_pretty(&r)
-                .map_err(|e| CliError::Internal(format!("{e}")))?;
+            let s =
+                serde_json::to_string_pretty(&r).map_err(|e| CliError::Internal(format!("{e}")))?;
             println!("{s}");
             Ok(ExitCode::Success)
         }
         AtepSub::Inspect { path } => {
             let manifest_path = path.join("manifest.json");
-            let manifest_bytes = std::fs::read(&manifest_path).map_err(|e| io_at(&manifest_path, e))?;
+            let manifest_bytes =
+                std::fs::read(&manifest_path).map_err(|e| io_at(&manifest_path, e))?;
             let manifest: agentlock_atep::AtepManifest = serde_json::from_slice(&manifest_bytes)
                 .map_err(|e| CliError::Internal(format!("{e}")))?;
             let s = serde_json::to_string_pretty(&manifest)
@@ -320,7 +328,8 @@ pub fn cmd_atep(args: &AtepCommand) -> CliResult<ExitCode> {
         }
         AtepSub::ReplayState { path, at, output } => {
             let manifest_path = path.join("manifest.json");
-            let manifest_bytes = std::fs::read(&manifest_path).map_err(|e| io_at(&manifest_path, e))?;
+            let manifest_bytes =
+                std::fs::read(&manifest_path).map_err(|e| io_at(&manifest_path, e))?;
             let manifest: agentlock_atep::AtepManifest = serde_json::from_slice(&manifest_bytes)
                 .map_err(|e| CliError::Internal(format!("{e}")))?;
             let store = AtepStore::open_or_init(path, &manifest.agent_id)?;
@@ -393,8 +402,8 @@ pub fn cmd_doctor() -> CliResult<ExitCode> {
     let report = tokio::runtime::Runtime::new()
         .map_err(|e| CliError::Internal(format!("runtime: {e}")))?
         .block_on(agentlock_diagnostics::run_diagnostics(&cfg))?;
-    let s = serde_json::to_string_pretty(&report)
-        .map_err(|e| CliError::Internal(format!("{e}")))?;
+    let s =
+        serde_json::to_string_pretty(&report).map_err(|e| CliError::Internal(format!("{e}")))?;
     println!("{s}");
     if !report.overall_ok {
         return Ok(ExitCode::InternalError);
@@ -483,7 +492,9 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
         CloudSub::Whoami => {
             let cfg = agentlock_config::load(None)?;
             let endpoint = cfg.profile.endpoint.clone().ok_or_else(|| {
-                CliError::Internal("no endpoint configured; run `agentlock cloud login` first".into())
+                CliError::Internal(
+                    "no endpoint configured; run `agentlock cloud login` first".into(),
+                )
             })?;
             let api_key = cfg.profile.api_key.clone().ok_or(CliError::AuthFailed)?;
             let client = agentlock_cloud_client::CloudClient::new(endpoint, api_key);

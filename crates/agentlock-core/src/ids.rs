@@ -38,7 +38,10 @@ macro_rules! string_id {
     };
 }
 
-string_id!(AgentId, "Canonical agent identifier (e.g. `agent://org/name`).");
+string_id!(
+    AgentId,
+    "Canonical agent identifier (e.g. `agent://org/name`)."
+);
 string_id!(BundleHash, "Hex-encoded bundle hash (BLAKE3 root).");
 string_id!(ReleaseId, "Cloud release identifier.");
 string_id!(TraceId, "Identifier of a single trace.");

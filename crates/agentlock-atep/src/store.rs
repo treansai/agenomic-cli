@@ -97,9 +97,12 @@ impl AtepStore {
                 streams: BTreeMap::new(),
                 total_events: 0,
             };
-            agentlock_fs::write_atomic(&manifest_path, serde_json::to_vec_pretty(&m)
-                .map_err(|e| CliError::Internal(format!("manifest serialize: {e}")))?
-                .as_slice())?;
+            agentlock_fs::write_atomic(
+                &manifest_path,
+                serde_json::to_vec_pretty(&m)
+                    .map_err(|e| CliError::Internal(format!("manifest serialize: {e}")))?
+                    .as_slice(),
+            )?;
             m
         };
         Ok(Self {
@@ -168,14 +171,18 @@ impl AtepStore {
             writer.append(ev)?;
         }
         let summary = writer.finalize()?;
-        self.manifest.streams.entry(label.clone()).or_default().push(SegmentRecord {
-            file: path
-                .file_name()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_default(),
-            events: summary.event_count,
-            merkle_root: hex::encode(summary.merkle_root),
-        });
+        self.manifest
+            .streams
+            .entry(label.clone())
+            .or_default()
+            .push(SegmentRecord {
+                file: path
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+                events: summary.event_count,
+                merkle_root: hex::encode(summary.merkle_root),
+            });
         self.manifest.total_events += events.len() as u64;
         self.persist_manifest()
     }
@@ -214,10 +221,7 @@ impl AtepStore {
     }
 
     /// Verify every event's signature and every segment's merkle root.
-    pub fn verify_all(
-        &self,
-        vk: &ed25519_dalek::VerifyingKey,
-    ) -> CliResult<VerificationReport> {
+    pub fn verify_all(&self, vk: &ed25519_dalek::VerifyingKey) -> CliResult<VerificationReport> {
         let mut rep = VerificationReport {
             valid: true,
             ..Default::default()
@@ -390,9 +394,15 @@ mod tests {
         let agent = "agent://acme/foo";
 
         let mut store = AtepStore::open_or_init(d.path(), agent).unwrap();
-        store.append_event(mk(agent, &sk, StreamId::Capability, 1, 100)).unwrap();
-        store.append_event(mk(agent, &sk, StreamId::Capability, 2, 200)).unwrap();
-        store.append_event(mk(agent, &sk, StreamId::Identity, 1, 50)).unwrap();
+        store
+            .append_event(mk(agent, &sk, StreamId::Capability, 1, 100))
+            .unwrap();
+        store
+            .append_event(mk(agent, &sk, StreamId::Capability, 2, 200))
+            .unwrap();
+        store
+            .append_event(mk(agent, &sk, StreamId::Identity, 1, 50))
+            .unwrap();
 
         // Reopen
         let store2 = AtepStore::open_or_init(d.path(), agent).unwrap();
@@ -409,8 +419,12 @@ mod tests {
         let sk = SigningKey::generate(&mut OsRng);
         let agent = "agent://acme/foo";
         let mut store = AtepStore::open_or_init(d.path(), agent).unwrap();
-        store.append_event(mk(agent, &sk, StreamId::Capability, 1, 100)).unwrap();
-        store.append_event(mk(agent, &sk, StreamId::Capability, 2, 300)).unwrap();
+        store
+            .append_event(mk(agent, &sk, StreamId::Capability, 1, 100))
+            .unwrap();
+        store
+            .append_event(mk(agent, &sk, StreamId::Capability, 2, 300))
+            .unwrap();
         let s_full = store.replay_to_state(None).unwrap();
         assert_eq!(s_full.event_counts.values().sum::<u64>(), 2);
         let s_trim = store.replay_to_state(Some(Hlc::new(200, 0, 1))).unwrap();

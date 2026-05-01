@@ -74,7 +74,8 @@ pub struct SegmentWriter<W: Write + Seek + Read> {
 impl<W: Write + Seek + Read> SegmentWriter<W> {
     /// Begin a new segment. Reserves space for the header by writing 76 zero bytes.
     pub fn new(mut writer: W) -> CliResult<Self> {
-        writer.write_all(&[0u8; HEADER_SIZE as usize])
+        writer
+            .write_all(&[0u8; HEADER_SIZE as usize])
             .map_err(|e| CliError::Internal(format!("write header reserve: {e}")))?;
         Ok(Self {
             writer,
@@ -92,9 +93,8 @@ impl<W: Write + Seek + Read> SegmentWriter<W> {
         ciborium::ser::into_writer(event, &mut buf)
             .map_err(|e| CliError::Internal(format!("cbor encode event: {e}")))?;
 
-        let frame_len = u32::try_from(buf.len()).map_err(|_| {
-            CliError::Internal("event frame too large (>4GiB)".to_string())
-        })?;
+        let frame_len = u32::try_from(buf.len())
+            .map_err(|_| CliError::Internal("event frame too large (>4GiB)".to_string()))?;
         self.writer
             .write_all(&frame_len.to_le_bytes())
             .map_err(|e| CliError::Internal(format!("write frame_len: {e}")))?;
@@ -331,10 +331,11 @@ impl<R: Read + Seek> SegmentReader<R> {
                 .map_err(|e| CliError::AtepIntegrity {
                     reason: format!("frame read: {e}"),
                 })?;
-            let ev: AtepEvent = ciborium::de::from_reader(frame.as_slice())
-                .map_err(|e| CliError::AtepIntegrity {
+            let ev: AtepEvent = ciborium::de::from_reader(frame.as_slice()).map_err(|e| {
+                CliError::AtepIntegrity {
                     reason: format!("frame decode: {e}"),
-                })?;
+                }
+            })?;
             events.push(ev);
             pos += 4 + len as u64;
         }

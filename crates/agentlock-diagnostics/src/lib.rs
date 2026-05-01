@@ -54,7 +54,11 @@ pub async fn run_diagnostics(config: &EffectiveConfig) -> CliResult<DiagnosticRe
     checks.push(DiagnosticCheck {
         name: "platform".into(),
         status: DiagnosticStatus::Ok,
-        detail: Some(format!("{} ({})", std::env::consts::OS, std::env::consts::ARCH)),
+        detail: Some(format!(
+            "{} ({})",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        )),
     });
 
     let mut schemas_ok = true;
@@ -204,8 +208,8 @@ pub async fn run_diagnostics(config: &EffectiveConfig) -> CliResult<DiagnosticRe
 fn atep_smoke_test() -> Result<(), String> {
     let dir = tempfile::tempdir().map_err(|e| format!("tempdir: {e}"))?;
     let agent = "agent://diagnostics/smoke";
-    let mut store = AtepStore::open_or_init(dir.path(), agent)
-        .map_err(|e| format!("open_or_init: {e}"))?;
+    let mut store =
+        AtepStore::open_or_init(dir.path(), agent).map_err(|e| format!("open_or_init: {e}"))?;
     let sk = SigningKey::generate(&mut rand_core_compat());
     let header = EventHeader {
         schema_version: 1,
@@ -221,7 +225,9 @@ fn atep_smoke_test() -> Result<(), String> {
     let payload = EventPayload(ciborium::value::Value::Null);
     let event = agentlock_atep::AtepEvent::seal(header, payload, &sk, "diag".into())
         .map_err(|e| format!("seal: {e}"))?;
-    store.append_event(event).map_err(|e| format!("append: {e}"))?;
+    store
+        .append_event(event)
+        .map_err(|e| format!("append: {e}"))?;
     store
         .verify_all(&sk.verifying_key())
         .map_err(|e| format!("verify_all: {e}"))?;

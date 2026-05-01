@@ -50,9 +50,8 @@ pub fn inspect_bundle(target: &Path) -> CliResult<BundleSummary> {
     }
     if target.is_file() {
         let pairs = read_archive_to_pairs(target)?;
-        let manifest = compute_manifest_from_pairs(
-            pairs.iter().map(|(p, c)| (p.clone(), c.clone())),
-        )?;
+        let manifest =
+            compute_manifest_from_pairs(pairs.iter().map(|(p, c)| (p.clone(), c.clone())))?;
         return summarize(&pairs, &manifest);
     }
     Err(CliError::Internal(format!(
@@ -63,7 +62,12 @@ pub fn inspect_bundle(target: &Path) -> CliResult<BundleSummary> {
 
 fn collect_yaml_pairs_from_dir(dir: &Path) -> CliResult<Vec<(String, Vec<u8>)>> {
     let mut out: Vec<(String, Vec<u8>)> = Vec::new();
-    for name in &["genome.yaml", "agent.lock.yaml", "agent.lock", "behavior.contract.yaml"] {
+    for name in &[
+        "genome.yaml",
+        "agent.lock.yaml",
+        "agent.lock",
+        "behavior.contract.yaml",
+    ] {
         let p = dir.join(name);
         if p.is_file() {
             let bytes = std::fs::read(&p).map_err(|e| agentlock_core::io_at(&p, e))?;

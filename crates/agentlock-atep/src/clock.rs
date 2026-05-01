@@ -5,9 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 /// A 16-byte hybrid logical clock value.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Hlc {
     /// Wall-clock milliseconds since UNIX epoch.
     pub physical_ms: u64,
@@ -38,7 +36,10 @@ impl Hlc {
     /// assert!(next > local && next > recv);
     /// ```
     pub fn tick_after(self, received: Hlc, now_ms: u64) -> Hlc {
-        let max_phys = std::cmp::max(std::cmp::max(self.physical_ms, received.physical_ms), now_ms);
+        let max_phys = std::cmp::max(
+            std::cmp::max(self.physical_ms, received.physical_ms),
+            now_ms,
+        );
         let logical = if max_phys == self.physical_ms && max_phys == received.physical_ms {
             std::cmp::max(self.logical, received.logical) + 1
         } else if max_phys == self.physical_ms {

@@ -97,9 +97,11 @@ pub fn compute_manifest(root: &Path) -> CliResult<BundleManifest> {
     let mut total_size: u64 = 0;
 
     for e in &entries {
-        let mut file = std::fs::File::open(&e.absolute_path).map_err(|err| io_at(&e.absolute_path, err))?;
+        let mut file =
+            std::fs::File::open(&e.absolute_path).map_err(|err| io_at(&e.absolute_path, err))?;
         let mut buf = Vec::with_capacity(e.size as usize);
-        file.read_to_end(&mut buf).map_err(|err| io_at(&e.absolute_path, err))?;
+        file.read_to_end(&mut buf)
+            .map_err(|err| io_at(&e.absolute_path, err))?;
         let leaf = leaf_hash(&e.relative_path, &buf);
         leaves.push(leaf);
         total_size = total_size.saturating_add(e.size);

@@ -47,10 +47,9 @@ fn bad_lockfile_fails_strict() {
 fn tool_mismatch_warns_at_strict() {
     let r = validate_bundle(&fix("invalid-tool-mismatch"), ValidationLevel::Strict).unwrap();
     // Warnings should include tool xref. Strict does not turn them into errors.
-    assert!(r
-        .warnings
-        .iter()
-        .any(|w| w.code.starts_with("agentlock::xref::tool_in_genome_not_locked")));
+    assert!(r.warnings.iter().any(|w| w
+        .code
+        .starts_with("agentlock::xref::tool_in_genome_not_locked")));
 }
 
 #[test]
@@ -65,8 +64,8 @@ fn secret_in_tree_fails_ci() {
 
 #[test]
 fn missing_fingerprint_passes_strict_fails_ci() {
-    let strict = validate_bundle(&fix("invalid-missing-fingerprint"), ValidationLevel::Strict)
-        .unwrap();
+    let strict =
+        validate_bundle(&fix("invalid-missing-fingerprint"), ValidationLevel::Strict).unwrap();
     assert!(strict.valid, "expected valid at strict, got {strict:?}");
     let ci = validate_bundle(&fix("invalid-missing-fingerprint"), ValidationLevel::Ci).unwrap();
     assert!(!ci.valid);

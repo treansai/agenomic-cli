@@ -273,11 +273,10 @@ impl AtepEvent {
             });
         }
         let sig = ed25519_dalek::Signature::from_bytes(&self.attestation.signature);
-        vk.verify(&self.causal_hash.0, &sig).map_err(|_| {
-            CliError::AtepSignatureInvalid {
+        vk.verify(&self.causal_hash.0, &sig)
+            .map_err(|_| CliError::AtepSignatureInvalid {
                 event_id: ulid::Ulid::from_bytes(self.header.event_id).to_string(),
-            }
-        })?;
+            })?;
         Ok(())
     }
 }
@@ -361,7 +360,8 @@ mod tests {
         let p = EventPayload(ciborium::value::Value::Text("hello".into()));
         let body1 = canonical_body(&h, &p).unwrap();
         // Parse and re-encode
-        let pair: (EventHeader, EventPayload) = ciborium::de::from_reader(body1.as_slice()).unwrap();
+        let pair: (EventHeader, EventPayload) =
+            ciborium::de::from_reader(body1.as_slice()).unwrap();
         let body2 = canonical_body(&pair.0, &pair.1).unwrap();
         assert_eq!(body1, body2);
     }

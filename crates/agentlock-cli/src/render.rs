@@ -3,7 +3,7 @@
 use std::io::Write;
 
 use agentlock_core::{CliError, CliResult};
-use agentlock_report::{Renderable, RenderOptions};
+use agentlock_report::{RenderOptions, Renderable};
 
 use crate::cli::OutputFormat;
 

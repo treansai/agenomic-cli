@@ -176,9 +176,8 @@ fn read_bundle_contract(target: &Path) -> CliResult<String> {
         let pairs = read_archive_to_pairs(target)?;
         for (p, c) in pairs {
             if p == "behavior.contract.yaml" {
-                return String::from_utf8(c).map_err(|e| {
-                    CliError::Internal(format!("contract not utf-8: {e}"))
-                });
+                return String::from_utf8(c)
+                    .map_err(|e| CliError::Internal(format!("contract not utf-8: {e}")));
             }
         }
         Err(CliError::Internal(

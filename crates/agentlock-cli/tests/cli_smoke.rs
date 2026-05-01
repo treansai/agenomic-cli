@@ -14,8 +14,9 @@ fn agentlock() -> Command {
 fn help_works() {
     let output = agentlock().arg("--help").output().unwrap();
     assert!(output.status.success());
-    assert!(predicates::str::contains("AgentLock CLI")
-        .eval(&String::from_utf8_lossy(&output.stdout)));
+    assert!(
+        predicates::str::contains("AgentLock CLI").eval(&String::from_utf8_lossy(&output.stdout))
+    );
 }
 
 #[test]
@@ -32,15 +33,14 @@ fn init_then_validate_then_build() {
         ])
         .output()
         .unwrap();
-    assert!(s.status.success(), "init failed: {}", String::from_utf8_lossy(&s.stderr));
+    assert!(
+        s.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&s.stderr)
+    );
 
     let s = agentlock()
-        .args([
-            "validate",
-            bundle.to_str().unwrap(),
-            "--level",
-            "strict",
-        ])
+        .args(["validate", bundle.to_str().unwrap(), "--level", "strict"])
         .output()
         .unwrap();
     assert!(s.status.success());
@@ -57,7 +57,10 @@ fn init_then_validate_then_build() {
         .unwrap();
     assert!(s.status.success());
 
-    let s = agentlock().args(["hash", archive.to_str().unwrap()]).output().unwrap();
+    let s = agentlock()
+        .args(["hash", archive.to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(s.status.success());
     assert_eq!(s.stdout.iter().filter(|c| **c != b'\n').count(), 64);
 }
@@ -67,12 +70,7 @@ fn validate_invalid_returns_1() {
     let d = tempdir().unwrap();
     // Empty dir → missing required files
     let s = agentlock()
-        .args([
-            "validate",
-            d.path().to_str().unwrap(),
-            "--level",
-            "basic",
-        ])
+        .args(["validate", d.path().to_str().unwrap(), "--level", "basic"])
         .output()
         .unwrap();
     assert_eq!(s.status.code(), Some(1));
