@@ -13,3 +13,38 @@ name = "agentlock"
 path = "src/main.rs"
 
 [dependencies]
+agentlock-core = { workspace = true }
+agentlock-spec = { workspace = true }
+agentlock-fs = { workspace = true }
+agentlock-hash = { workspace = true }
+agentlock-atep = { workspace = true }
+agentlock-bundle = { workspace = true }
+agentlock-validate = { workspace = true }
+agentlock-diff = { workspace = true }
+agentlock-contract = { workspace = true }
+agentlock-replay-local = { workspace = true }
+agentlock-attestation = { workspace = true }
+agentlock-report = { workspace = true }
+agentlock-config = { workspace = true }
+agentlock-cloud-client = { workspace = true }
+agentlock-diagnostics = { workspace = true }
+clap = { workspace = true }
+clap_complete = { workspace = true }
+tokio = { workspace = true }
+miette = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+secrecy = { workspace = true }
+ciborium = { workspace = true }
+chrono = { workspace = true }
+hex = { workspace = true }
+ulid = { workspace = true }
+console = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+tempfile = { workspace = true }
