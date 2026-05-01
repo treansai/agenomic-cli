@@ -1,15 +1,11 @@
 [package]
-name = "agentlock-cli"
+name = "agentlock-report"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "AgentLock public CLI binary"
-
-[[bin]]
-name = "agentlock"
-path = "src/main.rs"
+description = "Internal crate for agentlock-cli (agentlock-report)"
 
 [dependencies]
