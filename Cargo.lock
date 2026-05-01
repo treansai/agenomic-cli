@@ -131,6 +131,24 @@ dependencies = [
 [[package]]
 name = "agentlock-diagnostics"
 version = "0.1.0"
+dependencies = [
+ "agentlock-atep",
+ "agentlock-config",
+ "agentlock-core",
+ "agentlock-fs",
+ "agentlock-spec",
+ "blake3",
+ "ciborium",
+ "ed25519-dalek",
+ "hex",
+ "rand_core 0.6.4",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "ulid",
+]
 
 [[package]]
 name = "agentlock-diff"

@@ -6,6 +6,22 @@ license.workspace = true
 rust-version.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "Internal crate for agentlock-cli (agentlock-diagnostics)"
+description = "Diagnostic checks (`agentlock doctor`)"
 
 [dependencies]
+agentlock-core = { workspace = true }
+agentlock-spec = { workspace = true }
+agentlock-config = { workspace = true }
+agentlock-atep = { workspace = true }
+agentlock-fs = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+blake3 = { workspace = true }
+hex = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+ed25519-dalek = { workspace = true }
+ciborium = { workspace = true }
+ulid = { workspace = true }
+rand_core = { workspace = true }
