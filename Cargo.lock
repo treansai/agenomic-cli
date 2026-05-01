@@ -41,6 +41,22 @@ dependencies = [
 [[package]]
 name = "agentlock-attestation"
 version = "0.1.0"
+dependencies = [
+ "agentlock-atep",
+ "agentlock-bundle",
+ "agentlock-core",
+ "agentlock-fs",
+ "agentlock-hash",
+ "base64",
+ "blake3",
+ "chrono",
+ "ciborium",
+ "ed25519-dalek",
+ "hex",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
 
 [[package]]
 name = "agentlock-bundle"
