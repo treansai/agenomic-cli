@@ -74,6 +74,12 @@ version = "0.1.0"
 [[package]]
 name = "agentlock-contract"
 version = "0.1.0"
+dependencies = [
+ "agentlock-core",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+]
 
 [[package]]
 name = "agentlock-core"
@@ -93,6 +99,15 @@ version = "0.1.0"
 [[package]]
 name = "agentlock-diff"
 version = "0.1.0"
+dependencies = [
+ "agentlock-bundle",
+ "agentlock-core",
+ "agentlock-hash",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+]
 
 [[package]]
 name = "agentlock-fs"
