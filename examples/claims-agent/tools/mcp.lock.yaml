@@ -1,0 +1,7 @@
+tools:
+  - name: 'classify_claim'
+    server: 'mcp://internal/claims'
+    version: '1.2.0'
+  - name: 'compensation_lookup'
+    server: 'mcp://internal/policy'
+    version: '0.9.4'

@@ -1,23 +1,34 @@
-schema_version: 1
+spec_version: '0.1'
 agent:
-  id: claims-agent
-  name: Claims Agent
-  version: 0.1.0
-  description: Reviews a customer claim and explains the status.
-model:
-  provider: local-stub
-  model: deterministic-replay
+  id: 'agent://treans/claims-agent'
+  name: 'Claims Agent'
+  domain: 'insurance'
+  criticality: 'high'
+  description: 'Triages and classifies insurance claims, recommending compensation per policy.'
+runtime:
+  model_provider: 'openai'
+  model_id: 'gpt-4o-2024-08-06'
+  model_fingerprint: 'fp_2024_08_06_a1b2c3'
   temperature: 0.0
-  max_output_tokens: 256
 tools:
-  - id: claims.lookup
-    kind: read_only
-    description: Look up a claim by claim id.
-  - id: policy.lookup
-    kind: read_only
-    description: Look up the policy coverage for a claim.
-knowledge_snapshots:
-  - id: claims-handbook-2026-04
-    digest: sha256:claims-handbook-2026-04
-    description: Snapshot of the claims decision handbook.
-    uri: local://knowledge/claims-handbook-2026-04
+  - name: 'classify_claim'
+    protocol: 'mcp'
+    server: 'mcp://internal/claims'
+    version: '1.2.0'
+  - name: 'compensation_lookup'
+    protocol: 'mcp'
+    server: 'mcp://internal/policy'
+    version: '0.9.4'
+skills:
+  - name: 'classify_claim'
+    prompt: 'prompts/skills/classify_claim.md'
+  - name: 'compensation_reasoning'
+    prompt: 'prompts/skills/compensation_reasoning.md'
+knowledge:
+  - name: 'policy_book'
+    snapshot_hash: 'b3:9f0d1e7a8b2c4d5e6f7a8b9c0d1e2f3a'
+policies:
+  - id: 'pol/no-final-decision-without-approval'
+    source: 'policies/compensation_policy.md'
+memory:
+  stores_user_specific_data: false

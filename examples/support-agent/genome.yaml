@@ -1,0 +1,19 @@
+spec_version: '0.1'
+agent:
+  id: 'agent://acme/support'
+  name: 'Support Agent'
+  domain: 'customer-support'
+  criticality: 'medium'
+runtime:
+  model_provider: 'openai'
+  model_id: 'gpt-4o-mini-2024-07-18'
+  model_fingerprint: 'fp_2024_07_18_d4e5f6'
+tools:
+  - name: 'kb_search'
+    protocol: 'mcp'
+skills:
+  - name: 'answer_question'
+knowledge:
+  - name: 'kb'
+    snapshot_hash: 'b3:1234567890abcdef0011223344556677'
+policies: []

@@ -1,0 +1,20 @@
+spec_version: '0.1'
+agent:
+  id: 'agent://capitalcorp/trading-risk'
+  name: 'Trading Risk Agent'
+  domain: 'finance'
+  criticality: 'critical'
+runtime:
+  model_provider: 'anthropic'
+  model_id: 'claude-sonnet-4-6'
+  model_fingerprint: 'fp_csonn_4_6_aabbccdd'
+tools:
+  - name: 'risk_calculator'
+    protocol: 'mcp'
+skills:
+  - name: 'evaluate_position'
+knowledge:
+  - name: 'risk_book'
+    snapshot_hash: 'b3:0011002200330044005500660077008811'
+policies:
+  - id: 'pol/halt-on-breach'
