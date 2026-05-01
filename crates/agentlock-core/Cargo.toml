@@ -6,6 +6,11 @@ license.workspace = true
 rust-version.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "Internal crate for agentlock-cli (agentlock-core)"
+description = "Core types, errors, and exit codes for agentlock-cli"
 
 [dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+miette = { workspace = true }
+chrono = { workspace = true }
