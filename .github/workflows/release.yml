@@ -1,0 +1,75 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: false
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            cross: false
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            cross: false
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            cross: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - if: matrix.cross
+        run: cargo install cross --locked
+      - if: matrix.cross
+        run: cross build -p agentlock-cli --release --target ${{ matrix.target }}
+      - if: ${{ !matrix.cross }}
+        run: cargo build -p agentlock-cli --release --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          set -e
+          name="agentlock-${{ matrix.target }}"
+          mkdir -p dist
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            cp target/${{ matrix.target }}/release/agentlock.exe "dist/${name}.exe"
+            (cd dist && 7z a "${name}.zip" "${name}.exe")
+          else
+            cp target/${{ matrix.target }}/release/agentlock "dist/${name}"
+            (cd dist && tar czf "${name}.tar.gz" "${name}")
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentlock-${{ matrix.target }}
+          path: dist/
+
+  publish:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/
+      - name: Compute checksums
+        run: |
+          set -e
+          cd dist
+          find . -type f \( -name '*.tar.gz' -o -name '*.zip' \) | sort | xargs shasum -a 256 > checksums.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/**/*.tar.gz
+            dist/**/*.zip
+            dist/checksums.txt

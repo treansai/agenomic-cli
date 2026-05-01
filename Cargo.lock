@@ -3702,6 +3702,10 @@ dependencies = [
 [[package]]
 name = "xtask"
 version = "0.1.0"
+dependencies = [
+ "agentlock-spec",
+ "anyhow",
+]
 
 [[package]]
 name = "yoke"
