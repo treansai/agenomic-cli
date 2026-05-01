@@ -139,6 +139,21 @@ dependencies = [
 [[package]]
 name = "agentlock-replay-local"
 version = "0.1.0"
+dependencies = [
+ "agentlock-atep",
+ "agentlock-bundle",
+ "agentlock-contract",
+ "agentlock-core",
+ "agentlock-hash",
+ "chrono",
+ "ciborium",
+ "hex",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "ulid",
+]
 
 [[package]]
 name = "agentlock-report"
