@@ -1,35 +1,49 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "AgentLock Bundle Lock",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentlock.dev/schemas/v0.1/agent-lock.schema.json",
+  "title": "AgentLock Lockfile",
   "type": "object",
-  "additionalProperties": false,
-  "required": ["schema_version", "agent_id", "behavior_contract_id", "tracked_files"],
+  "required": ["spec_version", "agent_id", "model", "tools", "knowledge"],
   "properties": {
-    "schema_version": {
-      "type": "integer",
-      "minimum": 1
+    "spec_version": { "type": "string", "enum": ["0.1"] },
+    "agent_id": { "type": "string", "minLength": 1 },
+    "model": {
+      "type": "object",
+      "required": ["provider", "model_id"],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "model_id": { "type": "string", "minLength": 1 },
+        "fingerprint": { "type": "string" },
+        "temperature": { "type": "number" }
+      },
+      "additionalProperties": true
     },
-    "agent_id": {
-      "type": "string",
-      "minLength": 1
-    },
-    "behavior_contract_id": {
-      "type": "string",
-      "minLength": 1
-    },
-    "tracked_files": {
+    "tools": {
       "type": "array",
       "items": {
         "type": "object",
-        "additionalProperties": false,
-        "required": ["path"],
+        "required": ["name", "protocol"],
         "properties": {
-          "path": { "type": "string", "minLength": 1 },
-          "blake3": {
-            "type": ["string", "null"]
-          }
-        }
+          "name": { "type": "string", "minLength": 1 },
+          "protocol": { "type": "string", "minLength": 1 },
+          "server": { "type": "string" },
+          "version": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "knowledge": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "snapshot_hash"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "snapshot_hash": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": true
       }
     }
-  }
+  },
+  "additionalProperties": true
 }

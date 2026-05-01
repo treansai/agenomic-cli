@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentlock.dev/schemas/v0.1/atep-event.schema.json",
+  "title": "ATEP Event (JSON projection)",
+  "description": "JSON view of an ATEP event. The wire format is canonical CBOR; this schema describes tooling-friendly equivalents.",
+  "type": "object",
+  "required": ["header", "payload", "causal_hash", "attestation"],
+  "properties": {
+    "header": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "event_id",
+        "agent_id",
+        "stream",
+        "stream_seq",
+        "clock",
+        "parents",
+        "event_type",
+        "payload_schema_uri"
+      ],
+      "properties": {
+        "schema_version": { "type": "integer", "minimum": 1 },
+        "event_id": { "type": "string", "minLength": 26, "maxLength": 26 },
+        "agent_id": { "type": "string", "minLength": 1 },
+        "stream": {
+          "type": "string",
+          "enum": ["identity", "capability", "knowledge", "policy", "runtime", "interaction", "governance"]
+        },
+        "stream_seq": { "type": "integer", "minimum": 0 },
+        "clock": {
+          "type": "object",
+          "required": ["physical_ms", "logical", "node_id"],
+          "properties": {
+            "physical_ms": { "type": "integer", "minimum": 0 },
+            "logical": { "type": "integer", "minimum": 0 },
+            "node_id": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "parents": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 64, "maxLength": 64 }
+        },
+        "event_type": { "type": "string", "minLength": 1 },
+        "payload_schema_uri": { "type": "string", "minLength": 1 }
+      }
+    },
+    "payload": {},
+    "causal_hash": { "type": "string", "minLength": 64, "maxLength": 64 },
+    "attestation": {
+      "type": "object",
+      "required": ["signer_key_id", "algo", "signature"],
+      "properties": {
+        "signer_key_id": { "type": "string" },
+        "algo": { "type": "string" },
+        "signature": { "type": "string", "minLength": 128, "maxLength": 128 }
+      }
+    }
+  },
+  "additionalProperties": false
+}
