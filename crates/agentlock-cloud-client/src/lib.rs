@@ -83,41 +83,98 @@ pub struct UploadAtepResponse {
     pub events_ingested: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// Cloud's POST /v1/releases body. Note: the wire shape carries `version`
+// (release version label, free string) and optional `notes`. The legacy
+// shape (which embedded an `attestation` jsonb) was never matched by the
+// cloud and is removed.
+#[derive(Debug, Clone, Serialize)]
 pub struct CreateReleaseRequest {
     pub agent_id: String,
     pub bundle_id: String,
-    #[serde(default)]
-    pub attestation: Option<serde_json::Value>,
+    pub version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReleaseResponse {
-    pub release_id: String,
-    pub status: String,
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReleaseResponseEnvelope {
+    pub release: ReleaseRecord,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateReplayJobRequest {
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReleaseRecord {
+    pub id: String,
     pub agent_id: String,
     pub bundle_id: String,
-    #[serde(default)]
-    pub contract_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplayJobResponse {
-    pub job_id: String,
+    pub version: String,
     pub status: String,
+    pub notes: Option<String>,
+    pub approved_at: Option<String>,
+    pub promoted_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// Cloud's POST /v1/replay-jobs body. The legacy shape (bundle_id,
+// contract_id) didn't match the cloud — the real fields are the agent
+// id, an optional release id (so replays can be pinned to a release),
+// the trace ids to feed in, and the run mode.
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateReplayJobRequest {
+    pub agent_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_id: Option<String>,
+    pub trace_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReplayJobResponseEnvelope {
+    pub replay_job: ReplayJobRecord,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReplayJobRecord {
+    pub id: String,
+    pub agent_id: String,
+    pub release_id: Option<String>,
+    pub status: String,
+    pub mode: String,
+    #[serde(default)]
+    pub trace_ids: Vec<String>,
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct ReplayReportResponse {
-    pub job_id: String,
-    pub report: serde_json::Value,
+    pub replay_job: ReplayJobRecord,
+    pub replay_result: Option<serde_json::Value>,
+    pub contract_result: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// Cloud's POST /v1/attestations body. release_id + replay_job_id are
+// the only inputs; everything else is computed server-side.
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateAttestationRequest {
+    pub release_id: String,
+    pub replay_job_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AttestationResponseEnvelope {
+    pub attestation: AttestationRecord,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AttestationRecord {
+    pub id: String,
+    pub release_id: String,
+    pub replay_job_id: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct PromoteRequest {
     pub environment: String,
 }
@@ -289,10 +346,11 @@ impl CloudClient {
             .map_err(|e| CliError::Network(format!("upload_atep parse: {e}")))
     }
 
+    /// `POST /v1/releases` — create a release pinning bundle to agent at version.
     pub async fn create_release(
         &self,
         request: CreateReleaseRequest,
-    ) -> CliResult<ReleaseResponse> {
+    ) -> CliResult<ReleaseRecord> {
         let url = self.url("/v1/releases");
         let idemp = Self::idempotency_key();
         let resp = self
@@ -311,17 +369,21 @@ impl CloudClient {
             .await?;
         let status = resp.status();
         if !status.is_success() {
-            return Err(CliError::Network(format!("create_release: HTTP {status}")));
+            let body = resp.text().await.unwrap_or_default();
+            return Err(CliError::Network(format!("create_release: HTTP {status} — {body}")));
         }
-        resp.json::<ReleaseResponse>()
+        let env: ReleaseResponseEnvelope = resp
+            .json()
             .await
-            .map_err(|e| CliError::Network(format!("create_release parse: {e}")))
+            .map_err(|e| CliError::Network(format!("create_release parse: {e}")))?;
+        Ok(env.release)
     }
 
+    /// `POST /v1/replay-jobs` — enqueue a replay job for an agent.
     pub async fn create_replay_job(
         &self,
         request: CreateReplayJobRequest,
-    ) -> CliResult<ReplayJobResponse> {
+    ) -> CliResult<ReplayJobRecord> {
         let url = self.url("/v1/replay-jobs");
         let idemp = Self::idempotency_key();
         let resp = self
@@ -340,15 +402,19 @@ impl CloudClient {
             .await?;
         let status = resp.status();
         if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
             return Err(CliError::Network(format!(
-                "create_replay_job: HTTP {status}"
+                "create_replay_job: HTTP {status} — {body}"
             )));
         }
-        resp.json::<ReplayJobResponse>()
+        let env: ReplayJobResponseEnvelope = resp
+            .json()
             .await
-            .map_err(|e| CliError::Network(format!("create_replay_job parse: {e}")))
+            .map_err(|e| CliError::Network(format!("create_replay_job parse: {e}")))?;
+        Ok(env.replay_job)
     }
 
+    /// `GET /v1/replay-jobs/:id/report` — fetch the report for a replay job.
     pub async fn get_replay_report(&self, job_id: &str) -> CliResult<ReplayReportResponse> {
         let url = self.url(&format!("/v1/replay-jobs/{job_id}/report"));
         let resp = self
@@ -360,8 +426,9 @@ impl CloudClient {
             .await?;
         let status = resp.status();
         if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
             return Err(CliError::Network(format!(
-                "get_replay_report: HTTP {status}"
+                "get_replay_report: HTTP {status} — {body}"
             )));
         }
         resp.json::<ReplayReportResponse>()
@@ -369,12 +436,41 @@ impl CloudClient {
             .map_err(|e| CliError::Network(format!("get_replay_report parse: {e}")))
     }
 
-    pub async fn promote_release(
-        &self,
-        release_id: &str,
-        request: PromoteRequest,
-    ) -> CliResult<ReleaseResponse> {
+    /// `POST /v1/releases/:id/promote` — promote an approved release.
+    pub async fn promote_release(&self, release_id: &str) -> CliResult<ReleaseRecord> {
         let url = self.url(&format!("/v1/releases/{release_id}/promote"));
+        let idemp = Self::idempotency_key();
+        let resp = self
+            .send_with_retry(|| {
+                let idemp = idemp.clone();
+                let url = url.clone();
+                async move {
+                    self.http
+                        .post(&url)
+                        .header("x-api-key", self.api_key_header())
+                        .header("idempotency-key", idemp)
+                        .json(&serde_json::json!({}))
+                }
+            })
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(CliError::Network(format!("promote: HTTP {status} — {body}")));
+        }
+        let env: ReleaseResponseEnvelope = resp
+            .json()
+            .await
+            .map_err(|e| CliError::Network(format!("promote parse: {e}")))?;
+        Ok(env.release)
+    }
+
+    /// `POST /v1/attestations` — sign a release with a replay job's evidence.
+    pub async fn create_attestation(
+        &self,
+        request: CreateAttestationRequest,
+    ) -> CliResult<AttestationRecord> {
+        let url = self.url("/v1/attestations");
         let idemp = Self::idempotency_key();
         let resp = self
             .send_with_retry(|| {
@@ -392,11 +488,16 @@ impl CloudClient {
             .await?;
         let status = resp.status();
         if !status.is_success() {
-            return Err(CliError::Network(format!("promote: HTTP {status}")));
+            let body = resp.text().await.unwrap_or_default();
+            return Err(CliError::Network(format!(
+                "create_attestation: HTTP {status} — {body}"
+            )));
         }
-        resp.json::<ReleaseResponse>()
+        let env: AttestationResponseEnvelope = resp
+            .json()
             .await
-            .map_err(|e| CliError::Network(format!("promote parse: {e}")))
+            .map_err(|e| CliError::Network(format!("create_attestation parse: {e}")))?;
+        Ok(env.attestation)
     }
 
     /// `POST /v1/agents` — create a new agent in the caller's org.
@@ -464,7 +565,8 @@ impl CloudClient {
         Ok(env.bundle)
     }
 
-    pub async fn rollback_release(&self, release_id: &str) -> CliResult<ReleaseResponse> {
+    /// `POST /v1/releases/:id/rollback` — request rollback of a release.
+    pub async fn rollback_release(&self, release_id: &str) -> CliResult<ReleaseRecord> {
         let url = self.url(&format!("/v1/releases/{release_id}/rollback"));
         let idemp = Self::idempotency_key();
         let resp = self
@@ -476,16 +578,20 @@ impl CloudClient {
                         .post(&url)
                         .header("x-api-key", self.api_key_header())
                         .header("idempotency-key", idemp)
+                        .json(&serde_json::json!({}))
                 }
             })
             .await?;
         let status = resp.status();
         if !status.is_success() {
-            return Err(CliError::Network(format!("rollback: HTTP {status}")));
+            let body = resp.text().await.unwrap_or_default();
+            return Err(CliError::Network(format!("rollback: HTTP {status} — {body}")));
         }
-        resp.json::<ReleaseResponse>()
+        let env: ReleaseResponseEnvelope = resp
+            .json()
             .await
-            .map_err(|e| CliError::Network(format!("rollback parse: {e}")))
+            .map_err(|e| CliError::Network(format!("rollback parse: {e}")))?;
+        Ok(env.release)
     }
 }
 
@@ -496,21 +602,22 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[tokio::test]
-    async fn whoami_returns_user() {
+    async fn whoami_returns_envelope() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/v1/whoami"))
             .and(header("x-api-key", "secret"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "user_id": "u1",
-                "email": "a@b.com",
-                "org": "acme"
+                "org_id": "00000000-0000-0000-0000-000000000001",
+                "user_id": "00000000-0000-0000-0000-000000000002",
+                "api_key_id": "00000000-0000-0000-0000-000000000003",
+                "api_key_name": "dev"
             })))
             .mount(&server)
             .await;
         let c = CloudClient::new(server.uri(), SecretString::new("secret".into()));
         let r = c.whoami().await.unwrap();
-        assert_eq!(r.user_id, "u1");
+        assert_eq!(r.api_key_name, "dev");
     }
 
     #[tokio::test]
@@ -528,14 +635,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn idempotency_key_present_on_post() {
+    async fn create_release_unwraps_envelope() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v1/releases"))
             .and(header("x-api-key", "s"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "release_id": "r1",
-                "status": "created"
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                "release": {
+                    "id": "00000000-0000-0000-0000-000000000010",
+                    "agent_id": "a",
+                    "bundle_id": "b",
+                    "version": "v1",
+                    "status": "pending_approval",
+                    "notes": null,
+                    "approved_at": null,
+                    "promoted_at": null,
+                    "created_at": "2026-05-04T00:00:00Z",
+                    "updated_at": "2026-05-04T00:00:00Z"
+                }
             })))
             .expect(1)
             .mount(&server)
@@ -545,10 +662,12 @@ mod tests {
             .create_release(CreateReleaseRequest {
                 agent_id: "a".into(),
                 bundle_id: "b".into(),
-                attestation: None,
+                version: "v1".into(),
+                notes: None,
             })
             .await
             .unwrap();
-        assert_eq!(r.release_id, "r1");
+        assert_eq!(r.version, "v1");
+        assert_eq!(r.status, "pending_approval");
     }
 }

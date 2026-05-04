@@ -284,6 +284,47 @@ pub enum CloudSub {
         #[arg(long)]
         agent_id: Option<String>,
     },
+    /// Create a release pinning a bundle to an agent at a version label.
+    PushRelease {
+        /// Agent id (UUID) to release for.
+        #[arg(long)]
+        agent_id: String,
+        /// Bundle id (UUID) to release.
+        #[arg(long)]
+        bundle_id: String,
+        /// Release version label (e.g. `v1.0.0`).
+        #[arg(long)]
+        version: String,
+        /// Optional release notes (markdown), stored on the release.
+        #[arg(long)]
+        notes: Option<String>,
+    },
+    /// Enqueue a deterministic replay job for an agent.
+    PushReplay {
+        /// Agent id (UUID) to replay.
+        #[arg(long)]
+        agent_id: String,
+        /// Optional release id (UUID) to pin the replay to.
+        #[arg(long)]
+        release_id: Option<String>,
+        /// Trace ids (UUIDs) to feed into the replay. Repeat the flag for
+        /// multiple traces; an empty list runs the worker against the
+        /// agent's standard probe set.
+        #[arg(long = "trace-id", value_name = "UUID")]
+        trace_ids: Vec<String>,
+        /// Run mode: `deterministic` (default) or `statistical`.
+        #[arg(long, default_value = "deterministic")]
+        mode: String,
+    },
+    /// Sign a release with a replay job's evidence.
+    PushAttestation {
+        /// Release id (UUID) being attested.
+        #[arg(long)]
+        release_id: String,
+        /// Replay job id (UUID) whose report becomes the evidence.
+        #[arg(long)]
+        replay_job_id: String,
+    },
 }
 
 #[derive(Debug, Parser)]
