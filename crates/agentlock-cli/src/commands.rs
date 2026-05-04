@@ -570,7 +570,7 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
             }))?;
             println!(
                 "uploaded bundle {} (version={}, size={} bytes, hash={})",
-                bundle.id, bundle.version, bundle.size_bytes, bundle.hash
+                bundle.id, bundle.version, bundle.size_bytes, bundle.bundle_hash
             );
             Ok(ExitCode::Success)
         }
@@ -633,9 +633,15 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
                 release_id: release_id.clone(),
                 replay_job_id: replay_job_id.clone(),
             }))?;
+            // replay_job_id is now Option (cloud allows release-only
+            // attestations without a replay), so render the missing case.
+            let replay_label = att
+                .replay_job_id
+                .as_deref()
+                .unwrap_or("(none)");
             println!(
                 "created attestation {} (release={}, replay_job={}, created_at={})",
-                att.id, att.release_id, att.replay_job_id, att.created_at
+                att.id, att.release_id, replay_label, att.created_at
             );
             Ok(ExitCode::Success)
         }

@@ -38,12 +38,22 @@ pub struct AgentResponse {
     pub agent: AgentRecord,
 }
 
+/// Agent as returned by the cloud — mirrors agentlock-core::models::Agent.
+/// The PR 1 cloud refactor added slug, domain, and criticality on top of
+/// the legacy id/name/description triple.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentRecord {
     pub id: String,
     pub org_id: String,
     pub name: String,
+    pub slug: String,
+    pub domain: Option<String>,
     pub description: Option<String>,
+    /// One of "standard", "sensitive", "regulated_customer_facing",
+    /// "life_critical".
+    pub criticality: String,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -62,13 +72,25 @@ pub struct BundleResponseEnvelope {
     pub bundle: BundleRecord,
 }
 
+/// Bundle as returned by the cloud — mirrors agentlock-core::models::Bundle.
+/// The PR 1 cloud refactor renamed `hash` to `bundle_hash` and split the
+/// legacy free-form `metadata` into structured fields.
 #[derive(Debug, Clone, Deserialize)]
 pub struct BundleRecord {
     pub id: String,
+    pub org_id: String,
     pub agent_id: String,
     pub version: String,
-    pub hash: String,
+    pub bundle_hash: String,
+    pub hash_algorithm: String,
+    pub storage_key: String,
     pub size_bytes: i64,
+    pub genome_summary: serde_json::Value,
+    pub lockfile_summary: serde_json::Value,
+    /// One of "pending", "valid", "invalid".
+    pub validation_status: String,
+    pub validation_errors: Option<serde_json::Value>,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,16 +123,27 @@ pub struct ReleaseResponseEnvelope {
     pub release: ReleaseRecord,
 }
 
+/// Release as returned by the cloud — mirrors agentlock-core::models::AgentRelease.
+/// The PR 1 cloud refactor extended ReleaseStatus to 11 variants (draft,
+/// candidate, replay_required, replay_passed, replay_failed,
+/// awaiting_approval, approved, canary, production, rolled_back,
+/// deprecated) and added environment + lineage fields.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReleaseRecord {
     pub id: String,
+    pub org_id: String,
     pub agent_id: String,
     pub bundle_id: String,
     pub version: String,
-    pub status: String,
     pub notes: Option<String>,
+    pub status: String,
+    /// One of "dev", "staging", "canary", "production".
+    pub environment: String,
+    pub previous_release_id: Option<String>,
+    pub created_by_user_id: Option<String>,
     pub approved_at: Option<String>,
     pub promoted_at: Option<String>,
+    pub rolled_back_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -134,22 +167,54 @@ pub struct ReplayJobResponseEnvelope {
     pub replay_job: ReplayJobRecord,
 }
 
+/// ReplayJob as returned by the cloud — mirrors agentlock-core::models::ReplayJob.
+/// PR 1 added baseline/candidate ids, runs_per_trace, budget tracking,
+/// and a report_storage_key. Status is one of pending/running/succeeded/
+/// failed/cancelled (was completed → succeeded).
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReplayJobRecord {
     pub id: String,
+    pub org_id: String,
     pub agent_id: String,
     pub release_id: Option<String>,
+    pub baseline_release_id: Option<String>,
+    pub candidate_bundle_id: Option<String>,
     pub status: String,
-    pub mode: String,
+    pub runs_per_trace: i32,
     #[serde(default)]
     pub trace_ids: Vec<String>,
+    /// One of "deterministic", "statistical".
+    pub mode: String,
+    pub budget_limit_cents: Option<i64>,
+    pub cost_accrued_cents: i64,
+    pub requested_by_user_id: Option<String>,
+    pub requested_at: String,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
     pub error_message: Option<String>,
+    pub report_storage_key: Option<String>,
+}
+
+/// Per-trace ReplayResult roll-up — what the cloud computes from the
+/// per-(trace, run_index) rows the worker records. Mirrors
+/// agentlock-core::models::ReplayResultSummary.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReplayResultSummary {
+    pub replay_job_id: String,
+    pub total_runs: i64,
+    pub passed_runs: i64,
+    pub failed_runs: i64,
+    pub errored_runs: i64,
+    pub all_passed: bool,
+    pub first_recorded_at: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReplayReportResponse {
     pub replay_job: ReplayJobRecord,
-    pub replay_result: Option<serde_json::Value>,
+    /// Aggregate roll-up across the per-trace replay_results rows.
+    /// `None` while the worker hasn't recorded any pass yet.
+    pub replay_summary: Option<ReplayResultSummary>,
     pub contract_result: Option<serde_json::Value>,
 }
 
@@ -166,11 +231,28 @@ pub struct AttestationResponseEnvelope {
     pub attestation: AttestationRecord,
 }
 
+/// Attestation as returned by the cloud — mirrors
+/// agentlock-core::models::Attestation. PR 1 added attestation_type,
+/// schema_version, storage_key, content_hash (base64 on the wire),
+/// signing_key_id, signature, and made replay_job_id Optional.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AttestationRecord {
     pub id: String,
+    pub org_id: String,
     pub release_id: String,
-    pub replay_job_id: String,
+    pub replay_job_id: Option<String>,
+    /// Currently always "release"; v1.0 schema reserves room for
+    /// other kinds.
+    pub attestation_type: String,
+    pub schema_version: i32,
+    pub storage_key: String,
+    /// blake3 of the canonical payload bytes; base64 on the wire.
+    pub content_hash: String,
+    pub payload: serde_json::Value,
+    pub signing_key_id: Option<String>,
+    /// Detached signature bytes; `None` while the attestation is
+    /// unsigned. Base64 on the wire when present.
+    pub signature: Option<String>,
     pub created_at: String,
 }
 
