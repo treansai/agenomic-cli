@@ -19,9 +19,56 @@ pub struct CloudClient {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WhoAmIResponse {
-    pub user_id: String,
-    pub email: Option<String>,
-    pub org: Option<String>,
+    /// Cloud's response shape: `{ org_id, user_id?, api_key_id, api_key_name }`.
+    pub org_id: String,
+    pub user_id: Option<String>,
+    pub api_key_id: String,
+    pub api_key_name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateAgentRequest {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentResponse {
+    pub agent: AgentRecord,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentRecord {
+    pub id: String,
+    pub org_id: String,
+    pub name: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateBundleRequest {
+    pub agent_id: String,
+    pub version: String,
+    pub hash: String,
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub metadata: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archive_base64: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BundleResponseEnvelope {
+    pub bundle: BundleRecord,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BundleRecord {
+    pub id: String,
+    pub agent_id: String,
+    pub version: String,
+    pub hash: String,
+    pub size_bytes: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,8 +148,11 @@ impl CloudClient {
         format!("{}{}", self.endpoint.trim_end_matches('/'), path)
     }
 
-    fn auth_header(&self) -> String {
-        format!("Bearer {}", self.api_key.expose_secret())
+    fn api_key_header(&self) -> String {
+        // Cloud's auth middleware reads the `x-api-key` header; the older
+        // `authorization: Bearer …` scheme this client used previously was
+        // never wired on the server.
+        self.api_key.expose_secret().to_string()
     }
 
     fn idempotency_key() -> String {
@@ -161,7 +211,7 @@ impl CloudClient {
             .send_with_retry(|| async {
                 self.http
                     .get(&url)
-                    .header("authorization", self.auth_header())
+                    .header("x-api-key", self.api_key_header())
             })
             .await?;
         let status = resp.status();
@@ -190,7 +240,7 @@ impl CloudClient {
                 async move {
                     self.http
                         .post(&url)
-                        .header("authorization", self.auth_header())
+                        .header("x-api-key", self.api_key_header())
                         .header("idempotency-key", idemp)
                         .header("content-type", "application/octet-stream")
                         .body(bytes)
@@ -223,7 +273,7 @@ impl CloudClient {
                 async move {
                     self.http
                         .post(&url)
-                        .header("authorization", self.auth_header())
+                        .header("x-api-key", self.api_key_header())
                         .header("idempotency-key", idemp)
                         .header("content-type", "application/x-atep-segment")
                         .body(bytes)
@@ -253,7 +303,7 @@ impl CloudClient {
                 async move {
                     self.http
                         .post(&url)
-                        .header("authorization", self.auth_header())
+                        .header("x-api-key", self.api_key_header())
                         .header("idempotency-key", idemp)
                         .json(&req)
                 }
@@ -282,7 +332,7 @@ impl CloudClient {
                 async move {
                     self.http
                         .post(&url)
-                        .header("authorization", self.auth_header())
+                        .header("x-api-key", self.api_key_header())
                         .header("idempotency-key", idemp)
                         .json(&req)
                 }
@@ -305,7 +355,7 @@ impl CloudClient {
             .send_with_retry(|| async {
                 self.http
                     .get(&url)
-                    .header("authorization", self.auth_header())
+                    .header("x-api-key", self.api_key_header())
             })
             .await?;
         let status = resp.status();
@@ -334,7 +384,7 @@ impl CloudClient {
                 async move {
                     self.http
                         .post(&url)
-                        .header("authorization", self.auth_header())
+                        .header("x-api-key", self.api_key_header())
                         .header("idempotency-key", idemp)
                         .json(&req)
                 }
@@ -349,6 +399,71 @@ impl CloudClient {
             .map_err(|e| CliError::Network(format!("promote parse: {e}")))
     }
 
+    /// `POST /v1/agents` — create a new agent in the caller's org.
+    pub async fn create_agent(&self, request: CreateAgentRequest) -> CliResult<AgentRecord> {
+        let url = self.url("/v1/agents");
+        let idemp = Self::idempotency_key();
+        let resp = self
+            .send_with_retry(|| {
+                let req = request.clone();
+                let idemp = idemp.clone();
+                let url = url.clone();
+                async move {
+                    self.http
+                        .post(&url)
+                        .header("x-api-key", self.api_key_header())
+                        .header("idempotency-key", idemp)
+                        .json(&req)
+                }
+            })
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(CliError::Network(format!("create_agent: HTTP {status} — {body}")));
+        }
+        let env: AgentResponse = resp
+            .json()
+            .await
+            .map_err(|e| CliError::Network(format!("create_agent parse: {e}")))?;
+        Ok(env.agent)
+    }
+
+    /// `POST /v1/bundles` — upload a bundle as JSON with the archive
+    /// base64-encoded. Replaces the older `upload_bundle` octet-stream
+    /// endpoint, which never existed on the cloud.
+    pub async fn create_bundle(
+        &self,
+        request: CreateBundleRequest,
+    ) -> CliResult<BundleRecord> {
+        let url = self.url("/v1/bundles");
+        let idemp = Self::idempotency_key();
+        let resp = self
+            .send_with_retry(|| {
+                let req = request.clone();
+                let idemp = idemp.clone();
+                let url = url.clone();
+                async move {
+                    self.http
+                        .post(&url)
+                        .header("x-api-key", self.api_key_header())
+                        .header("idempotency-key", idemp)
+                        .json(&req)
+                }
+            })
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(CliError::Network(format!("create_bundle: HTTP {status} — {body}")));
+        }
+        let env: BundleResponseEnvelope = resp
+            .json()
+            .await
+            .map_err(|e| CliError::Network(format!("create_bundle parse: {e}")))?;
+        Ok(env.bundle)
+    }
+
     pub async fn rollback_release(&self, release_id: &str) -> CliResult<ReleaseResponse> {
         let url = self.url(&format!("/v1/releases/{release_id}/rollback"));
         let idemp = Self::idempotency_key();
@@ -359,7 +474,7 @@ impl CloudClient {
                 async move {
                     self.http
                         .post(&url)
-                        .header("authorization", self.auth_header())
+                        .header("x-api-key", self.api_key_header())
                         .header("idempotency-key", idemp)
                 }
             })
@@ -385,7 +500,7 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/v1/whoami"))
-            .and(header("authorization", "Bearer secret"))
+            .and(header("x-api-key", "secret"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "user_id": "u1",
                 "email": "a@b.com",
@@ -417,7 +532,7 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v1/releases"))
-            .and(header("authorization", "Bearer s"))
+            .and(header("x-api-key", "s"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "release_id": "r1",
                 "status": "created"

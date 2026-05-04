@@ -263,6 +263,27 @@ pub enum CloudSub {
     },
     Whoami,
     Logout,
+    /// Push an agent and its bundle to AgentLock Cloud.
+    ///
+    /// Creates the agent if `--agent-id` is not given, then uploads the
+    /// `.bundle.tar.zst` as a base64 payload to `POST /v1/bundles`.
+    PushAgent {
+        /// Path to the bundle archive (`.bundle.tar.zst`) to upload.
+        bundle: PathBuf,
+        /// Agent name. Used both as the agent's display name and (when
+        /// creating a new agent) as the source for its slug.
+        #[arg(long)]
+        name: String,
+        /// Optional human description, stored on the agent record.
+        #[arg(long)]
+        description: Option<String>,
+        /// Bundle version label (e.g. `v0.1.0`). Defaults to "v0.1.0".
+        #[arg(long, default_value = "v0.1.0")]
+        version: String,
+        /// Reuse an existing agent by id instead of creating a new one.
+        #[arg(long)]
+        agent_id: Option<String>,
+    },
 }
 
 #[derive(Debug, Parser)]

@@ -511,6 +511,76 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
             println!("logged out");
             Ok(ExitCode::Success)
         }
+        CloudSub::PushAgent {
+            bundle,
+            name,
+            description,
+            version,
+            agent_id,
+        } => {
+            use agentlock_cloud_client::{CreateAgentRequest, CreateBundleRequest};
+            use base64::{engine::general_purpose::STANDARD, Engine};
+
+            let cfg = agentlock_config::load(None)?;
+            let endpoint = cfg.profile.endpoint.clone().ok_or_else(|| {
+                CliError::Internal(
+                    "no endpoint configured; run `agentlock cloud login` first".into(),
+                )
+            })?;
+            let api_key = cfg.profile.api_key.clone().ok_or(CliError::AuthFailed)?;
+            let client = agentlock_cloud_client::CloudClient::new(endpoint, api_key);
+
+            // Cloud's `create_bundle` validates the supplied hash against
+            // the canonical Merkle root recomputed from the archive; we must
+            // pass the same `logical_bundle_hash` that `agentlock hash`
+            // produces, NOT a raw blake3 of the tar.zst bytes.
+            let summary = agentlock_bundle::inspect_bundle(bundle)?;
+            // Cloud expects the algorithm prefix (e.g. `blake3:<hex>`) on the
+            // wire even though `inspect_bundle` returns the bare hex.
+            let logical_hash = if summary.logical_bundle_hash.contains(':') {
+                summary.logical_bundle_hash.clone()
+            } else {
+                format!("blake3:{}", summary.logical_bundle_hash)
+            };
+            let bytes = std::fs::read(bundle).map_err(|e| agentlock_core::io_at(bundle, e))?;
+            let archive_hash = blake3::hash(&bytes).to_hex().to_string();
+            let archive_b64 = STANDARD.encode(&bytes);
+
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| CliError::Internal(format!("{e}")))?;
+
+            // 1) resolve / create the agent
+            let agent_id = match agent_id.clone() {
+                Some(id) => id,
+                None => {
+                    let agent = rt.block_on(client.create_agent(CreateAgentRequest {
+                        name: name.clone(),
+                        description: description.clone(),
+                    }))?;
+                    println!("created agent {} ({})", agent.id, agent.name);
+                    agent.id
+                }
+            };
+
+            // 2) upload the bundle
+            let metadata = serde_json::json!({
+                "owner": "agentlock-cli",
+                "tags": ["pushed-by-cli"],
+                "archive_blake3": archive_hash,
+            });
+            let bundle = rt.block_on(client.create_bundle(CreateBundleRequest {
+                agent_id: agent_id.clone(),
+                version: version.clone(),
+                hash: logical_hash.clone(),
+                metadata,
+                archive_base64: Some(archive_b64),
+            }))?;
+            println!(
+                "uploaded bundle {} (version={}, size={} bytes, hash={})",
+                bundle.id, bundle.version, bundle.size_bytes, bundle.hash
+            );
+            Ok(ExitCode::Success)
+        }
     }
 }
 
