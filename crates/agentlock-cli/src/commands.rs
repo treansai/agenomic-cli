@@ -511,7 +511,152 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
             println!("logged out");
             Ok(ExitCode::Success)
         }
+        CloudSub::PushAgent {
+            bundle,
+            name,
+            description,
+            version,
+            agent_id,
+        } => {
+            use agentlock_cloud_client::{CreateAgentRequest, CreateBundleRequest};
+            use base64::{engine::general_purpose::STANDARD, Engine};
+
+            let client = cloud_client_from_profile()?;
+
+            // Cloud's `create_bundle` validates the supplied hash against
+            // the canonical Merkle root recomputed from the archive; we must
+            // pass the same `logical_bundle_hash` that `agentlock hash`
+            // produces, NOT a raw blake3 of the tar.zst bytes.
+            let summary = agentlock_bundle::inspect_bundle(bundle)?;
+            // Cloud expects the algorithm prefix (e.g. `blake3:<hex>`) on the
+            // wire even though `inspect_bundle` returns the bare hex.
+            let logical_hash = if summary.logical_bundle_hash.contains(':') {
+                summary.logical_bundle_hash.clone()
+            } else {
+                format!("blake3:{}", summary.logical_bundle_hash)
+            };
+            let bytes = std::fs::read(bundle).map_err(|e| agentlock_core::io_at(bundle, e))?;
+            let archive_hash = blake3::hash(&bytes).to_hex().to_string();
+            let archive_b64 = STANDARD.encode(&bytes);
+
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| CliError::Internal(format!("{e}")))?;
+
+            // 1) resolve / create the agent
+            let agent_id = match agent_id.clone() {
+                Some(id) => id,
+                None => {
+                    let agent = rt.block_on(client.create_agent(CreateAgentRequest {
+                        name: name.clone(),
+                        description: description.clone(),
+                    }))?;
+                    println!("created agent {} ({})", agent.id, agent.name);
+                    agent.id
+                }
+            };
+
+            // 2) upload the bundle
+            let metadata = serde_json::json!({
+                "owner": "agentlock-cli",
+                "tags": ["pushed-by-cli"],
+                "archive_blake3": archive_hash,
+            });
+            let bundle = rt.block_on(client.create_bundle(CreateBundleRequest {
+                agent_id: agent_id.clone(),
+                version: version.clone(),
+                hash: logical_hash.clone(),
+                metadata,
+                archive_base64: Some(archive_b64),
+            }))?;
+            println!(
+                "uploaded bundle {} (version={}, size={} bytes, hash={})",
+                bundle.id, bundle.version, bundle.size_bytes, bundle.bundle_hash
+            );
+            Ok(ExitCode::Success)
+        }
+        CloudSub::PushRelease {
+            agent_id,
+            bundle_id,
+            version,
+            notes,
+        } => {
+            use agentlock_cloud_client::CreateReleaseRequest;
+            let client = cloud_client_from_profile()?;
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| CliError::Internal(format!("{e}")))?;
+            let release = rt.block_on(client.create_release(CreateReleaseRequest {
+                agent_id: agent_id.clone(),
+                bundle_id: bundle_id.clone(),
+                version: version.clone(),
+                notes: notes.clone(),
+            }))?;
+            println!(
+                "created release {} (version={}, status={})",
+                release.id, release.version, release.status
+            );
+            Ok(ExitCode::Success)
+        }
+        CloudSub::PushReplay {
+            agent_id,
+            release_id,
+            trace_ids,
+            mode,
+        } => {
+            use agentlock_cloud_client::CreateReplayJobRequest;
+            let client = cloud_client_from_profile()?;
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| CliError::Internal(format!("{e}")))?;
+            let job = rt.block_on(client.create_replay_job(CreateReplayJobRequest {
+                agent_id: agent_id.clone(),
+                release_id: release_id.clone(),
+                trace_ids: trace_ids.clone(),
+                mode: Some(mode.clone()),
+            }))?;
+            println!(
+                "enqueued replay job {} (status={}, mode={}, traces={})",
+                job.id,
+                job.status,
+                job.mode,
+                job.trace_ids.len()
+            );
+            Ok(ExitCode::Success)
+        }
+        CloudSub::PushAttestation {
+            release_id,
+            replay_job_id,
+        } => {
+            use agentlock_cloud_client::CreateAttestationRequest;
+            let client = cloud_client_from_profile()?;
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| CliError::Internal(format!("{e}")))?;
+            let att = rt.block_on(client.create_attestation(CreateAttestationRequest {
+                release_id: release_id.clone(),
+                replay_job_id: replay_job_id.clone(),
+            }))?;
+            // replay_job_id is now Option (cloud allows release-only
+            // attestations without a replay), so render the missing case.
+            let replay_label = att
+                .replay_job_id
+                .as_deref()
+                .unwrap_or("(none)");
+            println!(
+                "created attestation {} (release={}, replay_job={}, created_at={})",
+                att.id, att.release_id, replay_label, att.created_at
+            );
+            Ok(ExitCode::Success)
+        }
     }
+}
+
+/// Build a `CloudClient` from the active profile, failing with the
+/// canonical error if no endpoint or key is configured.
+fn cloud_client_from_profile() -> CliResult<agentlock_cloud_client::CloudClient> {
+    let cfg = agentlock_config::load(None)?;
+    let endpoint = cfg.profile.endpoint.clone().ok_or_else(|| {
+        CliError::Internal("no endpoint configured; run `agentlock cloud login` first".into())
+    })?;
+    let api_key = cfg.profile.api_key.clone().ok_or(CliError::AuthFailed)?;
+    Ok(agentlock_cloud_client::CloudClient::new(endpoint, api_key))
 }
 
 // Severity is referenced via SeverityArg::to_severity; silence unused-import

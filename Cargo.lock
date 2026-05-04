@@ -95,6 +95,8 @@ dependencies = [
  "agentlock-spec",
  "agentlock-validate",
  "assert_cmd",
+ "base64",
+ "blake3",
  "chrono",
  "ciborium",
  "clap",
