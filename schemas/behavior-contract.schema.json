@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agentlock.dev/schemas/v0.1/behavior-contract.schema.json",
-  "title": "AgentLock Behavior Contract",
+  "$id": "https://agenomic.dev/schemas/v0.1/behavior-contract.schema.json",
+  "title": "Agenomic Behavior Contract",
   "type": "object",
   "required": ["spec_version", "contract"],
   "properties": {

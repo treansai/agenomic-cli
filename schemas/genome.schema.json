@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agentlock.dev/schemas/v0.1/genome.schema.json",
-  "title": "AgentLock Genome",
+  "$id": "https://agenomic.dev/schemas/v0.1/genome.schema.json",
+  "title": "Agenomic Genome",
   "type": "object",
   "required": ["spec_version", "agent", "runtime", "tools", "skills", "knowledge", "policies"],
   "properties": {

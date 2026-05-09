@@ -1,6 +1,6 @@
 # Local replay
 
-`agentlock replay` evaluates a corpus of stored traces against a behavior
+`agenomic replay` evaluates a corpus of stored traces against a behavior
 contract's deterministic checks. **It does not call any LLM.**
 
 ## What it does
@@ -16,7 +16,7 @@ contract's deterministic checks. **It does not call any LLM.**
 - It does **not** call your LLM provider.
 - `--runs-per-trace > 1` is **a no-op** in v0.1 and emits a warning. That
   mode requires a runtime adapter (provider plugin), which is part of
-  AgentLock Cloud or a custom integration.
+  Agenomic Cloud or a custom integration.
 
 ## Exit codes
 
@@ -28,4 +28,4 @@ contract's deterministic checks. **It does not call any LLM.**
 The intent of local replay is to give a fully offline, deterministic
 **lower-bound** proof: "given exactly these traces, this contract holds".
 It does not prove anything about new traces or about model stochasticity.
-For statistical replay across LLM variation, use AgentLock Cloud.
+For statistical replay across LLM variation, use Agenomic Cloud.

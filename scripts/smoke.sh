@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Acceptance smoke test for agentlock-cli v0.1.
+# Acceptance smoke test for agenomic-cli v0.1.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 # Use a release binary if it exists; otherwise build debug.
-BIN="${ROOT}/target/release/agentlock"
+BIN="${ROOT}/target/release/agenomic"
 if [ ! -x "$BIN" ]; then
-  cargo build -p agentlock-cli >/dev/null
-  BIN="${ROOT}/target/debug/agentlock"
+  cargo build -p agenomic-cli >/dev/null
+  BIN="${ROOT}/target/debug/agenomic"
 fi
 
 WORK="$(mktemp -d)"

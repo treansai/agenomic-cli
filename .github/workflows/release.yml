@@ -34,25 +34,25 @@ jobs:
       - if: matrix.cross
         run: cargo install cross --locked
       - if: matrix.cross
-        run: cross build -p agentlock-cli --release --target ${{ matrix.target }}
+        run: cross build -p agenomic-cli --release --target ${{ matrix.target }}
       - if: ${{ !matrix.cross }}
-        run: cargo build -p agentlock-cli --release --target ${{ matrix.target }}
+        run: cargo build -p agenomic-cli --release --target ${{ matrix.target }}
       - name: Package
         shell: bash
         run: |
           set -e
-          name="agentlock-${{ matrix.target }}"
+          name="agenomic-${{ matrix.target }}"
           mkdir -p dist
           if [[ "${{ matrix.target }}" == *windows* ]]; then
-            cp target/${{ matrix.target }}/release/agentlock.exe "dist/${name}.exe"
+            cp target/${{ matrix.target }}/release/agenomic.exe "dist/${name}.exe"
             (cd dist && 7z a "${name}.zip" "${name}.exe")
           else
-            cp target/${{ matrix.target }}/release/agentlock "dist/${name}"
+            cp target/${{ matrix.target }}/release/agenomic "dist/${name}"
             (cd dist && tar czf "${name}.tar.gz" "${name}")
           fi
       - uses: actions/upload-artifact@v4
         with:
-          name: agentlock-${{ matrix.target }}
+          name: agenomic-${{ matrix.target }}
           path: dist/
 
   publish:

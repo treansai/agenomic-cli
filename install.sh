@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Install the latest agentlock CLI.
-# Usage: curl -fsSL https://agentlock.dev/install.sh | sh
+# Install the latest agenomic CLI.
+# Usage: curl -fsSL https://agenomic.dev/install.sh | sh
 set -eu
 
-REPO="agentlock/agentlock-cli"
-VERSION="${AGENTLOCK_VERSION:-latest}"
-INSTALL_DIR="${AGENTLOCK_INSTALL_DIR:-$HOME/.local/bin}"
+REPO="agenomic/agenomic-cli"
+VERSION="${AGENOMIC_VERSION:-latest}"
+INSTALL_DIR="${AGENOMIC_INSTALL_DIR:-$HOME/.local/bin}"
 
 uname_s="$(uname -s)"
 uname_m="$(uname -m)"
@@ -28,7 +28,7 @@ else
   url_base="https://github.com/$REPO/releases/download/$VERSION"
 fi
 
-archive="agentlock-${target}.tar.gz"
+archive="agenomic-${target}.tar.gz"
 url="$url_base/$archive"
 
 mkdir -p "$INSTALL_DIR"
@@ -50,8 +50,8 @@ fi
 }
 
 tar -xzf "$tmp/$archive" -C "$tmp"
-mv "$tmp/agentlock-${target}" "$INSTALL_DIR/agentlock"
-chmod +x "$INSTALL_DIR/agentlock"
+mv "$tmp/agenomic-${target}" "$INSTALL_DIR/agenomic"
+chmod +x "$INSTALL_DIR/agenomic"
 
-echo "installed agentlock to $INSTALL_DIR/agentlock"
+echo "installed agenomic to $INSTALL_DIR/agenomic"
 echo "ensure $INSTALL_DIR is in your PATH"

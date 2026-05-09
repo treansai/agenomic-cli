@@ -1,13 +1,13 @@
-# agentlock-cli — agent instructions
+# agenomic-cli — agent instructions
 
-This is the public open-source CLI for the AgentLock platform. Apache-2.0.
+This is the public open-source CLI for the Agenomic platform. Apache-2.0.
 
 ## Product invariants
 
 1. Works fully offline. No command requires network.
 2. Deterministic hashing. Same input → same hash, always.
 3. ATEP-native. Reads/writes/signs binary event streams matching the
-   agentlock-cloud format.
+   agenomic-cloud format.
 4. Cloud is optional. Local commands stand alone.
 
 ## Engineering rules
@@ -15,17 +15,17 @@ This is the public open-source CLI for the AgentLock platform. Apache-2.0.
 - Every public function has a doc comment with at least one example.
 - No `unwrap()` or `expect()` in non-test code.
 - All errors use `miette::Diagnostic` for human output and have a stable code.
-- Exit codes follow the catalog in `crates/agentlock-core/src/exit.rs`.
+- Exit codes follow the catalog in `crates/agenomic-core/src/exit.rs`.
 - Snapshot tests (`insta`) for any human-formatted output.
 - Property tests (`proptest`) for hashing determinism and ATEP roundtrips.
 
 ## Naming
 
-- Binary: `agentlock`
+- Binary: `agenomic`
 - Bundle file extension: `.bundle.tar.zst`
 - ATEP segment file extension: `.atep`
-- Default config: `~/.config/agentlock/config.toml`
-- Project config: `agentlock.toml`
+- Default config: `~/.config/agenomic/config.toml`
+- Project config: `agenomic.toml`
 
 ## Security defaults
 

@@ -1,0 +1,19 @@
+[package]
+name = "agenomic-fs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Safe deterministic filesystem helpers for agenomic-cli"
+
+[dependencies]
+agenomic-core = { workspace = true }
+serde = { workspace = true }
+walkdir = { workspace = true }
+glob = { workspace = true }
+rand = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -2,7 +2,7 @@
 
 ATEP is the binary, signed event log that captures an agent's history. The
 CLI can produce, read, sign, and verify ATEP locally; the same wire format
-is consumed by AgentLock Cloud.
+is consumed by Agenomic Cloud.
 
 ## Two formats
 
@@ -70,5 +70,5 @@ ed25519 over the 32-byte `causal_hash`. The signer's short key id
     └── ...
 ```
 
-`agentlock atep init`, `append`, `verify`, `inspect`, and `replay-state`
+`agenomic atep init`, `append`, `verify`, `inspect`, and `replay-state`
 operate on this layout.

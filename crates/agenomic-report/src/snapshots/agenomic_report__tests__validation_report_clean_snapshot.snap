@@ -1,0 +1,6 @@
+---
+source: crates/agenomic-report/src/lib.rs
+expression: "String::from_utf8(buf).unwrap()"
+---
+validation: VALID
+  errors: 0, warnings: 0, info: 0

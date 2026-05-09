@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agentlock.dev/schemas/v0.1/agent-lock.schema.json",
-  "title": "AgentLock Lockfile",
+  "$id": "https://agenomic.dev/schemas/v0.1/agent-lock.schema.json",
+  "title": "Agenomic Lockfile",
   "type": "object",
   "required": ["spec_version", "agent_id", "model", "tools", "knowledge"],
   "properties": {
