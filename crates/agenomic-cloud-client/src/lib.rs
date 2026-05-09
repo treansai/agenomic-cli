@@ -429,10 +429,7 @@ impl CloudClient {
     }
 
     /// `POST /v1/releases` — create a release pinning bundle to agent at version.
-    pub async fn create_release(
-        &self,
-        request: CreateReleaseRequest,
-    ) -> CliResult<ReleaseRecord> {
+    pub async fn create_release(&self, request: CreateReleaseRequest) -> CliResult<ReleaseRecord> {
         let url = self.url("/v1/releases");
         let idemp = Self::idempotency_key();
         let resp = self
@@ -452,7 +449,9 @@ impl CloudClient {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(CliError::Network(format!("create_release: HTTP {status} — {body}")));
+            return Err(CliError::Network(format!(
+                "create_release: HTTP {status} — {body}"
+            )));
         }
         let env: ReleaseResponseEnvelope = resp
             .json()
@@ -538,7 +537,9 @@ impl CloudClient {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(CliError::Network(format!("promote: HTTP {status} — {body}")));
+            return Err(CliError::Network(format!(
+                "promote: HTTP {status} — {body}"
+            )));
         }
         let env: ReleaseResponseEnvelope = resp
             .json()
@@ -603,7 +604,9 @@ impl CloudClient {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(CliError::Network(format!("create_agent: HTTP {status} — {body}")));
+            return Err(CliError::Network(format!(
+                "create_agent: HTTP {status} — {body}"
+            )));
         }
         let env: AgentResponse = resp
             .json()
@@ -615,10 +618,7 @@ impl CloudClient {
     /// `POST /v1/bundles` — upload a bundle as JSON with the archive
     /// base64-encoded. Replaces the older `upload_bundle` octet-stream
     /// endpoint, which never existed on the cloud.
-    pub async fn create_bundle(
-        &self,
-        request: CreateBundleRequest,
-    ) -> CliResult<BundleRecord> {
+    pub async fn create_bundle(&self, request: CreateBundleRequest) -> CliResult<BundleRecord> {
         let url = self.url("/v1/bundles");
         let idemp = Self::idempotency_key();
         let resp = self
@@ -638,7 +638,9 @@ impl CloudClient {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(CliError::Network(format!("create_bundle: HTTP {status} — {body}")));
+            return Err(CliError::Network(format!(
+                "create_bundle: HTTP {status} — {body}"
+            )));
         }
         let env: BundleResponseEnvelope = resp
             .json()
@@ -667,7 +669,9 @@ impl CloudClient {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(CliError::Network(format!("rollback: HTTP {status} — {body}")));
+            return Err(CliError::Network(format!(
+                "rollback: HTTP {status} — {body}"
+            )));
         }
         let env: ReleaseResponseEnvelope = resp
             .json()

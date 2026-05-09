@@ -539,8 +539,8 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
             let archive_hash = blake3::hash(&bytes).to_hex().to_string();
             let archive_b64 = STANDARD.encode(&bytes);
 
-            let rt = tokio::runtime::Runtime::new()
-                .map_err(|e| CliError::Internal(format!("{e}")))?;
+            let rt =
+                tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
 
             // 1) resolve / create the agent
             let agent_id = match agent_id.clone() {
@@ -582,8 +582,8 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
         } => {
             use agenomic_cloud_client::CreateReleaseRequest;
             let client = cloud_client_from_profile()?;
-            let rt = tokio::runtime::Runtime::new()
-                .map_err(|e| CliError::Internal(format!("{e}")))?;
+            let rt =
+                tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
             let release = rt.block_on(client.create_release(CreateReleaseRequest {
                 agent_id: agent_id.clone(),
                 bundle_id: bundle_id.clone(),
@@ -604,8 +604,8 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
         } => {
             use agenomic_cloud_client::CreateReplayJobRequest;
             let client = cloud_client_from_profile()?;
-            let rt = tokio::runtime::Runtime::new()
-                .map_err(|e| CliError::Internal(format!("{e}")))?;
+            let rt =
+                tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
             let job = rt.block_on(client.create_replay_job(CreateReplayJobRequest {
                 agent_id: agent_id.clone(),
                 release_id: release_id.clone(),
@@ -627,18 +627,15 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
         } => {
             use agenomic_cloud_client::CreateAttestationRequest;
             let client = cloud_client_from_profile()?;
-            let rt = tokio::runtime::Runtime::new()
-                .map_err(|e| CliError::Internal(format!("{e}")))?;
+            let rt =
+                tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
             let att = rt.block_on(client.create_attestation(CreateAttestationRequest {
                 release_id: release_id.clone(),
                 replay_job_id: replay_job_id.clone(),
             }))?;
             // replay_job_id is now Option (cloud allows release-only
             // attestations without a replay), so render the missing case.
-            let replay_label = att
-                .replay_job_id
-                .as_deref()
-                .unwrap_or("(none)");
+            let replay_label = att.replay_job_id.as_deref().unwrap_or("(none)");
             println!(
                 "created attestation {} (release={}, replay_job={}, created_at={})",
                 att.id, att.release_id, replay_label, att.created_at
