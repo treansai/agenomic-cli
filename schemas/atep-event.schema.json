@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agentlock.dev/schemas/v0.1/atep-event.schema.json",
+  "$id": "https://agenomic.dev/schemas/v0.1/atep-event.schema.json",
   "title": "ATEP Event (JSON projection)",
   "description": "JSON view of an ATEP event. The wire format is canonical CBOR; this schema describes tooling-friendly equivalents.",
   "type": "object",

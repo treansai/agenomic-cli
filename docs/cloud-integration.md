@@ -4,7 +4,7 @@ The CLI works fully offline. Cloud integration is opt-in.
 
 ## When to use
 
-Use AgentLock Cloud when you need:
+Use Agenomic Cloud when you need:
 
 - Hosted multi-tenant replay across LLM providers
 - Statistical replay (`runs_per_trace > 1` with a real model)
@@ -14,11 +14,11 @@ Use AgentLock Cloud when you need:
 ## Login
 
 ```bash
-agentlock cloud login --endpoint https://api.agentlock.dev --api-key <KEY>
-agentlock cloud whoami
+agenomic cloud login --endpoint https://api.agenomic.dev --api-key <KEY>
+agenomic cloud whoami
 ```
 
-Credentials are stored at `~/.config/agentlock/credentials.toml` with mode
+Credentials are stored at `~/.config/agenomic/credentials.toml` with mode
 0600 on Unix.
 
 ## Idempotency

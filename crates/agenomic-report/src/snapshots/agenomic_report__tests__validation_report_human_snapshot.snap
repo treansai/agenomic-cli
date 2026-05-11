@@ -1,0 +1,7 @@
+---
+source: crates/agenomic-report/src/lib.rs
+expression: s
+---
+validation: INVALID
+  errors: 1, warnings: 0, info: 0
+  [HIGH] agenomic::bundle::missing_required_file: missing required file: genome.yaml (genome.yaml)

@@ -1,0 +1,24 @@
+[package]
+name = "agenomic-report"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Human/JSON/Markdown/HTML renderers for agenomic-cli reports"
+
+[dependencies]
+agenomic-core = { workspace = true }
+agenomic-bundle = { workspace = true }
+agenomic-diff = { workspace = true }
+agenomic-replay-local = { workspace = true }
+agenomic-attestation = { workspace = true }
+console = { workspace = true }
+pulldown-cmark = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }

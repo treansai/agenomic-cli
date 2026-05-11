@@ -6,22 +6,22 @@ The CLI is designed to be a deterministic gate in your CI.
 
 ```yaml
 - uses: actions/checkout@v4
-- run: curl -fsSL https://agentlock.dev/install.sh | sh
-- run: agentlock validate ./agent --level ci
-- run: agentlock build ./agent --output dist/agent.bundle.tar.zst --strict
-- run: agentlock replay dist/agent.bundle.tar.zst ./agent/traces.jsonl --output dist/replay.json --fail-on high
-- run: agentlock attest dist/agent.bundle.tar.zst --replay-report dist/replay.json --output dist/att.json --sign-with ${{ secrets.AGENTLOCK_KEY }}
+- run: curl -fsSL https://agenomic.dev/install.sh | sh
+- run: agenomic validate ./agent --level ci
+- run: agenomic build ./agent --output dist/agent.bundle.tar.zst --strict
+- run: agenomic replay dist/agent.bundle.tar.zst ./agent/traces.jsonl --output dist/replay.json --fail-on high
+- run: agenomic attest dist/agent.bundle.tar.zst --replay-report dist/replay.json --output dist/att.json --sign-with ${{ secrets.AGENOMIC_KEY }}
 ```
 
 ## GitLab CI
 
 ```yaml
-agentlock:
+agenomic:
   image: rust:1.85
   script:
-    - curl -fsSL https://agentlock.dev/install.sh | sh
-    - agentlock validate ./agent --level ci
-    - agentlock build ./agent --output dist/agent.bundle.tar.zst --strict
+    - curl -fsSL https://agenomic.dev/install.sh | sh
+    - agenomic validate ./agent --level ci
+    - agenomic build ./agent --output dist/agent.bundle.tar.zst --strict
 ```
 
 ## Exit codes for gating
@@ -34,5 +34,5 @@ agentlock:
 | 8 | DiffRiskExceeded | Require review approval |
 | 9 | AttestationVerificationFailed | Block deploy |
 
-`agentlock <cmd> --format json` emits machine-readable output if you want
+`agenomic <cmd> --format json` emits machine-readable output if you want
 to attach the report as an artifact.

@@ -14,19 +14,19 @@ my-agent/
 ├── memory/                # optional
 ├── policies/              # optional
 ├── knowledge/             # optional
-└── .agentlockignore       # optional, gitignore-style
+└── .agenomicignore       # optional, gitignore-style
 ```
 
 ## Always excluded
 
-`.git/`, `target/`, `node_modules/`, `__pycache__/`, `dist/`, `.agentlock/`,
+`.git/`, `target/`, `node_modules/`, `__pycache__/`, `dist/`, `.agenomic/`,
 plus credential files: `.env`, `.env.*`, `*.pem`, `*.key`, `id_rsa`,
 `id_ed25519`, `*.p12`, `*.pfx`. Use `--allow-symlinks` to permit symlinks
 (off by default).
 
 ## Archive
 
-`agentlock build` packs the bundle as a tar archive (mtime=0, mode 0644 for
+`agenomic build` packs the bundle as a tar archive (mtime=0, mode 0644 for
 regular files, deterministic header) and zstd-compresses it. Output filename
 extension: `.bundle.tar.zst`.
 

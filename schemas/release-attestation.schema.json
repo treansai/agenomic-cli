@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agentlock.dev/schemas/v0.1/release-attestation.schema.json",
-  "title": "AgentLock Release Attestation",
+  "$id": "https://agenomic.dev/schemas/v0.1/release-attestation.schema.json",
+  "title": "Agenomic Release Attestation",
   "type": "object",
   "required": [
     "schema_version",

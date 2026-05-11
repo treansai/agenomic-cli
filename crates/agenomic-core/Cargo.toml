@@ -1,0 +1,16 @@
+[package]
+name = "agenomic-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Core types, errors, and exit codes for agenomic-cli"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+miette = { workspace = true }
+chrono = { workspace = true }

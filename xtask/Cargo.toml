@@ -8,5 +8,5 @@ publish = false
 description = "Workspace tasks (release, schema validation, examples smoke)"
 
 [dependencies]
-agentlock-spec = { workspace = true }
+agenomic-spec = { workspace = true }
 anyhow = { workspace = true }

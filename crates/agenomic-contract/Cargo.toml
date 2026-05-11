@@ -1,0 +1,15 @@
+[package]
+name = "agenomic-contract"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Deterministic behavior-contract checks for stored traces"
+
+[dependencies]
+agenomic-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }

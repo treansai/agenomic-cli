@@ -1,22 +1,22 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/agentlock-core",
-    "crates/agentlock-spec",
-    "crates/agentlock-fs",
-    "crates/agentlock-hash",
-    "crates/agentlock-atep",
-    "crates/agentlock-bundle",
-    "crates/agentlock-validate",
-    "crates/agentlock-diff",
-    "crates/agentlock-contract",
-    "crates/agentlock-replay-local",
-    "crates/agentlock-attestation",
-    "crates/agentlock-report",
-    "crates/agentlock-cloud-client",
-    "crates/agentlock-config",
-    "crates/agentlock-diagnostics",
-    "crates/agentlock-cli",
+    "crates/agenomic-core",
+    "crates/agenomic-spec",
+    "crates/agenomic-fs",
+    "crates/agenomic-hash",
+    "crates/agenomic-atep",
+    "crates/agenomic-bundle",
+    "crates/agenomic-validate",
+    "crates/agenomic-diff",
+    "crates/agenomic-contract",
+    "crates/agenomic-replay-local",
+    "crates/agenomic-attestation",
+    "crates/agenomic-report",
+    "crates/agenomic-cloud-client",
+    "crates/agenomic-config",
+    "crates/agenomic-diagnostics",
+    "crates/agenomic-cli",
     "xtask",
 ]
 
@@ -25,26 +25,26 @@ edition = "2021"
 license = "Apache-2.0"
 rust-version = "1.85"
 version = "0.1.0"
-homepage = "https://agentlock.dev"
-repository = "https://github.com/agentlock/agentlock-cli"
+homepage = "https://agenomic.dev"
+repository = "https://github.com/agenomic/agenomic-cli"
 
 [workspace.dependencies]
 # Internal
-agentlock-core = { path = "crates/agentlock-core", version = "0.1.0" }
-agentlock-spec = { path = "crates/agentlock-spec", version = "0.1.0" }
-agentlock-fs = { path = "crates/agentlock-fs", version = "0.1.0" }
-agentlock-hash = { path = "crates/agentlock-hash", version = "0.1.0" }
-agentlock-atep = { path = "crates/agentlock-atep", version = "0.1.0" }
-agentlock-bundle = { path = "crates/agentlock-bundle", version = "0.1.0" }
-agentlock-validate = { path = "crates/agentlock-validate", version = "0.1.0" }
-agentlock-diff = { path = "crates/agentlock-diff", version = "0.1.0" }
-agentlock-contract = { path = "crates/agentlock-contract", version = "0.1.0" }
-agentlock-replay-local = { path = "crates/agentlock-replay-local", version = "0.1.0" }
-agentlock-attestation = { path = "crates/agentlock-attestation", version = "0.1.0" }
-agentlock-report = { path = "crates/agentlock-report", version = "0.1.0" }
-agentlock-cloud-client = { path = "crates/agentlock-cloud-client", version = "0.1.0" }
-agentlock-config = { path = "crates/agentlock-config", version = "0.1.0" }
-agentlock-diagnostics = { path = "crates/agentlock-diagnostics", version = "0.1.0" }
+agenomic-core = { path = "crates/agenomic-core", version = "0.1.0" }
+agenomic-spec = { path = "crates/agenomic-spec", version = "0.1.0" }
+agenomic-fs = { path = "crates/agenomic-fs", version = "0.1.0" }
+agenomic-hash = { path = "crates/agenomic-hash", version = "0.1.0" }
+agenomic-atep = { path = "crates/agenomic-atep", version = "0.1.0" }
+agenomic-bundle = { path = "crates/agenomic-bundle", version = "0.1.0" }
+agenomic-validate = { path = "crates/agenomic-validate", version = "0.1.0" }
+agenomic-diff = { path = "crates/agenomic-diff", version = "0.1.0" }
+agenomic-contract = { path = "crates/agenomic-contract", version = "0.1.0" }
+agenomic-replay-local = { path = "crates/agenomic-replay-local", version = "0.1.0" }
+agenomic-attestation = { path = "crates/agenomic-attestation", version = "0.1.0" }
+agenomic-report = { path = "crates/agenomic-report", version = "0.1.0" }
+agenomic-cloud-client = { path = "crates/agenomic-cloud-client", version = "0.1.0" }
+agenomic-config = { path = "crates/agenomic-config", version = "0.1.0" }
+agenomic-diagnostics = { path = "crates/agenomic-diagnostics", version = "0.1.0" }
 
 # CLI / parsing
 clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }

@@ -27,20 +27,20 @@ fn workspace_root() -> PathBuf {
 fn dist() -> Result<()> {
     let root = workspace_root();
     let status = Command::new(env!("CARGO"))
-        .args(["build", "-p", "agentlock-cli", "--release"])
+        .args(["build", "-p", "agenomic-cli", "--release"])
         .current_dir(&root)
         .status()
         .context("cargo build")?;
     if !status.success() {
         return Err(anyhow!("cargo build failed"));
     }
-    println!("built target/release/agentlock");
+    println!("built target/release/agenomic");
     Ok(())
 }
 
 fn schemas() -> Result<()> {
-    for kind in agentlock_spec::SchemaKind::ALL {
-        agentlock_spec::validator(kind)
+    for kind in agenomic_spec::SchemaKind::ALL {
+        agenomic_spec::validator(kind)
             .map_err(|e| anyhow!("schema {} failed to compile: {e}", kind.label()))?;
         println!("ok  {}", kind.label());
     }
@@ -55,7 +55,7 @@ fn examples() -> Result<()> {
             .args([
                 "run",
                 "-p",
-                "agentlock-cli",
+                "agenomic-cli",
                 "--quiet",
                 "--",
                 "validate",

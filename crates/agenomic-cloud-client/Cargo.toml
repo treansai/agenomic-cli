@@ -1,0 +1,23 @@
+[package]
+name = "agenomic-cloud-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Optional HTTP client for Agenomic Cloud"
+
+[dependencies]
+agenomic-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+secrecy = { workspace = true }
+ulid = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+wiremock = { workspace = true }
+tokio = { workspace = true }

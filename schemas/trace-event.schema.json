@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agentlock.dev/schemas/v0.1/trace-event.schema.json",
-  "title": "AgentLock Trace Envelope",
+  "$id": "https://agenomic.dev/schemas/v0.1/trace-event.schema.json",
+  "title": "Agenomic Trace Envelope",
   "type": "object",
   "required": ["trace_id", "agent_id", "input"],
   "properties": {

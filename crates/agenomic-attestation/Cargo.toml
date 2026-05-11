@@ -1,0 +1,27 @@
+[package]
+name = "agenomic-attestation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Create and verify Agenomic release attestations"
+
+[dependencies]
+agenomic-core = { workspace = true }
+agenomic-bundle = { workspace = true }
+agenomic-hash = { workspace = true }
+agenomic-fs = { workspace = true }
+agenomic-atep = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ciborium = { workspace = true }
+blake3 = { workspace = true }
+ed25519-dalek = { workspace = true }
+hex = { workspace = true }
+base64 = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
