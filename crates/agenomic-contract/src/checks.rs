@@ -2,7 +2,7 @@
 
 use agenomic_core::Severity;
 
-use crate::types::{BehaviorContract, CheckResult, ContractRule, TraceEnvelope};
+use crate::types::{CheckResult, ContractRule, TraceEnvelope};
 
 /// Trait every deterministic check implements.
 pub trait DeterministicCheck: Send + Sync {

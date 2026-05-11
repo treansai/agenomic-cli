@@ -104,7 +104,7 @@ pub fn detect_spec_version(yaml_text: &str) -> CliResult<String> {
 
 /// Returns true if `version` is one of [`SUPPORTED_SPEC_VERSIONS`].
 pub fn is_supported(version: &str) -> bool {
-    SUPPORTED_SPEC_VERSIONS.iter().any(|v| *v == version)
+    SUPPORTED_SPEC_VERSIONS.contains(&version)
 }
 
 #[cfg(test)]
