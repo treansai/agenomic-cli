@@ -39,17 +39,23 @@ jobs:
         run: cargo build -p agenomic-cli --release --target ${{ matrix.target }}
       - name: Package
         shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
           set -e
-          name="agenomic-${{ matrix.target }}"
-          mkdir -p dist
-          if [[ "${{ matrix.target }}" == *windows* ]]; then
-            cp target/${{ matrix.target }}/release/agenomic.exe "dist/${name}.exe"
-            (cd dist && 7z a "${name}.zip" "${name}.exe")
+          name="agenomic-${TARGET}"
+          stage="dist/stage/${name}"
+          mkdir -p "${stage}"
+          if [[ "${TARGET}" == *windows* ]]; then
+            cp "target/${TARGET}/release/agenomic.exe" "${stage}/agenomic.exe"
+            cp "target/${TARGET}/release/agm.exe" "${stage}/agm.exe"
+            (cd dist/stage && 7z a "../${name}.zip" "${name}")
           else
-            cp target/${{ matrix.target }}/release/agenomic "dist/${name}"
-            (cd dist && tar czf "${name}.tar.gz" "${name}")
+            cp "target/${TARGET}/release/agenomic" "${stage}/agenomic"
+            cp "target/${TARGET}/release/agm" "${stage}/agm"
+            (cd dist/stage && tar czf "../${name}.tar.gz" "${name}")
           fi
+          rm -rf dist/stage
       - uses: actions/upload-artifact@v4
         with:
           name: agenomic-${{ matrix.target }}

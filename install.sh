@@ -50,8 +50,14 @@ fi
 }
 
 tar -xzf "$tmp/$archive" -C "$tmp"
-mv "$tmp/agenomic-${target}" "$INSTALL_DIR/agenomic"
-chmod +x "$INSTALL_DIR/agenomic"
+src="$tmp/agenomic-${target}"
 
-echo "installed agenomic to $INSTALL_DIR/agenomic"
+for bin in agenomic agm; do
+  if [ -f "$src/$bin" ]; then
+    mv "$src/$bin" "$INSTALL_DIR/$bin"
+    chmod +x "$INSTALL_DIR/$bin"
+    echo "installed $bin to $INSTALL_DIR/$bin"
+  fi
+done
+
 echo "ensure $INSTALL_DIR is in your PATH"
