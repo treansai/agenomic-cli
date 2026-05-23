@@ -372,9 +372,10 @@ impl CloudClient {
             .to_string();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
+            let hint = endpoint_hint(status, &body);
             return Err(CliError::Network(format!(
-                "whoami: HTTP {status} — {}",
-                truncate_for_error(&body)
+                "whoami: HTTP {status} — {body}{hint}",
+                body = truncate_for_error(&body)
             )));
         }
         let bytes = resp
@@ -736,15 +737,21 @@ fn truncate_for_error(body: &str) -> String {
 }
 
 /// Build the "is your endpoint right?" hint for non-success responses
-/// whose shape strongly suggests the request landed on the web UI rather
-/// than the API gateway. Common symptom: HTML body or 405 from a redirect.
+/// whose shape strongly suggests the request landed on the web UI
+/// rather than the API gateway. Common symptoms:
+///   * HTML body (Next.js 404 / login page rendered by the dashboard)
+///   * 405 from a redirect that turned POST into POST /login
+///   * 404 with an HTML body
 fn endpoint_hint(status: reqwest::StatusCode, body: &str) -> String {
-    let looks_like_html =
-        body.trim_start().starts_with("<!DOCTYPE") || body.trim_start().starts_with("<html");
+    let looks_like_html = body.trim_start().starts_with("<!DOCTYPE")
+        || body.trim_start().starts_with("<html")
+        || body.contains("_next/static");
     if looks_like_html || status == reqwest::StatusCode::METHOD_NOT_ALLOWED {
         "\nHint: this response looks like it came from the web UI, not the \
          API gateway. Verify that `--endpoint` points to the cloud API \
-         service (typically https://api.<your-domain>), not the dashboard."
+         service (typically https://api.<your-domain>), not the dashboard. \
+         The cloud's web origin needs a `/v1/*` rewrite to the API gateway \
+         if you want a single hostname to serve both."
             .to_string()
     } else {
         String::new()
