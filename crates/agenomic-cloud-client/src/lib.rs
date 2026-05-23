@@ -19,11 +19,20 @@ pub struct CloudClient {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WhoAmIResponse {
-    /// Cloud's response shape: `{ org_id, user_id?, api_key_id, api_key_name }`.
+    /// Cloud's response shape: `{ org_id, user_id?, api_key_id?, api_key_name,
+    /// role?, auth_method? }`. `api_key_id` is `None` for session-auth callers;
+    /// `role` and `auth_method` were added in the cloud's PR 1 refactor and are
+    /// accepted-but-ignored for forward compatibility.
     pub org_id: String,
+    #[serde(default)]
     pub user_id: Option<String>,
-    pub api_key_id: String,
+    #[serde(default)]
+    pub api_key_id: Option<String>,
     pub api_key_name: String,
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
+    pub auth_method: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -298,6 +307,7 @@ impl CloudClient {
         ulid::Ulid::new().to_string()
     }
 
+
     async fn send_with_retry<F, Fut>(&self, mut build: F) -> CliResult<reqwest::Response>
     where
         F: FnMut() -> Fut,
@@ -351,15 +361,37 @@ impl CloudClient {
                 self.http
                     .get(&url)
                     .header("x-api-key", self.api_key_header())
+                    .header("accept", "application/json")
             })
             .await?;
         let status = resp.status();
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
         if !status.is_success() {
-            return Err(CliError::Network(format!("whoami: HTTP {status}")));
+            let body = resp.text().await.unwrap_or_default();
+            return Err(CliError::Network(format!(
+                "whoami: HTTP {status} — {}",
+                truncate_for_error(&body)
+            )));
         }
-        resp.json::<WhoAmIResponse>()
+        let bytes = resp
+            .bytes()
             .await
-            .map_err(|e| CliError::Network(format!("whoami parse: {e}")))
+            .map_err(|e| CliError::Network(format!("whoami read: {e}")))?;
+        serde_json::from_slice::<WhoAmIResponse>(&bytes).map_err(|e| {
+            CliError::Network(format!(
+                "whoami parse: {e} (content-type: {ct}, body: {body}). \
+                 Hint: this usually means the configured endpoint is not the \
+                 Agenomic Cloud API gateway — check that `--endpoint` points to \
+                 the API service (e.g. https://api.agenomic.io), not the web UI.",
+                ct = if content_type.is_empty() { "<none>" } else { &content_type },
+                body = truncate_for_error(&String::from_utf8_lossy(&bytes)),
+            ))
+        })
     }
 
     /// Upload a bundle archive (`.tar.zst`).
@@ -597,6 +629,7 @@ impl CloudClient {
                         .post(&url)
                         .header("x-api-key", self.api_key_header())
                         .header("idempotency-key", idemp)
+                        .header("accept", "application/json")
                         .json(&req)
                 }
             })
@@ -604,8 +637,10 @@ impl CloudClient {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
+            let hint = endpoint_hint(status, &body);
             return Err(CliError::Network(format!(
-                "create_agent: HTTP {status} — {body}"
+                "create_agent: HTTP {status} — {body}{hint}",
+                body = truncate_for_error(&body)
             )));
         }
         let env: AgentResponse = resp
@@ -681,6 +716,38 @@ impl CloudClient {
     }
 }
 
+/// Trim long bodies for inclusion in error strings. We keep enough to
+/// identify the response shape (HTML doctype, JSON error envelope, plain
+/// text), but not so much that a streamed HTML login page floods the
+/// terminal.
+fn truncate_for_error(body: &str) -> String {
+    const MAX: usize = 240;
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return "<empty body>".to_string();
+    }
+    if trimmed.len() <= MAX {
+        return trimmed.to_string();
+    }
+    format!("{}… (+{} bytes)", &trimmed[..MAX], trimmed.len() - MAX)
+}
+
+/// Build the "is your endpoint right?" hint for non-success responses
+/// whose shape strongly suggests the request landed on the web UI rather
+/// than the API gateway. Common symptom: HTML body or 405 from a redirect.
+fn endpoint_hint(status: reqwest::StatusCode, body: &str) -> String {
+    let looks_like_html = body.trim_start().starts_with("<!DOCTYPE")
+        || body.trim_start().starts_with("<html");
+    if looks_like_html || status == reqwest::StatusCode::METHOD_NOT_ALLOWED {
+        "\nHint: this response looks like it came from the web UI, not the \
+         API gateway. Verify that `--endpoint` points to the cloud API \
+         service (typically https://api.<your-domain>), not the dashboard."
+            .to_string()
+    } else {
+        String::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -704,6 +771,58 @@ mod tests {
         let c = CloudClient::new(server.uri(), SecretString::new("secret".into()));
         let r = c.whoami().await.unwrap();
         assert_eq!(r.api_key_name, "dev");
+        assert_eq!(r.api_key_id.as_deref(), Some("00000000-0000-0000-0000-000000000003"));
+    }
+
+    /// Cloud returns `api_key_id: null` for session-auth callers and
+    /// includes additional `role` / `auth_method` fields. The CLI must
+    /// accept the full forward-compatible shape — historically it required
+    /// `api_key_id` to be a string and choked on null.
+    #[tokio::test]
+    async fn whoami_accepts_session_shape() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/whoami"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "org_id": "00000000-0000-0000-0000-000000000001",
+                "user_id": "00000000-0000-0000-0000-000000000002",
+                "api_key_id": null,
+                "api_key_name": "session",
+                "role": "owner",
+                "auth_method": "session"
+            })))
+            .mount(&server)
+            .await;
+        let c = CloudClient::new(server.uri(), SecretString::new("s".into()));
+        let r = c.whoami().await.unwrap();
+        assert!(r.api_key_id.is_none());
+        assert_eq!(r.api_key_name, "session");
+        assert_eq!(r.role.as_deref(), Some("owner"));
+        assert_eq!(r.auth_method.as_deref(), Some("session"));
+    }
+
+    /// HTML responses (a misrouted endpoint hitting the web UI) produce a
+    /// useful diagnostic instead of "error decoding response body".
+    #[tokio::test]
+    async fn whoami_parse_failure_surfaces_body_and_hint() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/whoami"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(
+                        "<!DOCTYPE html><html><body>login</body></html>".as_bytes(),
+                        "text/html; charset=utf-8",
+                    ),
+            )
+            .mount(&server)
+            .await;
+        let c = CloudClient::new(server.uri(), SecretString::new("s".into()));
+        let err = c.whoami().await.unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("whoami parse"), "expected parse error, got: {msg}");
+        assert!(msg.contains("text/html"), "expected content-type in error, got: {msg}");
+        assert!(msg.contains("Hint"), "expected endpoint hint in error, got: {msg}");
     }
 
     #[tokio::test]
