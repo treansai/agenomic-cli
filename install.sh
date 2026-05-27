@@ -63,10 +63,31 @@ else
   wget -qO "$tmp/checksums.txt" "$url_base/checksums.txt"
 fi
 
-(cd "$tmp" && grep "$archive" checksums.txt | shasum -a 256 -c -) || {
-  echo "checksum verification failed" >&2
+# checksums.txt may list archives bare (`agenomic-<t>.tar.gz`) or under a
+# per-target subdir (`./agenomic-<t>/agenomic-<t>.tar.gz`) depending on the
+# release workflow. Match by basename and verify by recomputing.
+expected="$(awk -v a="$archive" '
+  {
+    path = $2
+    sub(/^\.\//, "", path)
+    n = split(path, parts, "/")
+    if (parts[n] == a) { print $1; exit }
+  }
+' "$tmp/checksums.txt")"
+
+if [ -z "$expected" ]; then
+  echo "no checksum entry for $archive in checksums.txt" >&2
   exit 1
-}
+fi
+
+actual="$(shasum -a 256 "$tmp/$archive" | awk '{print $1}')"
+
+if [ "$expected" != "$actual" ]; then
+  echo "checksum mismatch for $archive" >&2
+  echo "  expected: $expected" >&2
+  echo "  actual:   $actual" >&2
+  exit 1
+fi
 
 tar -xzf "$tmp/$archive" -C "$tmp"
 src="$tmp/agenomic-${target}"
