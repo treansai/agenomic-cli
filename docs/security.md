@@ -33,4 +33,4 @@ The CLI defends against three primary threats:
 
 ## Reporting issues
 
-Please email security@agenomic.dev with details and a minimal reproducer.
+Please email security@agenomic.io with details and a minimal reproducer.

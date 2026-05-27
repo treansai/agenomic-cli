@@ -1,11 +1,27 @@
 #!/usr/bin/env bash
 # Install the latest agenomic CLI.
-# Usage: curl -fsSL https://agenomic.dev/install.sh | sh
+# Usage: curl -fsSL https://agenomic.io/install.sh | sh
 set -eu
 
-REPO="agenomic/agenomic-cli"
+REPO="treansai/agenomic-cli"
 VERSION="${AGENOMIC_VERSION:-latest}"
 INSTALL_DIR="${AGENOMIC_INSTALL_DIR:-$HOME/.local/bin}"
+
+fetch() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$1"
+  else
+    wget -qO- "$1"
+  fi
+}
+
+resolve_latest_tag() {
+  # GitHub's /releases/latest endpoint excludes prereleases; use /releases
+  # and pick the first entry so the installer works before a stable release.
+  fetch "https://api.github.com/repos/$REPO/releases" \
+    | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' \
+    | head -n1
+}
 
 uname_s="$(uname -s)"
 uname_m="$(uname -m)"
@@ -23,10 +39,13 @@ case "$uname_s/$uname_m" in
 esac
 
 if [ "$VERSION" = "latest" ]; then
-  url_base="https://github.com/$REPO/releases/latest/download"
-else
-  url_base="https://github.com/$REPO/releases/download/$VERSION"
+  VERSION="$(resolve_latest_tag)"
+  if [ -z "$VERSION" ]; then
+    echo "failed to resolve latest release tag for $REPO" >&2
+    exit 1
+  fi
 fi
+url_base="https://github.com/$REPO/releases/download/$VERSION"
 
 archive="agenomic-${target}.tar.gz"
 url="$url_base/$archive"

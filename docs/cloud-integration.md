@@ -14,7 +14,7 @@ Use Agenomic Cloud when you need:
 ## Login
 
 ```bash
-agenomic cloud login --endpoint https://api.agenomic.dev --api-key <KEY>
+agenomic cloud login --endpoint https://api.agenomic.io --api-key <KEY>
 agenomic cloud whoami
 ```
 

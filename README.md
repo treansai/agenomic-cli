@@ -1,6 +1,6 @@
 # agenomic-cli
 
-[![ci](https://github.com/agenomic/agenomic-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/agenomic/agenomic-cli/actions/workflows/ci.yml)
+[![ci](https://github.com/treansai/agenomic-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/treansai/agenomic-cli/actions/workflows/ci.yml)
 [![Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![crates.io](https://img.shields.io/crates/v/agenomic-cli.svg)](https://crates.io/crates/agenomic-cli)
 
@@ -14,7 +14,7 @@ managed releases.
 
 ```bash
 # Pre-built binary (Linux/macOS):
-curl -fsSL https://agenomic.dev/install.sh | sh
+curl -fsSL https://agenomic.io/install.sh | sh
 
 # Or from source:
 cargo install --path crates/agenomic-cli

@@ -6,7 +6,7 @@ The CLI is designed to be a deterministic gate in your CI.
 
 ```yaml
 - uses: actions/checkout@v4
-- run: curl -fsSL https://agenomic.dev/install.sh | sh
+- run: curl -fsSL https://agenomic.io/install.sh | sh
 - run: agenomic validate ./agent --level ci
 - run: agenomic build ./agent --output dist/agent.bundle.tar.zst --strict
 - run: agenomic replay dist/agent.bundle.tar.zst ./agent/traces.jsonl --output dist/replay.json --fail-on high
@@ -19,7 +19,7 @@ The CLI is designed to be a deterministic gate in your CI.
 agenomic:
   image: rust:1.85
   script:
-    - curl -fsSL https://agenomic.dev/install.sh | sh
+    - curl -fsSL https://agenomic.io/install.sh | sh
     - agenomic validate ./agent --level ci
     - agenomic build ./agent --output dist/agent.bundle.tar.zst --strict
 ```

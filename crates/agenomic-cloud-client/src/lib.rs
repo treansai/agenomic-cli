@@ -276,7 +276,7 @@ impl CloudClient {
     /// ```no_run
     /// use agenomic_cloud_client::CloudClient;
     /// use secrecy::SecretString;
-    /// let _c = CloudClient::new("https://api.agenomic.dev".into(),
+    /// let _c = CloudClient::new("https://api.agenomic.io".into(),
     ///                           SecretString::new("k".into()));
     /// ```
     pub fn new(endpoint: String, api_key: SecretString) -> Self {
