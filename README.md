@@ -8,7 +8,7 @@
 It validates, hashes, bundles, replays, and signs agent definitions fully
 offline; produces and verifies signed ATEP (Agentic Trajectory Event
 Protocol) event histories; and optionally connects to Agenomic Cloud for
-managed releases.
+managed releases..
 
 ## Install
 
