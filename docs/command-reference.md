@@ -30,8 +30,34 @@ Every `agenomic` command, their flags, and exit codes.
 
 ### `agenomic init [PATH]`
 
-Scaffold an empty bundle directory with `genome.yaml`, `agent.lock.yaml`,
+Scaffold a bundle directory with `genome.yaml`, `agent.lock.yaml`,
 `behavior.contract.yaml`, and `prompts/system.md`.
+
+When `PATH` already contains a recognised project manifest
+(`pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`, or an
+existing `agenomic.yaml`), `init` runs detection and fills the
+generated files with values taken from the repository — project name,
+authors, description, framework (`langgraph` / `langchain` /
+`openai-agents` / `crewai` / `llama-index` / `custom`), model
+provider, entrypoint, tools, and memory backend.
+
+Flags: `--name`, `--agent-id`, `--from <SOURCE>...`, `--no-detect`,
+`--force`, `--dry-run`. Full detection rules, precedence chain, and
+the generated `provenance:` block: see
+[`init-and-update.md`](init-and-update.md).
+
+### `agenomic update [PATH]`
+
+Re-run detection on the project and merge new findings into the
+existing bundle. Hand-edits are preserved. When invoked inside a git
+repo, `update` stages the four bundle files and creates a commit by
+default (`chore(agenomic): update bundle (<step> <hash>)`), so every
+change to the agent's genome is paired with a reviewable commit.
+
+Flags: `--message`, `--commit / --no-commit`, `--sign`,
+`--allow-dirty`, `--step <NAME>`, `--dry-run`. Merge semantics,
+commit format, CI integration, and exit codes: see
+[`init-and-update.md`](init-and-update.md).
 
 ### `agenomic validate <PATH> [--level basic|strict|ci]`
 
