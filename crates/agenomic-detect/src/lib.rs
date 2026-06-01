@@ -24,12 +24,14 @@ pub mod model;
 pub mod parse;
 pub mod provenance;
 
-mod git;
+pub mod git;
+
 mod infer;
 mod sources;
 
 pub use detect::{run, DetectOptions};
 pub use emit::{emit, write_bundle, EmittedBundle};
+pub use git::{commit_bundle, repo_state, RepoState, BUNDLE_FILES};
 pub use merge::{merge, Change, MergeResult};
 pub use model::{Dependency, DetectedGenome, Evidence, MemoryInfo, Source, ToolEntry, ToolKind};
 pub use parse::parse_genome;

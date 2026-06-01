@@ -130,6 +130,242 @@ fn precedence_json(genome: &agenomic_detect::DetectedGenome, pretty: bool) -> Cl
     out.map_err(|e| CliError::Internal(format!("{e}")))
 }
 
+/// Branches on which `agm update` refuses to auto-commit by default (§3.6).
+/// (Phase 8 will make this configurable via `agenomic.toml`.)
+const DEFAULT_PROTECTED_BRANCHES: [&str; 3] = ["main", "master", "release/*"];
+
+/// Paths whose working-tree changes do NOT trigger the §3.6 dirty refusal: the
+/// bundle files themselves plus the detection-source manifests a user edits to
+/// drive an update (so the §3.3 "edit pyproject, then update" flow works).
+const UPDATE_DIRTY_IGNORE: &[&str] = &[
+    "genome.yaml",
+    "agent.lock.yaml",
+    "behavior.contract.yaml",
+    "prompts/system.md",
+    "pyproject.toml",
+    "package.json",
+    "Cargo.toml",
+    "go.mod",
+    "agenomic.yaml",
+    "README.md",
+    "Dockerfile",
+];
+
+/// What an update run did, for rendering.
+enum UpdateOutcome {
+    DryRun,
+    NoChange,
+    Written { bundle_hash: String },
+    Committed { oid: String, bundle_hash: String },
+}
+
+pub fn cmd_update(args: &UpdateArgs, format: OutputFormat) -> CliResult<ExitCode> {
+    let dir = &args.path;
+    let genome_path = dir.join("genome.yaml");
+    if !genome_path.exists() {
+        return Err(CliError::UpdateRefused {
+            reason: format!("no genome.yaml at {}; run `agm init` first", dir.display()),
+        });
+    }
+
+    // Detect → parse current → merge.
+    let only: Option<Vec<agenomic_detect::Source>> = if args.from.is_empty() {
+        None
+    } else {
+        Some(args.from.iter().map(|s| s.to_source()).collect())
+    };
+    let opts = agenomic_detect::DetectOptions {
+        only,
+        no_detect: false,
+        name_override: None,
+        agent_id_override: None,
+    };
+    let detected = agenomic_detect::run(dir, &opts)?;
+    let current_text = std::fs::read_to_string(&genome_path).map_err(|e| io_at(&genome_path, e))?;
+    let current = agenomic_detect::parse_genome(&current_text)?;
+    let prior = agenomic_detect::load_provenance(dir)?;
+    let result = agenomic_detect::merge(&current, &detected, prior.as_ref(), args.prune);
+
+    if args.dry_run {
+        render_update(&result, format, &UpdateOutcome::DryRun)?;
+        return Ok(ExitCode::Success);
+    }
+    if result.is_noop() {
+        render_update(&result, format, &UpdateOutcome::NoChange)?;
+        return Ok(ExitCode::ValidationFailed); // exit 1 (§3.7)
+    }
+
+    // Decide on committing and run the §3.6 refusal checks BEFORE writing.
+    let state = agenomic_detect::repo_state(dir)?;
+    let should_commit = !args.no_commit && state.is_repo;
+    if should_commit {
+        if args.sign {
+            return Err(CliError::UpdateRefused {
+                reason: "signed commits are not supported by the offline commit path; use --no-commit then `git commit -S`".into(),
+            });
+        }
+        if !args.allow_dirty {
+            if state.detached {
+                return Err(CliError::UpdateRefused {
+                    reason: "HEAD is detached".into(),
+                });
+            }
+            if let Some(branch) = state.branch.as_deref() {
+                if branch_protected(branch, &DEFAULT_PROTECTED_BRANCHES) {
+                    return Err(CliError::UpdateRefused {
+                        reason: format!("branch '{branch}' is protected; run on a feature branch"),
+                    });
+                }
+            }
+            let dirty_outside: Vec<&str> = state
+                .changed
+                .iter()
+                .map(String::as_str)
+                .filter(|p| !UPDATE_DIRTY_IGNORE.contains(p))
+                .collect();
+            if !dirty_outside.is_empty() {
+                return Err(CliError::UpdateRefused {
+                    reason: format!(
+                        "working tree has unrelated changes: {}",
+                        dirty_outside.join(", ")
+                    ),
+                });
+            }
+        }
+    }
+
+    // Write the merged bundle (overwrite the four files).
+    let bundle = agenomic_detect::emit(&result.merged);
+    agenomic_detect::write_bundle(dir, &bundle, true)?;
+
+    // Logical bundle hash (matches `agenomic hash`); the sidecar is excluded.
+    let manifest = agenomic_hash::compute_manifest(dir)?;
+    let full_hash = manifest.root_hash;
+    let short_hash: String = full_hash.chars().take(12).collect();
+
+    // Provenance: record this detection + frozen fields + the last_update summary.
+    let mut provenance = agenomic_detect::Provenance::from_detection(
+        &result.merged,
+        agenomic_detect::resolved_detected_at(),
+    );
+    provenance.frozen = result.frozen.clone();
+    provenance.last_update = Some(agenomic_detect::LastUpdate {
+        step: args.step.as_deref().map(sanitize_step),
+        bundle_hash: full_hash.clone(),
+        changes: result.changes.iter().map(|c| c.render()).collect(),
+    });
+    agenomic_detect::write_provenance(dir, &provenance)?;
+
+    let outcome = if should_commit {
+        let step = args.step.as_deref().map(sanitize_step).unwrap_or_default();
+        let message = args.message.clone().unwrap_or_else(|| {
+            build_commit_message(&step, &short_hash, &full_hash, &result.changes)
+        });
+        // Commit the four bundle files plus the provenance sidecar (which the
+        // next merge needs); the sidecar is still excluded from the logical hash.
+        let mut commit_files: Vec<&str> = agenomic_detect::BUNDLE_FILES.to_vec();
+        commit_files.push(".agenomic/provenance.yaml");
+        let oid = agenomic_detect::commit_bundle(dir, &commit_files, &message)?;
+        UpdateOutcome::Committed {
+            oid,
+            bundle_hash: full_hash,
+        }
+    } else {
+        UpdateOutcome::Written {
+            bundle_hash: full_hash,
+        }
+    };
+    render_update(&result, format, &outcome)?;
+    Ok(ExitCode::Success)
+}
+
+fn branch_protected(branch: &str, patterns: &[&str]) -> bool {
+    patterns.iter().any(|p| match p.strip_suffix("/*") {
+        Some(prefix) => branch.starts_with(&format!("{prefix}/")),
+        None => branch == *p,
+    })
+}
+
+fn sanitize_step(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+fn build_commit_message(
+    step: &str,
+    short_hash: &str,
+    full_hash: &str,
+    changes: &[agenomic_detect::Change],
+) -> String {
+    let subject = if step.is_empty() {
+        format!("chore(agenomic): update bundle ({short_hash})")
+    } else {
+        format!("chore(agenomic): update bundle ({step} {short_hash})")
+    };
+    let mut msg = subject;
+    msg.push_str("\n\nDetected changes:\n");
+    for c in changes {
+        msg.push_str(&format!("- {}\n", c.render()));
+    }
+    msg.push_str(&format!("\nBundle hash: b3:{full_hash}\n"));
+    msg
+}
+
+fn render_update(
+    result: &agenomic_detect::MergeResult,
+    format: OutputFormat,
+    outcome: &UpdateOutcome,
+) -> CliResult<()> {
+    match format {
+        OutputFormat::Human => {
+            for c in &result.changes {
+                println!("✓ {}", c.render());
+            }
+            match outcome {
+                UpdateOutcome::DryRun => println!("(dry run — nothing written)"),
+                UpdateOutcome::NoChange => println!("no changes; bundle is up to date"),
+                UpdateOutcome::Written { .. } => println!("wrote bundle (not committed)"),
+                UpdateOutcome::Committed { oid, .. } => {
+                    println!("committed {}", &oid[..oid.len().min(12)]);
+                }
+            }
+        }
+        OutputFormat::Yaml => {
+            print!("{}", agenomic_detect::emit(&result.merged).genome);
+        }
+        OutputFormat::Json | OutputFormat::JsonPretty => {
+            let (committed, bundle_hash, commit) = match outcome {
+                UpdateOutcome::Committed { oid, bundle_hash } => {
+                    (true, Some(bundle_hash.clone()), Some(oid.clone()))
+                }
+                UpdateOutcome::Written { bundle_hash } => (false, Some(bundle_hash.clone()), None),
+                UpdateOutcome::DryRun | UpdateOutcome::NoChange => (false, None, None),
+            };
+            let value = serde_json::json!({
+                "changed": result.changes.iter().map(|c| c.render()).collect::<Vec<_>>(),
+                "frozen": result.frozen,
+                "committed": committed,
+                "bundle_hash": bundle_hash,
+                "commit": commit,
+            });
+            let out = if matches!(format, OutputFormat::JsonPretty) {
+                serde_json::to_string_pretty(&value)
+            } else {
+                serde_json::to_string(&value)
+            };
+            println!("{}", out.map_err(|e| CliError::Internal(format!("{e}")))?);
+        }
+    }
+    Ok(())
+}
+
 pub fn cmd_validate(
     args: &ValidateArgs,
     format: OutputFormat,

@@ -46,6 +46,13 @@ pub enum CliError {
     )]
     InitWouldOverwrite { path: String },
 
+    #[error("update refused: {reason}")]
+    #[diagnostic(
+        code(agenomic::update::refused),
+        help("pass --allow-dirty / run on a feature branch, or use --no-commit")
+    )]
+    UpdateRefused { reason: String },
+
     #[error("ATEP integrity check failed: {reason}")]
     #[diagnostic(code(agenomic::atep::integrity), severity(Error))]
     AtepIntegrity { reason: String },
@@ -111,7 +118,7 @@ impl CliError {
             Self::PathTraversal { .. } | Self::SymlinkRejected { .. } => {
                 ExitCode::SecurityViolation
             }
-            Self::InitWouldOverwrite { .. } => ExitCode::InvalidUsage,
+            Self::InitWouldOverwrite { .. } | Self::UpdateRefused { .. } => ExitCode::InvalidUsage,
             Self::AtepIntegrity { .. } | Self::AtepSignatureInvalid { .. } => {
                 ExitCode::AtepIntegrityFailed
             }

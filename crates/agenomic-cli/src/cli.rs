@@ -67,6 +67,8 @@ pub struct Cli {
 pub enum Commands {
     /// Initialize an empty agent bundle in the current directory.
     Init(InitArgs),
+    /// Re-detect, merge into the existing bundle, and commit the change.
+    Update(UpdateArgs),
     /// Validate a bundle directory or archive.
     Validate(ValidateArgs),
     /// Build a `.bundle.tar.zst` from a directory.
@@ -150,6 +152,39 @@ pub struct InitArgs {
     /// Print the genome that would be written; write nothing; exit 0.
     #[arg(long)]
     pub dry_run: bool,
+}
+
+#[derive(Debug, Parser)]
+pub struct UpdateArgs {
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    /// Commit message override (default: the auto-generated template).
+    #[arg(long, short)]
+    pub message: Option<String>,
+    /// Force the auto-commit on (default: on when inside a git repo).
+    #[arg(long)]
+    pub commit: bool,
+    /// Write the files but do not commit.
+    #[arg(long = "no-commit")]
+    pub no_commit: bool,
+    /// Sign the commit (currently unsupported by the offline commit path).
+    #[arg(long)]
+    pub sign: bool,
+    /// Commit even with unrelated dirty changes or a detached/protected HEAD.
+    #[arg(long)]
+    pub allow_dirty: bool,
+    /// Drop list items that detection produced before but no longer does.
+    #[arg(long)]
+    pub prune: bool,
+    /// Logical step label (sanitised to [a-z0-9_-]); appears in the commit.
+    #[arg(long)]
+    pub step: Option<String>,
+    /// Print the diff vs. current files; exit 0; write nothing; no commit.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Restrict detection to these sources (repeatable).
+    #[arg(long = "from", value_enum)]
+    pub from: Vec<SourceArg>,
 }
 
 #[derive(Debug, Parser)]
