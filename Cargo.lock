@@ -86,6 +86,7 @@ dependencies = [
  "agenomic-config",
  "agenomic-contract",
  "agenomic-core",
+ "agenomic-detect",
  "agenomic-diagnostics",
  "agenomic-diff",
  "agenomic-fs",

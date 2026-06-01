@@ -43,7 +43,7 @@ pub fn run() -> i32 {
     let no_color = cli.no_color || std::env::var("NO_COLOR").is_ok();
 
     let result = match &cli.command {
-        Commands::Init(args) => commands::cmd_init(args),
+        Commands::Init(args) => commands::cmd_init(args, format),
         Commands::Validate(args) => commands::cmd_validate(args, format, no_color),
         Commands::Build(args) => commands::cmd_build(args, format, no_color),
         Commands::Inspect(args) => commands::cmd_inspect(args, format, no_color),

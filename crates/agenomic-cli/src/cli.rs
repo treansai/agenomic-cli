@@ -97,14 +97,59 @@ pub enum Commands {
     Completions { shell: clap_complete::Shell },
 }
 
+/// A detection source selectable via `--from` (every source except defaults).
+/// Variant names render as the kebab-case labels in §2.2 (`package-json`, etc.).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum SourceArg {
+    Pyproject,
+    PackageJson,
+    Cargo,
+    GoMod,
+    AgenomicYaml,
+    Readme,
+    Git,
+    Dockerfile,
+}
+
+impl SourceArg {
+    /// Map to the detection crate's [`agenomic_detect::Source`].
+    pub fn to_source(self) -> agenomic_detect::Source {
+        use agenomic_detect::Source;
+        match self {
+            SourceArg::Pyproject => Source::Pyproject,
+            SourceArg::PackageJson => Source::PackageJson,
+            SourceArg::Cargo => Source::Cargo,
+            SourceArg::GoMod => Source::GoMod,
+            SourceArg::AgenomicYaml => Source::AgenomicYaml,
+            SourceArg::Readme => Source::Readme,
+            SourceArg::Git => Source::Git,
+            SourceArg::Dockerfile => Source::Dockerfile,
+        }
+    }
+}
+
 #[derive(Debug, Parser)]
 pub struct InitArgs {
     #[arg(default_value = ".")]
     pub path: PathBuf,
+    /// Override the detected agent id.
     #[arg(long)]
     pub agent_id: Option<String>,
-    #[arg(long, default_value = "Example Agent")]
-    pub name: String,
+    /// Override the detected agent name.
+    #[arg(long)]
+    pub name: Option<String>,
+    /// Restrict detection to these sources (repeatable).
+    #[arg(long = "from", value_enum)]
+    pub from: Vec<SourceArg>,
+    /// Skip detection entirely; behave like the legacy scaffolder.
+    #[arg(long)]
+    pub no_detect: bool,
+    /// Overwrite existing bundle files.
+    #[arg(long)]
+    pub force: bool,
+    /// Print the genome that would be written; write nothing; exit 0.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -267,6 +312,9 @@ pub enum CloudSub {
     ///
     /// Creates the agent if `--agent-id` is not given, then uploads the
     /// `.bundle.tar.zst` as a base64 payload to `POST /v1/bundles`.
+    // Has its own `--version` (bundle label); disable the auto version flag
+    // that `propagate_version` would otherwise add (clap 4.6 rejects the clash).
+    #[command(disable_version_flag = true)]
     PushAgent {
         /// Path to the bundle archive (`.bundle.tar.zst`) to upload.
         bundle: PathBuf,
@@ -285,6 +333,7 @@ pub enum CloudSub {
         agent_id: Option<String>,
     },
     /// Create a release pinning a bundle to an agent at a version label.
+    #[command(disable_version_flag = true)]
     PushRelease {
         /// Agent id (UUID) to release for.
         #[arg(long)]

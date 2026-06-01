@@ -17,58 +17,117 @@ use agenomic_validate::{validate_archive, validate_bundle};
 use crate::cli::*;
 use crate::render::render;
 
-pub fn cmd_init(args: &InitArgs) -> CliResult<ExitCode> {
+pub fn cmd_init(args: &InitArgs, format: OutputFormat) -> CliResult<ExitCode> {
     let dir = &args.path;
-    if !dir.exists() {
+    if !args.dry_run && !dir.exists() {
         std::fs::create_dir_all(dir).map_err(|e| io_at(dir, e))?;
     }
-    let agent_id = args
-        .agent_id
-        .clone()
-        .unwrap_or_else(|| "agent://example/new".to_string());
 
-    let genome = format!(
-        "spec_version: '0.1'\n\
-         agent:\n  id: '{agent_id}'\n  name: '{}'\n  domain: 'general'\n  criticality: 'low'\n\
-         runtime:\n  model_provider: 'openai'\n  model_id: 'gpt-4o'\n\
-         tools: []\n\
-         skills: []\n\
-         knowledge: []\n\
-         policies: []\n",
-        args.name
-    );
-    write_if_missing(&dir.join("genome.yaml"), genome.as_bytes())?;
+    let has_manifest = manifest_present(dir);
+    // We only run manifest-based detection when a recognised manifest is present
+    // and the user didn't opt out; otherwise we behave like the legacy scaffolder.
+    let detected = has_manifest && !args.no_detect;
+    let genome_path = dir.join("genome.yaml");
 
-    let lock = format!(
-        "spec_version: '0.1'\n\
-         agent_id: '{agent_id}'\n\
-         model:\n  provider: 'openai'\n  model_id: 'gpt-4o'\n\
-         tools: []\n\
-         knowledge: []\n"
-    );
-    write_if_missing(&dir.join("agent.lock.yaml"), lock.as_bytes())?;
+    // §2.1: a real project that already has a genome refuses (exit 2) and points
+    // the user at `agm update`, unless --force is set.
+    if !args.dry_run && detected && genome_path.exists() && !args.force {
+        return Err(CliError::InitWouldOverwrite {
+            path: genome_path.display().to_string(),
+        });
+    }
 
-    let contract = "spec_version: '0.1'\ncontract:\n  id: 'contract://example/v1'\n  rules: []\n";
-    write_if_missing(&dir.join("behavior.contract.yaml"), contract.as_bytes())?;
+    let only: Option<Vec<agenomic_detect::Source>> = if args.from.is_empty() {
+        None
+    } else {
+        Some(args.from.iter().map(|s| s.to_source()).collect())
+    };
+    let opts = agenomic_detect::DetectOptions {
+        only,
+        no_detect: !detected,
+        name_override: args.name.clone(),
+        agent_id_override: args.agent_id.clone(),
+    };
 
-    std::fs::create_dir_all(dir.join("prompts")).map_err(|e| io_at(&dir.join("prompts"), e))?;
-    write_if_missing(
-        &dir.join("prompts/system.md"),
-        b"You are a helpful agent.\n",
-    )?;
+    let genome = agenomic_detect::run(dir, &opts)?;
+    let bundle = agenomic_detect::emit(&genome);
 
-    println!("initialized bundle at {}", dir.display());
+    if args.dry_run {
+        render_init(&genome, &bundle, format, true, dir)?;
+        return Ok(ExitCode::Success);
+    }
+
+    agenomic_detect::write_bundle(dir, &bundle, args.force)?;
+    if detected {
+        let provenance = agenomic_detect::Provenance::from_detection(
+            &genome,
+            agenomic_detect::resolved_detected_at(),
+        );
+        agenomic_detect::write_provenance(dir, &provenance)?;
+    }
+    render_init(&genome, &bundle, format, false, dir)?;
     Ok(ExitCode::Success)
 }
 
-fn write_if_missing(path: &Path, content: &[u8]) -> CliResult<()> {
-    if path.exists() {
-        return Ok(());
+/// True if `dir` contains a recognised project manifest that triggers detection.
+fn manifest_present(dir: &Path) -> bool {
+    [
+        "pyproject.toml",
+        "package.json",
+        "Cargo.toml",
+        "go.mod",
+        "agenomic.yaml",
+    ]
+    .iter()
+    .any(|f| dir.join(f).exists())
+}
+
+/// Render init output per `--format`: human prints a status line (or the genome
+/// under `--dry-run`), yaml prints the genome, json/json-pretty print the §2.3
+/// precedence-chain log.
+fn render_init(
+    genome: &agenomic_detect::DetectedGenome,
+    bundle: &agenomic_detect::EmittedBundle,
+    format: OutputFormat,
+    dry_run: bool,
+    dir: &Path,
+) -> CliResult<()> {
+    match format {
+        OutputFormat::Human => {
+            if dry_run {
+                print!("{}", bundle.genome);
+            } else {
+                println!("initialized bundle at {}", dir.display());
+            }
+        }
+        OutputFormat::Yaml => print!("{}", bundle.genome),
+        OutputFormat::Json => println!("{}", precedence_json(genome, false)?),
+        OutputFormat::JsonPretty => println!("{}", precedence_json(genome, true)?),
     }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| io_at(parent, e))?;
-    }
-    agenomic_fs::write_atomic(path, content)
+    Ok(())
+}
+
+/// The detection precedence chain as a JSON array of `{field, value, source, evidence}`.
+fn precedence_json(genome: &agenomic_detect::DetectedGenome, pretty: bool) -> CliResult<String> {
+    let records: Vec<serde_json::Value> = genome
+        .sorted_evidence()
+        .iter()
+        .map(|e| {
+            serde_json::json!({
+                "field": e.field,
+                "value": e.value,
+                "source": e.source.label(),
+                "evidence": e.evidence,
+            })
+        })
+        .collect();
+    let value = serde_json::Value::Array(records);
+    let out = if pretty {
+        serde_json::to_string_pretty(&value)
+    } else {
+        serde_json::to_string(&value)
+    };
+    out.map_err(|e| CliError::Internal(format!("{e}")))
 }
 
 pub fn cmd_validate(
@@ -158,7 +217,7 @@ pub fn cmd_hash(args: &HashArgs, _format: OutputFormat, _no_color: bool) -> CliR
         agenomic_hash::compute_manifest(&args.target)?
     } else {
         let pairs = agenomic_bundle::read_archive_to_pairs(&args.target)?;
-        agenomic_hash::compute_manifest_from_pairs(pairs.into_iter())?
+        agenomic_hash::compute_manifest_from_pairs(pairs)?
     };
     let bytes = hex::decode(&manifest.root_hash).unwrap_or_default();
     if bytes.len() == 32 {
@@ -460,7 +519,7 @@ pub fn cmd_bundle(args: &BundleCommand) -> CliResult<ExitCode> {
                 agenomic_hash::compute_manifest(target)?
             } else {
                 let pairs = agenomic_bundle::read_archive_to_pairs(target)?;
-                agenomic_hash::compute_manifest_from_pairs(pairs.into_iter())?
+                agenomic_hash::compute_manifest_from_pairs(pairs)?
             };
             let s = serde_json::to_string_pretty(&manifest)
                 .map_err(|e| CliError::Internal(format!("{e}")))?;
