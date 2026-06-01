@@ -105,6 +105,7 @@ dependencies = [
  "console 0.15.11",
  "git-version",
  "hex",
+ "insta",
  "miette",
  "predicates",
  "secrecy",
