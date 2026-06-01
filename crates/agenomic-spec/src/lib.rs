@@ -10,6 +10,17 @@ pub const SUPPORTED_SPEC_VERSIONS: &[&str] = &["0.1"];
 /// Default spec version emitted by `agenomic init`.
 pub const CURRENT_SPEC_VERSION: &str = "0.1";
 
+/// Version stamped into detection provenance as `detector_version`.
+///
+/// This equals the `agenomic-spec` crate version (not the binary version), so
+/// two `agm` builds at the same spec version produce byte-identical detection
+/// output (see `docs/init-and-update.md` §2.7).
+///
+/// ```
+/// assert!(!agenomic_spec::DETECTOR_VERSION.is_empty());
+/// ```
+pub const DETECTOR_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Identifier for one of the embedded schemas.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SchemaKind {
@@ -115,15 +126,16 @@ mod tests {
     fn all_schemas_parse() {
         for kind in SchemaKind::ALL {
             let s = embedded_schema(kind);
-            let _: serde_json::Value =
-                serde_json::from_str(s).expect(&format!("schema {} not valid JSON", kind.label()));
+            let _: serde_json::Value = serde_json::from_str(s)
+                .unwrap_or_else(|e| panic!("schema {} not valid JSON: {e}", kind.label()));
         }
     }
 
     #[test]
     fn all_validators_compile() {
         for kind in SchemaKind::ALL {
-            let _ = validator(kind).expect(&format!("compile failed for {}", kind.label()));
+            let _ = validator(kind)
+                .unwrap_or_else(|e| panic!("compile failed for {}: {e}", kind.label()));
         }
     }
 

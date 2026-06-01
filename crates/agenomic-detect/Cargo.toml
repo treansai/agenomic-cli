@@ -1,0 +1,24 @@
+[package]
+name = "agenomic-detect"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Repo-aware genome detection and merge for `agm init` / `agm update`"
+
+[dependencies]
+agenomic-core = { workspace = true }
+agenomic-fs = { workspace = true }
+agenomic-spec = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+toml = { workspace = true }
+gix = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+insta = { workspace = true }
+tempfile = { workspace = true }

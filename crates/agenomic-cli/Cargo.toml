@@ -30,6 +30,7 @@ agenomic-cloud-client = { workspace = true }
 agenomic-diagnostics = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
+git-version = { workspace = true }
 tokio = { workspace = true }
 miette = { workspace = true }
 tracing = { workspace = true }
