@@ -18,11 +18,18 @@
 //! path-traversal rejection); errors surface as [`agenomic_core::CliError`].
 
 pub mod detect;
+pub mod emit;
 pub mod model;
+pub mod provenance;
 
 mod git;
 mod infer;
 mod sources;
 
 pub use detect::{run, DetectOptions};
+pub use emit::{emit, write_bundle, EmittedBundle};
 pub use model::{Dependency, DetectedGenome, Evidence, MemoryInfo, Source, ToolEntry, ToolKind};
+pub use provenance::{
+    load_provenance, provenance_path, resolved_detected_at, write_provenance, LastUpdate,
+    Provenance, SourceRecord,
+};

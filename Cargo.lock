@@ -173,6 +173,7 @@ dependencies = [
  "agenomic-core",
  "agenomic-fs",
  "agenomic-spec",
+ "chrono",
  "gix",
  "insta",
  "proptest",
