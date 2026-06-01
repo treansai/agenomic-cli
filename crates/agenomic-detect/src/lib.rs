@@ -19,7 +19,9 @@
 
 pub mod detect;
 pub mod emit;
+pub mod merge;
 pub mod model;
+pub mod parse;
 pub mod provenance;
 
 mod git;
@@ -28,7 +30,9 @@ mod sources;
 
 pub use detect::{run, DetectOptions};
 pub use emit::{emit, write_bundle, EmittedBundle};
+pub use merge::{merge, Change, MergeResult};
 pub use model::{Dependency, DetectedGenome, Evidence, MemoryInfo, Source, ToolEntry, ToolKind};
+pub use parse::parse_genome;
 pub use provenance::{
     load_provenance, provenance_path, resolved_detected_at, write_provenance, LastUpdate,
     Provenance, SourceRecord,
