@@ -55,9 +55,12 @@ default (`chore(agenomic): update bundle (<step> <hash>)`), so every
 change to the agent's genome is paired with a reviewable commit.
 
 Flags: `--message`, `--commit / --no-commit`, `--sign`,
-`--allow-dirty`, `--step <NAME>`, `--dry-run`. Merge semantics,
-commit format, CI integration, and exit codes: see
-[`init-and-update.md`](init-and-update.md).
+`--allow-dirty`, `--prune`, `--step <NAME>`, `--dry-run`,
+`--from <SOURCE>...`. Merge semantics, commit format, CI integration,
+and exit codes: see [`init-and-update.md`](init-and-update.md).
+
+> Note: `--sign` is not yet supported by the offline (`gix`) commit
+> path; use `--no-commit` then `git commit -S` to sign manually.
 
 ### `agenomic validate <PATH> [--level basic|strict|ci]`
 
