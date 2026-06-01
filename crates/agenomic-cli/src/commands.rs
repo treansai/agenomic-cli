@@ -37,10 +37,12 @@ pub fn cmd_init(args: &InitArgs, format: OutputFormat) -> CliResult<ExitCode> {
         });
     }
 
-    let only: Option<Vec<agenomic_detect::Source>> = if args.from.is_empty() {
-        None
-    } else {
+    let project = agenomic_config::load_project_walking_up(dir)?;
+    // `--from` overrides config; config `[init].sources` is the fallback.
+    let only: Option<Vec<agenomic_detect::Source>> = if !args.from.is_empty() {
         Some(args.from.iter().map(|s| s.to_source()).collect())
+    } else {
+        config_sources(&project)
     };
     let opts = agenomic_detect::DetectOptions {
         only,
@@ -49,7 +51,8 @@ pub fn cmd_init(args: &InitArgs, format: OutputFormat) -> CliResult<ExitCode> {
         agent_id_override: args.agent_id.clone(),
     };
 
-    let genome = agenomic_detect::run(dir, &opts)?;
+    let mut genome = agenomic_detect::run(dir, &opts)?;
+    apply_init_config(&mut genome, &project);
     let bundle = agenomic_detect::emit(&genome);
 
     if args.dry_run {
@@ -130,8 +133,45 @@ fn precedence_json(genome: &agenomic_detect::DetectedGenome, pretty: bool) -> Cl
     out.map_err(|e| CliError::Internal(format!("{e}")))
 }
 
-/// Branches on which `agm update` refuses to auto-commit by default (§3.6).
-/// (Phase 8 will make this configurable via `agenomic.toml`.)
+/// Detection sources from `[init].sources` in `agenomic.toml`, if configured.
+fn config_sources(
+    project: &Option<agenomic_config::ProjectConfig>,
+) -> Option<Vec<agenomic_detect::Source>> {
+    let labels = project.as_ref()?.init.as_ref()?.sources.as_ref()?;
+    let sources: Vec<agenomic_detect::Source> = labels
+        .iter()
+        .filter_map(|l| agenomic_detect::Source::from_label(l))
+        .collect();
+    (!sources.is_empty()).then_some(sources)
+}
+
+/// Apply `[init].default_domain`/`default_criticality` unless detection (e.g.
+/// `agenomic.yaml`) already set the field.
+fn apply_init_config(
+    genome: &mut agenomic_detect::DetectedGenome,
+    project: &Option<agenomic_config::ProjectConfig>,
+) {
+    let Some(init) = project.as_ref().and_then(|p| p.init.as_ref()) else {
+        return;
+    };
+    if let Some(domain) = &init.default_domain {
+        if !genome.evidence.iter().any(|e| e.field == "agent.domain") {
+            genome.domain = domain.clone();
+        }
+    }
+    if let Some(crit) = &init.default_criticality {
+        if !genome
+            .evidence
+            .iter()
+            .any(|e| e.field == "agent.criticality")
+        {
+            genome.criticality = crit.clone();
+        }
+    }
+}
+
+/// Default branches on which `agm update` refuses to auto-commit (§3.6),
+/// when `[update].protected_branches` is not configured.
 const DEFAULT_PROTECTED_BRANCHES: [&str; 3] = ["main", "master", "release/*"];
 
 /// Paths whose working-tree changes do NOT trigger the §3.6 dirty refusal: the
@@ -195,11 +235,29 @@ pub fn cmd_update(args: &UpdateArgs, format: OutputFormat) -> CliResult<ExitCode
         return Ok(ExitCode::ValidationFailed); // exit 1 (§3.7)
     }
 
+    // Resolve `[update]` config (with §3/§4 defaults).
+    let project = agenomic_config::load_project_walking_up(dir)?;
+    let update_cfg = project
+        .as_ref()
+        .and_then(|p| p.update.clone())
+        .unwrap_or_default();
+    let cfg_auto_commit = update_cfg.auto_commit.unwrap_or(true);
+    let protected: Vec<String> = update_cfg.protected_branches.clone().unwrap_or_else(|| {
+        DEFAULT_PROTECTED_BRANCHES
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect()
+    });
+    let commit_template = update_cfg
+        .commit_template
+        .clone()
+        .unwrap_or_else(|| "chore(agenomic): update bundle ({step} {hash})".to_string());
+
     // Decide on committing and run the §3.6 refusal checks BEFORE writing.
     let state = agenomic_detect::repo_state(dir)?;
-    let should_commit = !args.no_commit && state.is_repo;
+    let should_commit = !args.no_commit && state.is_repo && (args.commit || cfg_auto_commit);
     if should_commit {
-        if args.sign {
+        if args.sign || update_cfg.sign.unwrap_or(false) {
             return Err(CliError::UpdateRefused {
                 reason: "signed commits are not supported by the offline commit path; use --no-commit then `git commit -S`".into(),
             });
@@ -211,7 +269,7 @@ pub fn cmd_update(args: &UpdateArgs, format: OutputFormat) -> CliResult<ExitCode
                 });
             }
             if let Some(branch) = state.branch.as_deref() {
-                if branch_protected(branch, &DEFAULT_PROTECTED_BRANCHES) {
+                if branch_protected(branch, &protected) {
                     return Err(CliError::UpdateRefused {
                         reason: format!("branch '{branch}' is protected; run on a feature branch"),
                     });
@@ -259,7 +317,13 @@ pub fn cmd_update(args: &UpdateArgs, format: OutputFormat) -> CliResult<ExitCode
     let outcome = if should_commit {
         let step = args.step.as_deref().map(sanitize_step).unwrap_or_default();
         let message = args.message.clone().unwrap_or_else(|| {
-            build_commit_message(&step, &short_hash, &full_hash, &result.changes)
+            build_commit_message(
+                &commit_template,
+                &step,
+                &short_hash,
+                &full_hash,
+                &result.changes,
+            )
         });
         // Commit the four bundle files plus the provenance sidecar (which the
         // next merge needs); the sidecar is still excluded from the logical hash.
@@ -279,10 +343,10 @@ pub fn cmd_update(args: &UpdateArgs, format: OutputFormat) -> CliResult<ExitCode
     Ok(ExitCode::Success)
 }
 
-fn branch_protected(branch: &str, patterns: &[&str]) -> bool {
+fn branch_protected(branch: &str, patterns: &[String]) -> bool {
     patterns.iter().any(|p| match p.strip_suffix("/*") {
         Some(prefix) => branch.starts_with(&format!("{prefix}/")),
-        None => branch == *p,
+        None => branch == p.as_str(),
     })
 }
 
@@ -299,15 +363,21 @@ fn sanitize_step(s: &str) -> String {
 }
 
 fn build_commit_message(
+    template: &str,
     step: &str,
     short_hash: &str,
     full_hash: &str,
     changes: &[agenomic_detect::Change],
 ) -> String {
     let subject = if step.is_empty() {
-        format!("chore(agenomic): update bundle ({short_hash})")
+        template
+            .replace("{step} ", "")
+            .replace("{step}", "")
+            .replace("{hash}", short_hash)
     } else {
-        format!("chore(agenomic): update bundle ({step} {short_hash})")
+        template
+            .replace("{step}", step)
+            .replace("{hash}", short_hash)
     };
     let mut msg = subject;
     msg.push_str("\n\nDetected changes:\n");

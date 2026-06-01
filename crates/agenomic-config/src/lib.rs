@@ -57,6 +57,31 @@ pub struct CredentialEntry {
     pub api_key: String,
 }
 
+/// `[init]` table from `agenomic.toml` (see `docs/init-and-update.md` §4).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct InitConfig {
+    #[serde(default)]
+    pub default_domain: Option<String>,
+    #[serde(default)]
+    pub default_criticality: Option<String>,
+    /// Detection sources to enable (kebab-case labels), used when `--from` is absent.
+    #[serde(default)]
+    pub sources: Option<Vec<String>>,
+}
+
+/// `[update]` table from `agenomic.toml` (see `docs/init-and-update.md` §4).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UpdateConfig {
+    #[serde(default)]
+    pub auto_commit: Option<bool>,
+    #[serde(default)]
+    pub sign: Option<bool>,
+    #[serde(default)]
+    pub protected_branches: Option<Vec<String>>,
+    #[serde(default)]
+    pub commit_template: Option<String>,
+}
+
 /// Project config from `agenomic.toml`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProjectConfig {
@@ -72,6 +97,10 @@ pub struct ProjectConfig {
     pub fail_on: Option<Severity>,
     #[serde(default)]
     pub cloud_profile: Option<String>,
+    #[serde(default)]
+    pub init: Option<InitConfig>,
+    #[serde(default)]
+    pub update: Option<UpdateConfig>,
 }
 
 /// Resolved profile (merged from file + env).
@@ -223,7 +252,15 @@ fn read_credentials() -> CliResult<CredentialsFile> {
     toml::from_str(&s).map_err(|e| CliError::Internal(format!("credentials parse: {e}")))
 }
 
-fn load_project_walking_up(start: &Path) -> CliResult<Option<ProjectConfig>> {
+/// Load the nearest `agenomic.toml` by walking up from `start`, returning
+/// `None` if none is found. Exposed for `agm init`/`agm update` to read the
+/// `[init]`/`[update]` tables.
+///
+/// ```no_run
+/// let cfg = agenomic_config::load_project_walking_up(std::path::Path::new(".")).unwrap();
+/// println!("{}", cfg.is_some());
+/// ```
+pub fn load_project_walking_up(start: &Path) -> CliResult<Option<ProjectConfig>> {
     let mut cur = start.to_path_buf();
     loop {
         let candidate = cur.join("agenomic.toml");
@@ -271,6 +308,35 @@ mod tests {
         let p = load_project_walking_up(&inner).unwrap();
         assert!(p.is_some());
         assert_eq!(p.unwrap().agent_id.as_deref(), Some("agent://acme/foo"));
+    }
+
+    #[test]
+    fn parses_init_and_update_tables() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(
+            d.path().join("agenomic.toml"),
+            "[init]\ndefault_domain = \"finance\"\nsources = [\"pyproject\", \"git\"]\n\
+             [update]\nauto_commit = false\nprotected_branches = [\"main\", \"release/*\"]\n\
+             commit_template = \"chore: bundle {step} {hash}\"\n",
+        )
+        .unwrap();
+        let p = load_project_walking_up(d.path()).unwrap().unwrap();
+        let init = p.init.unwrap();
+        assert_eq!(init.default_domain.as_deref(), Some("finance"));
+        assert_eq!(
+            init.sources.unwrap(),
+            vec!["pyproject".to_string(), "git".to_string()]
+        );
+        let update = p.update.unwrap();
+        assert_eq!(update.auto_commit, Some(false));
+        assert_eq!(
+            update.protected_branches.unwrap(),
+            vec!["main".to_string(), "release/*".to_string()]
+        );
+        assert_eq!(
+            update.commit_template.as_deref(),
+            Some("chore: bundle {step} {hash}")
+        );
     }
 
     #[test]
