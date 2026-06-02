@@ -36,3 +36,17 @@ agenomic:
 
 `agenomic <cmd> --format json` emits machine-readable output if you want
 to attach the report as an artifact.
+
+## Stale-bundle check (`agm update`)
+
+Fail the build when the committed bundle no longer matches the repository,
+without ever auto-committing on the server (see
+[`init-and-update.md`](init-and-update.md) §3.8):
+
+```yaml
+- name: Bundle is up to date
+  run: |
+    agm update --no-commit --format json > /tmp/agenomic-update.json
+    test "$(jq '.changed | length' /tmp/agenomic-update.json)" = "0" \
+      || { echo "::error::genome.yaml is stale, run 'agm update' locally"; exit 1; }
+```

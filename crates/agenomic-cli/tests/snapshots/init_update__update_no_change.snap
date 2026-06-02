@@ -1,0 +1,5 @@
+---
+source: crates/agenomic-cli/tests/init_update.rs
+expression: "String::from_utf8_lossy(&out.stdout)"
+---
+no changes; bundle is up to date

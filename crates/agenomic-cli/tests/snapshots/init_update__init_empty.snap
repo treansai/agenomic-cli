@@ -1,0 +1,17 @@
+---
+source: crates/agenomic-cli/tests/init_update.rs
+expression: genome
+---
+spec_version: '0.1'
+agent:
+  id: 'agent://example/new'
+  name: 'Example Agent'
+  domain: 'general'
+  criticality: 'low'
+runtime:
+  model_provider: 'openai'
+  model_id: 'gpt-4o'
+tools: []
+skills: []
+knowledge: []
+policies: []

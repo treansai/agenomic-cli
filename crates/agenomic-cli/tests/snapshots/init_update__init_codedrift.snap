@@ -1,0 +1,27 @@
+---
+source: crates/agenomic-cli/tests/init_update.rs
+expression: "String::from_utf8_lossy(&out.stdout)"
+---
+spec_version: '0.1'
+agent:
+  id: 'agent://traidano/agenomic-codedrift'
+  name: 'codedrift-agent'
+  domain: 'general'
+  criticality: 'low'
+  authors:
+    - 'Traidano <dev@traidano.com>'
+description: |
+  E2E test agent — measures Claude code-quality drift over a fixed benchmark
+runtime:
+  framework: 'langgraph'
+  runtime_kind: 'python'
+  model_provider: 'anthropic'
+  model_id: 'claude-sonnet-4-6'
+  entrypoint: 'agenomic_codedrift.__main__:main'
+tools:
+  - { name: 'ruff',   kind: 'linter',     version: '>=0.6.0' }
+  - { name: 'radon',  kind: 'complexity', version: '>=6.0.1' }
+  - { name: 'bandit', kind: 'security',   version: '>=1.7.9' }
+skills: []
+knowledge: []
+policies: []

@@ -1,0 +1,7 @@
+---
+source: crates/agenomic-cli/tests/init_update.rs
+expression: "String::from_utf8_lossy(&out.stdout)"
+---
+✓ runtime.model_provider: anthropic → openai
+✓ runtime.model_id: claude-sonnet-4-6 → gpt-4o
+wrote bundle (not committed)

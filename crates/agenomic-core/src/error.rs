@@ -39,6 +39,20 @@ pub enum CliError {
     )]
     SymlinkRejected { path: String },
 
+    #[error("genome.yaml already exists at {path}")]
+    #[diagnostic(
+        code(agenomic::init::would_overwrite),
+        help("run `agm update` to merge changes into the existing bundle, or pass --force to overwrite")
+    )]
+    InitWouldOverwrite { path: String },
+
+    #[error("update refused: {reason}")]
+    #[diagnostic(
+        code(agenomic::update::refused),
+        help("pass --allow-dirty / run on a feature branch, or use --no-commit")
+    )]
+    UpdateRefused { reason: String },
+
     #[error("ATEP integrity check failed: {reason}")]
     #[diagnostic(code(agenomic::atep::integrity), severity(Error))]
     AtepIntegrity { reason: String },
@@ -104,6 +118,7 @@ impl CliError {
             Self::PathTraversal { .. } | Self::SymlinkRejected { .. } => {
                 ExitCode::SecurityViolation
             }
+            Self::InitWouldOverwrite { .. } | Self::UpdateRefused { .. } => ExitCode::InvalidUsage,
             Self::AtepIntegrity { .. } | Self::AtepSignatureInvalid { .. } => {
                 ExitCode::AtepIntegrityFailed
             }

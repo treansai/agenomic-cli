@@ -159,7 +159,8 @@ explicit hint. If the project pins a model string in a config file
 
 Tools (`genome.yaml :: tools`) are inferred from a fixed allow-list
 of well-known dependency names. Each entry yields one element in
-`tools` with `kind: dependency`:
+`tools` whose `kind` is its category from the table below (e.g.
+`linter`), and which is sorted by `(kind, name)` (§2.7):
 
 | Dependency | Tool entry |
 | --- | --- |
@@ -181,8 +182,8 @@ checkpoint` appears, set `runtime.memory.enabled = true` and
 ### 2.5 Generated `genome.yaml` — full schema
 
 Detection writes the same file the legacy command writes, but with
-real values and an optional `provenance` block at the bottom that
-records the per-field evidence chain:
+real values. The per-field evidence chain is written to a separate
+`.agenomic/provenance.yaml` sidecar (below), **not** into `genome.yaml`:
 
 ```yaml
 spec_version: '0.1'
@@ -208,22 +209,24 @@ tools:
 skills: []
 knowledge: []
 policies: []
-provenance:
-  detector_version: '0.1.0'
-  detected_at: '2026-05-31T00:00:00Z'
-  sources:
-    - { field: 'agent.id',              from: 'git',         evidence: 'origin=git@github.com:traidano/agenomic-codedrift.git' }
-    - { field: 'agent.name',            from: 'pyproject',   evidence: 'project.name' }
-    - { field: 'description',           from: 'pyproject',   evidence: 'project.description' }
-    - { field: 'runtime.framework',     from: 'pyproject',   evidence: 'dependency langgraph>=0.2.0' }
-    - { field: 'runtime.model_provider',from: 'pyproject',   evidence: 'dependency anthropic>=0.45.0' }
-    - { field: 'runtime.entrypoint',    from: 'pyproject',   evidence: 'project.scripts.agenomic-codedrift' }
-    - { field: 'tools[0]',              from: 'pyproject',   evidence: 'dependency ruff>=0.6.0' }
 ```
 
-The `provenance` block is informational and not part of the canonical
-bundle hash. `agenomic validate` MUST ignore it. `agenomic hash` MUST
-exclude it (`exclude_from_hash: provenance`).
+Provenance is **not** written into `genome.yaml`. It is emitted to a
+`.agenomic/provenance.yaml` **sidecar**, excluded from the bundle walk by
+the `.agenomic/` default-exclude — and therefore from the canonical hash,
+with no field-level exclusion needed in `agenomic-hash`. `agenomic hash`
+and `agenomic validate` never see it. The sidecar:
+
+```yaml
+detector_version: '0.1.0'              # = the agenomic-spec crate version
+detected_at: '2026-05-31T00:00:00Z'    # honours SOURCE_DATE_EPOCH
+sources:
+  - { field: 'agent.id',               value: 'agent://traidano/agenomic-codedrift', from: 'git',       evidence: 'origin=git@github.com:traidano/agenomic-codedrift.git' }
+  - { field: 'runtime.model_provider', value: 'anthropic',                            from: 'pyproject', evidence: 'dependency anthropic>=0.45.0' }
+  # … one entry per detected field; this is what `agm update` diffs against …
+frozen: []          # fields kept because they were hand-edited
+# last_update: { step, bundle_hash, changes }   # written by `agm update`
+```
 
 ### 2.6 Exit codes
 
@@ -354,8 +357,12 @@ Detected changes:
 - tools[+]: bandit (security, >=1.7.9)
 - tools[-]: pylint
 
-Bundle hash: sha256:<full-hash>
+Bundle hash: b3:<full-hash>
 ```
+
+The logical bundle hash is the BLAKE3 Merkle root (`b3:`/`blake3:`), the same
+value `agenomic hash` prints — there is no separate sha256. `<short-hash>` is
+its first 12 hex chars.
 
 `<short-hash>` is the first 12 chars of the new bundle's
 `logical_bundle_hash` (so `git log` lines up with `agenomic hash`).
@@ -371,8 +378,11 @@ on the same change produce the same diff.
 `agm update --commit` refuses (exit 2) when:
 
 - Not inside a git repo.
-- Working tree has unstaged or staged changes outside the four
-  bundle files. Use `--allow-dirty` to override.
+- Working tree has unrelated changes — i.e. staged/unstaged changes to
+  files other than the bundle files **and** the detection-source manifests
+  (`pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`, `agenomic.yaml`,
+  `README.md`, `Dockerfile`). Editing a manifest and then running `update`
+  is therefore allowed; use `--allow-dirty` to override the rest.
 - Detached HEAD, unless `--allow-dirty`.
 - The active branch matches `protected_branches` in `agenomic.toml`
   (default: `main`, `master`, `release/*`). The user must
@@ -432,13 +442,13 @@ Anything not in the file falls back to the defaults in §2 and §3.
   before. Snapshot test `init_empty.snap` pins this.
 - `agm init` invoked in a populated directory used to overwrite
   files; it now refuses (exit 2) and points the user at `agm update`.
-  This is a **breaking change** and is gated on the bump to
-  `agenomic-spec 0.2`.
+  This is a **breaking change**. Since the CLI is pre-1.0 (`0.x`), it ships
+  on the `0.x` line without a spec-version bump: `spec_version` and the
+  `agenomic-spec` crate stay at `0.1`.
 - `agm update` is new; no compatibility burden.
-- `provenance:` is a new top-level key in `genome.yaml`. It is
-  excluded from the canonical hash, so existing bundle hashes are not
-  invalidated. The validator was extended to accept (and ignore) the
-  key in `0.1` for forward compatibility.
+- Provenance is a `.agenomic/provenance.yaml` **sidecar**, not a key in
+  `genome.yaml`, so `genome.yaml` and existing bundle hashes are unchanged
+  and the validator needs no extension.
 
 ---
 
@@ -449,7 +459,7 @@ Files in `crates/agenomic-cli` that this spec touches:
 - `src/cli.rs` — extend `InitArgs`, add `UpdateArgs`, add
   `Commands::Update`.
 - `src/commands.rs` — replace `cmd_init` with a thin wrapper that
-  calls into `agenomic-spec::detect`; add `cmd_update`.
+  calls into `agenomic-detect`; add `cmd_update`.
 - `src/lib.rs` — wire `Commands::Update => cmd_update`.
 
 New crate: `crates/agenomic-detect`:
@@ -458,7 +468,7 @@ New crate: `crates/agenomic-detect`:
 - `detect::Source` enum, one variant per source in §2.3.
 - `merge::merge(current, detected, prior_provenance) -> MergeResult`.
 - All file I/O via `agenomic-fs` (atomic writes, symlink rejection).
-- All git interaction via `git2` (no shelling out, no network).
+- All git interaction via `gix` (pure-Rust; no shelling out, no network).
 
 Tests:
 
