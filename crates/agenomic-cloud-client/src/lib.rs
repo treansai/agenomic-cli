@@ -307,7 +307,6 @@ impl CloudClient {
         ulid::Ulid::new().to_string()
     }
 
-
     async fn send_with_retry<F, Fut>(&self, mut build: F) -> CliResult<reqwest::Response>
     where
         F: FnMut() -> Fut,
@@ -324,20 +323,20 @@ impl CloudClient {
                     if status == reqwest::StatusCode::UNAUTHORIZED {
                         return Err(CliError::AuthFailed);
                     }
-                    if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
+                    if (status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                        || status.is_server_error())
+                        && attempt < backoffs.len()
                     {
-                        if attempt < backoffs.len() {
-                            let retry_after = resp
-                                .headers()
-                                .get("retry-after")
-                                .and_then(|v| v.to_str().ok())
-                                .and_then(|s| s.parse::<u64>().ok())
-                                .map(|s| s * 1000)
-                                .unwrap_or(backoffs[attempt]);
-                            tokio::time::sleep(Duration::from_millis(retry_after)).await;
-                            attempt += 1;
-                            continue;
-                        }
+                        let retry_after = resp
+                            .headers()
+                            .get("retry-after")
+                            .and_then(|v| v.to_str().ok())
+                            .and_then(|s| s.parse::<u64>().ok())
+                            .map(|s| s * 1000)
+                            .unwrap_or(backoffs[attempt]);
+                        tokio::time::sleep(Duration::from_millis(retry_after)).await;
+                        attempt += 1;
+                        continue;
                     }
                     return Ok(resp);
                 }
@@ -388,7 +387,11 @@ impl CloudClient {
                  Hint: this usually means the configured endpoint is not the \
                  Agenomic Cloud API gateway — check that `--endpoint` points to \
                  the API service (e.g. https://api.agenomic.io), not the web UI.",
-                ct = if content_type.is_empty() { "<none>" } else { &content_type },
+                ct = if content_type.is_empty() {
+                    "<none>"
+                } else {
+                    &content_type
+                },
                 body = truncate_for_error(&String::from_utf8_lossy(&bytes)),
             ))
         })
@@ -736,8 +739,8 @@ fn truncate_for_error(body: &str) -> String {
 /// whose shape strongly suggests the request landed on the web UI rather
 /// than the API gateway. Common symptom: HTML body or 405 from a redirect.
 fn endpoint_hint(status: reqwest::StatusCode, body: &str) -> String {
-    let looks_like_html = body.trim_start().starts_with("<!DOCTYPE")
-        || body.trim_start().starts_with("<html");
+    let looks_like_html =
+        body.trim_start().starts_with("<!DOCTYPE") || body.trim_start().starts_with("<html");
     if looks_like_html || status == reqwest::StatusCode::METHOD_NOT_ALLOWED {
         "\nHint: this response looks like it came from the web UI, not the \
          API gateway. Verify that `--endpoint` points to the cloud API \
@@ -771,7 +774,10 @@ mod tests {
         let c = CloudClient::new(server.uri(), SecretString::new("secret".into()));
         let r = c.whoami().await.unwrap();
         assert_eq!(r.api_key_name, "dev");
-        assert_eq!(r.api_key_id.as_deref(), Some("00000000-0000-0000-0000-000000000003"));
+        assert_eq!(
+            r.api_key_id.as_deref(),
+            Some("00000000-0000-0000-0000-000000000003")
+        );
     }
 
     /// Cloud returns `api_key_id: null` for session-auth callers and
@@ -808,21 +814,27 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/v1/whoami"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_raw(
-                        "<!DOCTYPE html><html><body>login</body></html>".as_bytes(),
-                        "text/html; charset=utf-8",
-                    ),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                "<!DOCTYPE html><html><body>login</body></html>".as_bytes(),
+                "text/html; charset=utf-8",
+            ))
             .mount(&server)
             .await;
         let c = CloudClient::new(server.uri(), SecretString::new("s".into()));
         let err = c.whoami().await.unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("whoami parse"), "expected parse error, got: {msg}");
-        assert!(msg.contains("text/html"), "expected content-type in error, got: {msg}");
-        assert!(msg.contains("Hint"), "expected endpoint hint in error, got: {msg}");
+        assert!(
+            msg.contains("whoami parse"),
+            "expected parse error, got: {msg}"
+        );
+        assert!(
+            msg.contains("text/html"),
+            "expected content-type in error, got: {msg}"
+        );
+        assert!(
+            msg.contains("Hint"),
+            "expected endpoint hint in error, got: {msg}"
+        );
     }
 
     #[tokio::test]
@@ -848,10 +860,12 @@ mod tests {
             .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
                 "release": {
                     "id": "00000000-0000-0000-0000-000000000010",
+                    "org_id": "00000000-0000-0000-0000-000000000001",
                     "agent_id": "a",
                     "bundle_id": "b",
                     "version": "v1",
                     "status": "pending_approval",
+                    "environment": "dev",
                     "notes": null,
                     "approved_at": null,
                     "promoted_at": null,

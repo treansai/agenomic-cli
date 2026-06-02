@@ -48,6 +48,9 @@ jobs:
       - uses: rustsec/audit-check@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      # Run cargo-deny on the host runner (not the musl container action), so the
+      # repo's rust-toolchain.toml resolves to the installed stable-gnu toolchain.
+      - uses: taiki-e/install-action@v2
         with:
-          command: check
+          tool: cargo-deny
+      - run: cargo deny check

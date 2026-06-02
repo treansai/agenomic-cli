@@ -1,0 +1,7 @@
+spec_version: '0.1'
+agent_id: 'agent://acme/foo'
+model:
+  provider: 'openai'
+  model_id: 'gpt-4o'
+tools: []
+knowledge: []

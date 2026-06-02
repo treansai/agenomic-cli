@@ -67,7 +67,10 @@ pub struct BundleBuildResult {
 /// let _r = build_bundle(opts).unwrap();
 /// ```
 pub fn build_bundle(options: BuildBundleOptions) -> CliResult<BundleBuildResult> {
-    let walk_opts = WalkOptions { allow_symlinks: options.allow_symlinks, ..Default::default() };
+    let walk_opts = WalkOptions {
+        allow_symlinks: options.allow_symlinks,
+        ..Default::default()
+    };
     let entries = walk_bundle(&options.input_dir, &walk_opts)?;
 
     // Read each file once, build pairs in manifest order, and reuse the bytes

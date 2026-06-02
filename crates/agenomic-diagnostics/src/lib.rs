@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use agenomic_atep::{AtepStore, EventHeader, EventPayload, Hlc, StreamId};
 use agenomic_config::{EffectiveConfig, ProfileMode};
-use agenomic_core::{CliResult, Severity};
+use agenomic_core::CliResult;
 use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 
@@ -157,8 +157,6 @@ pub async fn run_diagnostics(config: &EffectiveConfig) -> CliResult<DiagnosticRe
         name: "tmp_dir".into(),
         status: if avail > 64 * 1024 * 1024 {
             DiagnosticStatus::Ok
-        } else if avail > 0 {
-            DiagnosticStatus::Warning
         } else {
             DiagnosticStatus::Warning
         },
@@ -271,7 +269,5 @@ mod tests {
             .filter(|c| matches!(c.status, DiagnosticStatus::Failed))
             .collect();
         assert!(failed.is_empty(), "failed: {:?}", failed);
-        // Severity import to silence unused warning if no other use.
-        let _ = Severity::Info;
     }
 }

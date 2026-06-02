@@ -123,7 +123,10 @@ pub fn diff_bundles(
     })
 }
 
-fn load_pairs_and_manifest(target: &Path) -> CliResult<(Vec<(String, Vec<u8>)>, BundleManifest)> {
+/// `(relative_path, file_bytes)` pairs for a bundle's files.
+type BundlePairs = Vec<(String, Vec<u8>)>;
+
+fn load_pairs_and_manifest(target: &Path) -> CliResult<(BundlePairs, BundleManifest)> {
     if target.is_dir() {
         let manifest = compute_manifest(target)?;
         let mut pairs: Vec<(String, Vec<u8>)> = Vec::new();
