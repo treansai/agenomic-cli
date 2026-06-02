@@ -131,7 +131,7 @@ pub fn create_attestation(options: AttestationOptions) -> CliResult<ReleaseAttes
     let atep_root = match (&options.atep_store, &options.atep_root_hash) {
         (Some(store_path), _) => {
             let manifest_bytes = std::fs::read(store_path.join("manifest.json"))
-                .map_err(|e| io_at(&store_path.join("manifest.json"), e))?;
+                .map_err(|e| io_at(store_path.join("manifest.json"), e))?;
             let manifest: agenomic_atep::AtepManifest = serde_json::from_slice(&manifest_bytes)
                 .map_err(|e| CliError::Internal(format!("atep manifest parse: {e}")))?;
             let store = AtepStore::open_or_init(store_path, &manifest.agent_id)?;

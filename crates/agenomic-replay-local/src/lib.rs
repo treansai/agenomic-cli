@@ -164,7 +164,7 @@ fn load_manifest(target: &Path) -> CliResult<BundleManifest> {
         compute_manifest(target)
     } else {
         let pairs = read_archive_to_pairs(target)?;
-        compute_manifest_from_pairs(pairs.into_iter().map(|(p, c)| (p, c)))
+        compute_manifest_from_pairs(pairs)
     }
 }
 

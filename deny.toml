@@ -21,13 +21,11 @@ allow = [
     "MPL-2.0",
     "CC0-1.0",
     "OpenSSL",
+    # webpki-roots (pulled by reqwest) ships under CDLA-Permissive-2.0.
+    "CDLA-Permissive-2.0",
 ]
-deny = [
-    "GPL-3.0",
-    "AGPL-3.0",
-    "AGPL-1.0",
-    "SSPL-1.0",
-]
+# cargo-deny 0.19 removed the `[licenses].deny` list: anything not in `allow`
+# is denied (so GPL-3.0 / AGPL / SSPL remain disallowed by omission).
 confidence-threshold = 0.8
 
 [bans]

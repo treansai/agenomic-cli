@@ -451,8 +451,10 @@ mod tests {
 
     #[test]
     fn validation_report_human_snapshot() {
-        let mut r = ValidationReport::default();
-        r.valid = false;
+        let mut r = ValidationReport {
+            valid: false,
+            ..Default::default()
+        };
         r.push_error(ValidationIssue {
             code: "agenomic::bundle::missing_required_file".into(),
             severity: Severity::High,

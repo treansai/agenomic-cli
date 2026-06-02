@@ -7,6 +7,9 @@ rust-version.workspace = true
 homepage.workspace = true
 repository.workspace = true
 description = "Agenomic public CLI binary"
+# This crate ships two binaries (`agenomic` + the `agm` alias); pick the
+# canonical one for bare `cargo run -p agenomic-cli` (e.g. the CI doctor step).
+default-run = "agenomic"
 
 [[bin]]
 name = "agenomic"

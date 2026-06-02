@@ -355,8 +355,10 @@ mod tests {
         let d = tempdir().unwrap();
         fs::write(d.path().join("real.txt"), b"r").unwrap();
         symlink(d.path().join("real.txt"), d.path().join("link.txt")).unwrap();
-        let mut opts = WalkOptions::default();
-        opts.allow_symlinks = true;
+        let opts = WalkOptions {
+            allow_symlinks: true,
+            ..WalkOptions::default()
+        };
         // Directory-iteration traverses; symlink to a regular file is reported as a "symlink"
         // by walkdir. We just want NOT to fail — entries should be a non-empty list.
         let entries = walk_bundle(d.path(), &opts).unwrap();

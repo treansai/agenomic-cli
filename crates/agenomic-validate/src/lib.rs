@@ -210,9 +210,7 @@ pub fn validate_bundle(dir: &Path, level: ValidationLevel) -> CliResult<Validati
         }
     }
 
-    if !report.errors.is_empty() {
-        report.valid = false;
-    } else if report.warnings.iter().any(|i| i.severity >= Severity::High) {
+    if !report.errors.is_empty() || report.warnings.iter().any(|i| i.severity >= Severity::High) {
         report.valid = false;
     }
 
