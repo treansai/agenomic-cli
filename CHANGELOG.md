@@ -31,6 +31,11 @@ All notable changes to `agenomic-cli` are documented here. Format follows
 
 ### Fixed
 
+- `agm cloud whoami` now surfaces the "wrong endpoint?" hint on HTTP status
+  errors too (previously only on parse errors), and its HTML detector
+  recognises Next.js error pages by their `_next/static` marker. Pointing
+  `--endpoint` at the web origin now yields an actionable message instead of
+  a raw 404 body.
 - `agenomic completions` / full `--help` no longer panic under clap 4.6
   (the `cloud push-agent`/`push-release` `--version` args clashed with the
   auto version flag).
