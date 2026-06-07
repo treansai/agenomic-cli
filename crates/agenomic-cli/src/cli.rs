@@ -95,6 +95,8 @@ pub enum Commands {
     Atep(AtepCommand),
     /// Cloud authentication.
     Cloud(CloudCommand),
+    /// Bucket selection for cloud pushes.
+    Bucket(BucketCommand),
     /// Bundle utilities (extract, manifest).
     Bundle(BundleCommand),
     /// Run system diagnostics.
@@ -370,6 +372,22 @@ pub enum AtepSub {
 pub struct CloudCommand {
     #[command(subcommand)]
     pub command: CloudSub,
+}
+
+#[derive(Debug, Parser)]
+pub struct BucketCommand {
+    #[command(subcommand)]
+    pub command: BucketSub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BucketSub {
+    /// Select the active bucket for subsequent cloud pushes.
+    Use {
+        /// Bucket name/slug. Created if it does not already exist.
+        #[arg(long)]
+        name: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]

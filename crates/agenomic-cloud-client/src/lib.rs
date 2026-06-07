@@ -56,6 +56,8 @@ pub struct AgentRecord {
     pub org_id: String,
     pub name: String,
     pub slug: String,
+    #[serde(default)]
+    pub bucket_id: Option<String>,
     pub domain: Option<String>,
     pub description: Option<String>,
     /// One of "standard", "sensitive", "regulated_customer_facing",
@@ -270,6 +272,44 @@ pub struct PromoteRequest {
     pub environment: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct BucketResponseEnvelope {
+    pub bucket: BucketRecord,
+}
+
+/// Bucket as returned by the cloud — mirrors agenomic-core::models::Bucket.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BucketRecord {
+    pub id: String,
+    pub org_id: String,
+    pub slug: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub visibility: String,
+    pub content_version: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ListBucketsResponse {
+    pub buckets: Vec<BucketRecord>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateBucketRequest {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct MoveAgentToBucketRequest<'a> {
+    pub bucket_id: Option<&'a str>,
+}
+
 impl CloudClient {
     /// Construct a new client.
     ///
@@ -396,6 +436,112 @@ impl CloudClient {
                 body = truncate_for_error(&String::from_utf8_lossy(&bytes)),
             ))
         })
+    }
+
+    /// `GET /v1/buckets`
+    ///
+    /// ```no_run
+    /// # use agenomic_cloud_client::CloudClient;
+    /// # use secrecy::SecretString;
+    /// # async fn demo() -> agenomic_core::CliResult<()> {
+    /// let client = CloudClient::new(
+    ///     "https://api.agenomic.io".into(),
+    ///     SecretString::new("k".into()),
+    /// );
+    /// let _ = client.list_buckets().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn list_buckets(&self) -> CliResult<Vec<BucketRecord>> {
+        let url = self.url("/v1/buckets");
+        let resp = self
+            .send_with_retry(|| async {
+                self.http
+                    .get(&url)
+                    .header("x-api-key", self.api_key_header())
+                    .header("accept", "application/json")
+            })
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(CliError::Network(format!(
+                "list_buckets: HTTP {status} — {body}"
+            )));
+        }
+        let env = resp
+            .json::<ListBucketsResponse>()
+            .await
+            .map_err(|e| CliError::Network(format!("list_buckets parse: {e}")))?;
+        Ok(env.buckets)
+    }
+
+    /// Resolve a bucket by slug via `GET /v1/buckets`.
+    ///
+    /// ```no_run
+    /// # use agenomic_cloud_client::CloudClient;
+    /// # use secrecy::SecretString;
+    /// # async fn demo() -> agenomic_core::CliResult<()> {
+    /// let client = CloudClient::new(
+    ///     "https://api.agenomic.io".into(),
+    ///     SecretString::new("k".into()),
+    /// );
+    /// let _ = client.get_bucket_by_slug("default").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn get_bucket_by_slug(&self, slug: &str) -> CliResult<Option<BucketRecord>> {
+        let buckets = self.list_buckets().await?;
+        Ok(buckets.into_iter().find(|bucket| bucket.slug == slug))
+    }
+
+    /// `POST /v1/buckets`
+    ///
+    /// ```no_run
+    /// # use agenomic_cloud_client::{CloudClient, CreateBucketRequest};
+    /// # use secrecy::SecretString;
+    /// # async fn demo() -> agenomic_core::CliResult<()> {
+    /// let client = CloudClient::new(
+    ///     "https://api.agenomic.io".into(),
+    ///     SecretString::new("k".into()),
+    /// );
+    /// let _ = client.create_bucket(CreateBucketRequest {
+    ///     name: "default".into(),
+    ///     slug: Some("default".into()),
+    ///     description: None,
+    /// }).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn create_bucket(&self, request: CreateBucketRequest) -> CliResult<BucketRecord> {
+        let url = self.url("/v1/buckets");
+        let idemp = Self::idempotency_key();
+        let resp = self
+            .send_with_retry(|| {
+                let req = request.clone();
+                let idemp = idemp.clone();
+                let url = url.clone();
+                async move {
+                    self.http
+                        .post(&url)
+                        .header("x-api-key", self.api_key_header())
+                        .header("idempotency-key", idemp)
+                        .json(&req)
+                }
+            })
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(CliError::Network(format!(
+                "create_bucket: HTTP {status} — {body}"
+            )));
+        }
+        let env = resp
+            .json::<BucketResponseEnvelope>()
+            .await
+            .map_err(|e| CliError::Network(format!("create_bucket parse: {e}")))?;
+        Ok(env.bucket)
     }
 
     /// Upload a bundle archive (`.tar.zst`).
@@ -651,6 +797,57 @@ impl CloudClient {
             .json()
             .await
             .map_err(|e| CliError::Network(format!("create_agent parse: {e}")))?;
+        Ok(env.agent)
+    }
+
+    /// `POST /v1/agents/:id/move-to-bucket`
+    ///
+    /// ```no_run
+    /// # use agenomic_cloud_client::CloudClient;
+    /// # use secrecy::SecretString;
+    /// # async fn demo() -> agenomic_core::CliResult<()> {
+    /// let client = CloudClient::new(
+    ///     "https://api.agenomic.io".into(),
+    ///     SecretString::new("k".into()),
+    /// );
+    /// let _ = client
+    ///     .move_agent_to_bucket("agent-id", Some("bucket-id"))
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn move_agent_to_bucket(
+        &self,
+        agent_id: &str,
+        bucket_id: Option<&str>,
+    ) -> CliResult<AgentRecord> {
+        let url = self.url(&format!("/v1/agents/{agent_id}/move-to-bucket"));
+        let idemp = Self::idempotency_key();
+        let resp = self
+            .send_with_retry(|| {
+                let req = MoveAgentToBucketRequest { bucket_id };
+                let idemp = idemp.clone();
+                let url = url.clone();
+                async move {
+                    self.http
+                        .post(&url)
+                        .header("x-api-key", self.api_key_header())
+                        .header("idempotency-key", idemp)
+                        .json(&req)
+                }
+            })
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(CliError::Network(format!(
+                "move_agent_to_bucket: HTTP {status} — {body}"
+            )));
+        }
+        let env: AgentResponse = resp
+            .json()
+            .await
+            .map_err(|e| CliError::Network(format!("move_agent_to_bucket parse: {e}")))?;
         Ok(env.agent)
     }
 

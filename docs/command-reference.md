@@ -128,6 +128,36 @@ Call `/v1/whoami` against the configured profile.
 
 Delete credentials for the active profile.
 
+### `agenomic bucket use --name NAME`
+
+Set the active cloud bucket for the selected profile. If the bucket does
+not exist yet, the CLI creates it first.
+
+### `agenomic cloud push-agent <BUNDLE> --name NAME [--description TEXT] [--version V] [--agent-id UUID]`
+
+Push a bundle into Agenomic Cloud. When `--agent-id` is omitted the CLI
+creates a new agent first, then uploads the bundle.
+
+Bucket selection precedence for push:
+
+1. The profile's active bucket from `agenomic bucket use`
+2. The implicit `default` bucket
+
+If the selected bucket does not exist yet, `push-agent` creates it and
+moves the target agent into it before uploading the bundle.
+
+### `agenomic cloud push-release --agent-id UUID --bundle-id UUID --version V [--notes TEXT]`
+
+Create a release pinned to an existing bundle.
+
+### `agenomic cloud push-replay --agent-id UUID [--release-id UUID] [--trace-id UUID ...] [--mode deterministic|statistical]`
+
+Enqueue a cloud replay job.
+
+### `agenomic cloud push-attestation --release-id UUID --replay-job-id UUID`
+
+Create a cloud attestation from an existing release + replay job.
+
 ### `agenomic bundle extract <ARCHIVE> <DIR>`
 
 Extract a `.bundle.tar.zst`.

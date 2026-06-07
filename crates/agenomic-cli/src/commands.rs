@@ -1042,12 +1042,34 @@ pub fn cmd_bundle(args: &BundleCommand) -> CliResult<ExitCode> {
     }
 }
 
-pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
+const DEFAULT_BUCKET_SLUG: &str = "default";
+
+pub fn cmd_bucket(args: &BucketCommand, profile: Option<&str>) -> CliResult<ExitCode> {
+    match &args.command {
+        BucketSub::Use { name } => {
+            let cfg = agenomic_config::load(profile)?;
+            let profile_name = cfg.profile.name;
+            let client = cloud_client_from_profile(profile)?;
+            let rt =
+                tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
+            let bucket = rt.block_on(ensure_bucket(&client, name))?;
+            agenomic_config::save_active_bucket(&profile_name, Some(&bucket.slug))?;
+            println!(
+                "active bucket for profile `{}` is now `{}`",
+                profile_name, bucket.slug
+            );
+            Ok(ExitCode::Success)
+        }
+    }
+}
+
+pub fn cmd_cloud(args: &CloudCommand, profile: Option<&str>) -> CliResult<ExitCode> {
     use secrecy::SecretString;
     match &args.command {
         CloudSub::Login { endpoint, api_key } => {
+            let profile_name = resolved_profile_name(profile)?;
             agenomic_config::save_profile(
-                "default",
+                &profile_name,
                 &agenomic_config::ProfileFileEntry {
                     mode: agenomic_config::ProfileMode::Cloud,
                     endpoint: Some(endpoint.clone()),
@@ -1055,14 +1077,14 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
                 },
             )?;
             agenomic_config::save_credentials(
-                "default",
+                &profile_name,
                 &SecretString::new(api_key.clone().into_boxed_str()),
             )?;
             println!("logged in to {endpoint}");
             Ok(ExitCode::Success)
         }
         CloudSub::Whoami => {
-            let cfg = agenomic_config::load(None)?;
+            let cfg = agenomic_config::load(profile)?;
             let endpoint = cfg.profile.endpoint.clone().ok_or_else(|| {
                 CliError::Internal(
                     "no endpoint configured; run `agenomic cloud login` first".into(),
@@ -1079,7 +1101,8 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
             Ok(ExitCode::Success)
         }
         CloudSub::Logout => {
-            agenomic_config::delete_credentials("default")?;
+            let profile_name = resolved_profile_name(profile)?;
+            agenomic_config::delete_credentials(&profile_name)?;
             println!("logged out");
             Ok(ExitCode::Success)
         }
@@ -1093,7 +1116,8 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
             use agenomic_cloud_client::{CreateAgentRequest, CreateBundleRequest};
             use base64::{engine::general_purpose::STANDARD, Engine};
 
-            let client = cloud_client_from_profile()?;
+            let cfg = agenomic_config::load(profile)?;
+            let client = cloud_client_from_profile(profile)?;
 
             // Cloud's `create_bundle` validates the supplied hash against
             // the canonical Merkle root recomputed from the archive; we must
@@ -1113,15 +1137,26 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
 
             let rt =
                 tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
+            let target_bucket = rt.block_on(resolve_target_bucket(
+                &client,
+                cfg.profile.active_bucket_slug.as_deref(),
+            ))?;
 
             // 1) resolve / create the agent
             let agent_id = match agent_id.clone() {
-                Some(id) => id,
+                Some(id) => {
+                    let agent = rt.block_on(
+                        client.move_agent_to_bucket(&id, Some(target_bucket.id.as_str())),
+                    )?;
+                    agent.id
+                }
                 None => {
                     let agent = rt.block_on(client.create_agent(CreateAgentRequest {
                         name: name.clone(),
                         description: description.clone(),
                     }))?;
+                    let agent =
+                        rt.block_on(ensure_agent_in_bucket(&client, agent, &target_bucket))?;
                     println!("created agent {} ({})", agent.id, agent.name);
                     agent.id
                 }
@@ -1153,7 +1188,7 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
             notes,
         } => {
             use agenomic_cloud_client::CreateReleaseRequest;
-            let client = cloud_client_from_profile()?;
+            let client = cloud_client_from_profile(profile)?;
             let rt =
                 tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
             let release = rt.block_on(client.create_release(CreateReleaseRequest {
@@ -1175,7 +1210,7 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
             mode,
         } => {
             use agenomic_cloud_client::CreateReplayJobRequest;
-            let client = cloud_client_from_profile()?;
+            let client = cloud_client_from_profile(profile)?;
             let rt =
                 tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
             let job = rt.block_on(client.create_replay_job(CreateReplayJobRequest {
@@ -1198,7 +1233,7 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
             replay_job_id,
         } => {
             use agenomic_cloud_client::CreateAttestationRequest;
-            let client = cloud_client_from_profile()?;
+            let client = cloud_client_from_profile(profile)?;
             let rt =
                 tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
             let att = rt.block_on(client.create_attestation(CreateAttestationRequest {
@@ -1219,13 +1254,90 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
 
 /// Build a `CloudClient` from the active profile, failing with the
 /// canonical error if no endpoint or key is configured.
-fn cloud_client_from_profile() -> CliResult<agenomic_cloud_client::CloudClient> {
-    let cfg = agenomic_config::load(None)?;
+fn cloud_client_from_profile(
+    profile: Option<&str>,
+) -> CliResult<agenomic_cloud_client::CloudClient> {
+    let cfg = agenomic_config::load(profile)?;
     let endpoint = cfg.profile.endpoint.clone().ok_or_else(|| {
         CliError::Internal("no endpoint configured; run `agenomic cloud login` first".into())
     })?;
     let api_key = cfg.profile.api_key.clone().ok_or(CliError::AuthFailed)?;
     Ok(agenomic_cloud_client::CloudClient::new(endpoint, api_key))
+}
+
+fn resolved_profile_name(profile: Option<&str>) -> CliResult<String> {
+    Ok(agenomic_config::load(profile)?.profile.name)
+}
+
+async fn resolve_target_bucket(
+    client: &agenomic_cloud_client::CloudClient,
+    active_bucket_slug: Option<&str>,
+) -> CliResult<agenomic_cloud_client::BucketRecord> {
+    ensure_bucket(client, selected_bucket_slug(active_bucket_slug)).await
+}
+
+fn selected_bucket_slug(active_bucket_slug: Option<&str>) -> &str {
+    active_bucket_slug.unwrap_or(DEFAULT_BUCKET_SLUG)
+}
+
+async fn ensure_bucket(
+    client: &agenomic_cloud_client::CloudClient,
+    slug: &str,
+) -> CliResult<agenomic_cloud_client::BucketRecord> {
+    match client.get_bucket_by_slug(slug).await? {
+        Some(bucket) => Ok(bucket),
+        None => {
+            client
+                .create_bucket(agenomic_cloud_client::CreateBucketRequest {
+                    name: slug.to_string(),
+                    slug: Some(slug.to_string()),
+                    description: None,
+                })
+                .await
+        }
+    }
+}
+
+async fn ensure_agent_in_bucket(
+    client: &agenomic_cloud_client::CloudClient,
+    agent: agenomic_cloud_client::AgentRecord,
+    target_bucket: &agenomic_cloud_client::BucketRecord,
+) -> CliResult<agenomic_cloud_client::AgentRecord> {
+    if !should_move_agent_to_bucket(agent.bucket_id.as_deref(), target_bucket.id.as_str()) {
+        return Ok(agent);
+    }
+    client
+        .move_agent_to_bucket(&agent.id, Some(target_bucket.id.as_str()))
+        .await
+}
+
+fn should_move_agent_to_bucket(current_bucket_id: Option<&str>, target_bucket_id: &str) -> bool {
+    current_bucket_id != Some(target_bucket_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{selected_bucket_slug, should_move_agent_to_bucket, DEFAULT_BUCKET_SLUG};
+
+    #[test]
+    fn selected_bucket_slug_defaults_to_default() {
+        assert_eq!(selected_bucket_slug(None), DEFAULT_BUCKET_SLUG);
+    }
+
+    #[test]
+    fn selected_bucket_slug_uses_active_bucket() {
+        assert_eq!(selected_bucket_slug(Some("bench")), "bench");
+    }
+
+    #[test]
+    fn unbucketed_agent_is_moved() {
+        assert!(should_move_agent_to_bucket(None, "bucket-1"));
+    }
+
+    #[test]
+    fn agent_already_in_target_bucket_is_not_moved() {
+        assert!(!should_move_agent_to_bucket(Some("bucket-1"), "bucket-1"));
+    }
 }
 
 // Severity is referenced via SeverityArg::to_severity; silence unused-import

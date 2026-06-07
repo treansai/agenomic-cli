@@ -14,9 +14,9 @@ fn agenomic() -> Command {
 fn help_works() {
     let output = agenomic().arg("--help").output().unwrap();
     assert!(output.status.success());
-    assert!(
-        predicates::str::contains("Agenomic CLI").eval(&String::from_utf8_lossy(&output.stdout))
-    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(predicates::str::contains("Agenomic CLI").eval(&stdout));
+    assert!(predicates::str::contains("bucket").eval(&stdout));
 }
 
 #[test]

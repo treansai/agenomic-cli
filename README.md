@@ -25,6 +25,9 @@ cargo install --path crates/agenomic-cli
 ```bash
 agenomic validate ./my-agent --level strict
 agenomic build ./my-agent --output dist/my-agent.bundle.tar.zst
+agenomic cloud login --endpoint https://api.agenomic.io --api-key <KEY>
+agenomic bucket use --name default
+agenomic cloud push-agent dist/my-agent.bundle.tar.zst --name "My Agent"
 agenomic attest dist/my-agent.bundle.tar.zst --output attestation.json
 ```
 

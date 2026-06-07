@@ -55,6 +55,8 @@ pub struct CredentialsFile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CredentialEntry {
     pub api_key: String,
+    #[serde(default)]
+    pub active_bucket_slug: Option<String>,
 }
 
 /// `[init]` table from `agenomic.toml` (see `docs/init-and-update.md` §4).
@@ -111,6 +113,7 @@ pub struct ProfileConfig {
     pub endpoint: Option<String>,
     pub org: Option<String>,
     pub api_key: Option<SecretString>,
+    pub active_bucket_slug: Option<String>,
 }
 
 /// Final effective configuration.
@@ -167,6 +170,10 @@ pub fn load(profile: Option<&str>) -> CliResult<EffectiveConfig> {
             .get(&chosen_profile_name)
             .map(|c| c.api_key.clone())
     });
+    let active_bucket_slug = creds
+        .credentials
+        .get(&chosen_profile_name)
+        .and_then(|c| c.active_bucket_slug.clone());
 
     let mode = match (&file_profile.mode, &api_key_str, &endpoint) {
         (ProfileMode::Cloud, _, _) => ProfileMode::Cloud,
@@ -180,6 +187,7 @@ pub fn load(profile: Option<&str>) -> CliResult<EffectiveConfig> {
         endpoint,
         org: file_profile.org.clone(),
         api_key: api_key_str.map(|s| SecretString::new(s.into_boxed_str())),
+        active_bucket_slug,
     };
 
     Ok(EffectiveConfig {
@@ -208,12 +216,39 @@ pub fn save_profile(name: &str, profile: &ProfileFileEntry) -> CliResult<()> {
 /// Persist credentials (mode 0600 on Unix).
 pub fn save_credentials(name: &str, api_key: &SecretString) -> CliResult<()> {
     let mut creds = read_credentials().unwrap_or_default();
+    let active_bucket_slug = creds
+        .credentials
+        .get(name)
+        .and_then(|entry| entry.active_bucket_slug.clone());
     creds.credentials.insert(
         name.to_string(),
         CredentialEntry {
             api_key: api_key.expose_secret().to_string(),
+            active_bucket_slug,
         },
     );
+    let path = credentials_file_path()?;
+    let bytes = toml::to_string_pretty(&creds)
+        .map_err(|e| CliError::Internal(format!("credentials serialize: {e}")))?;
+    agenomic_fs::write_atomic(&path, bytes.as_bytes())?;
+    agenomic_fs::set_secret_mode(&path)?;
+    Ok(())
+}
+
+/// Persist or clear the active bucket for a profile.
+///
+/// ```no_run
+/// # use agenomic_config::save_active_bucket;
+/// save_active_bucket("default", Some("default"))?;
+/// # Ok::<(), agenomic_core::CliError>(())
+/// ```
+pub fn save_active_bucket(name: &str, bucket_slug: Option<&str>) -> CliResult<()> {
+    let mut creds = read_credentials().unwrap_or_default();
+    let entry = creds
+        .credentials
+        .get_mut(name)
+        .ok_or(CliError::AuthFailed)?;
+    entry.active_bucket_slug = bucket_slug.map(str::to_string);
     let path = credentials_file_path()?;
     let bytes = toml::to_string_pretty(&creds)
         .map_err(|e| CliError::Internal(format!("credentials serialize: {e}")))?;
@@ -344,5 +379,38 @@ mod tests {
         let p = config_file_path().unwrap();
         let s = p.display().to_string();
         assert!(s.contains("agenomic"), "{s}");
+    }
+
+    #[test]
+    fn save_credentials_preserves_active_bucket() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.toml");
+        let mut creds = CredentialsFile::default();
+        creds.credentials.insert(
+            "default".into(),
+            CredentialEntry {
+                api_key: "old-key".into(),
+                active_bucket_slug: Some("bench".into()),
+            },
+        );
+        let bytes = toml::to_string_pretty(&creds).unwrap();
+        std::fs::write(&path, bytes).unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let mut loaded: CredentialsFile = toml::from_str(&raw).unwrap();
+        let active_bucket_slug = loaded
+            .credentials
+            .get("default")
+            .and_then(|entry| entry.active_bucket_slug.clone());
+        loaded.credentials.insert(
+            "default".into(),
+            CredentialEntry {
+                api_key: "new-key".into(),
+                active_bucket_slug,
+            },
+        );
+        let updated = loaded.credentials.get("default").unwrap();
+        assert_eq!(updated.api_key, "new-key");
+        assert_eq!(updated.active_bucket_slug.as_deref(), Some("bench"));
     }
 }
