@@ -6,8 +6,16 @@
 use agenomic_core::{CliError, CliResult};
 
 /// Spec versions this CLI build understands.
-pub const SUPPORTED_SPEC_VERSIONS: &[&str] = &["0.1"];
+///
+/// `0.2` is additive over `0.1`: it introduces the optional top-level
+/// `execution` block (genome) and `execution_hash` field (agent.lock), both
+/// consumed by `agenomic-os`. Documents declaring `spec_version: 0.1` remain
+/// valid and unchanged.
+pub const SUPPORTED_SPEC_VERSIONS: &[&str] = &["0.1", "0.2"];
 /// Default spec version emitted by `agenomic init`.
+///
+/// Stays at `0.1` until a dedicated migration PR updates fixtures, examples,
+/// and snapshots. See `docs/BACKEND_GAPS.md`.
 pub const CURRENT_SPEC_VERSION: &str = "0.1";
 
 /// Version stamped into detection provenance as `detector_version`.
@@ -144,6 +152,7 @@ mod tests {
         let yaml = "spec_version: '0.1'\n";
         assert_eq!(detect_spec_version(yaml).unwrap(), "0.1");
         assert!(is_supported("0.1"));
+        assert!(is_supported("0.2"));
         assert!(!is_supported("9.9"));
     }
 
@@ -152,5 +161,137 @@ mod tests {
         let v = validator(SchemaKind::Genome).unwrap();
         let value: serde_json::Value = serde_json::json!({});
         assert!(v.validate(&value).is_err());
+    }
+
+    fn minimal_genome_v2_with_execution() -> serde_json::Value {
+        serde_json::json!({
+            "spec_version": "0.2",
+            "agent": {
+                "id": "agent://acme/foo",
+                "name": "Foo",
+                "domain": "general",
+                "criticality": "low"
+            },
+            "runtime": {
+                "model_provider": "openai",
+                "model_id": "gpt-4o"
+            },
+            "tools": [],
+            "skills": [],
+            "knowledge": [],
+            "policies": [],
+            "execution": {
+                "entrypoint": {
+                    "kind": "command",
+                    "command": "python",
+                    "args": ["-m", "codedrift.agent"]
+                },
+                "runtime": {
+                    "kind": "python",
+                    "version": ">=3.11,<3.13"
+                },
+                "working_directory": ".",
+                "env": {
+                    "required": ["OPENAI_API_KEY"],
+                    "optional": []
+                },
+                "permissions": {
+                    "filesystem": {
+                        "read": ["."],
+                        "write": ["./.agenomic/runs"]
+                    },
+                    "network": {
+                        "allow": []
+                    }
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn genome_v2_with_execution_block_accepted() {
+        let v = validator(SchemaKind::Genome).unwrap();
+        let value = minimal_genome_v2_with_execution();
+        assert!(
+            v.validate(&value).is_ok(),
+            "0.2 genome with execution block should validate"
+        );
+    }
+
+    #[test]
+    fn genome_v01_without_execution_still_accepted() {
+        let v = validator(SchemaKind::Genome).unwrap();
+        let value = serde_json::json!({
+            "spec_version": "0.1",
+            "agent": {
+                "id": "agent://acme/foo",
+                "name": "Foo",
+                "domain": "general",
+                "criticality": "low"
+            },
+            "runtime": { "model_provider": "openai", "model_id": "gpt-4o" },
+            "tools": [],
+            "skills": [],
+            "knowledge": [],
+            "policies": []
+        });
+        assert!(v.validate(&value).is_ok());
+    }
+
+    #[test]
+    fn genome_execution_requires_entrypoint_and_runtime() {
+        let v = validator(SchemaKind::Genome).unwrap();
+        let mut value = minimal_genome_v2_with_execution();
+        value["execution"].as_object_mut().unwrap().remove("entrypoint");
+        assert!(
+            v.validate(&value).is_err(),
+            "execution missing entrypoint must be rejected"
+        );
+    }
+
+    #[test]
+    fn genome_execution_entrypoint_kind_restricted_to_command() {
+        let v = validator(SchemaKind::Genome).unwrap();
+        let mut value = minimal_genome_v2_with_execution();
+        value["execution"]["entrypoint"]["kind"] = serde_json::json!("docker");
+        assert!(
+            v.validate(&value).is_err(),
+            "unsupported entrypoint kind must be rejected at MVP"
+        );
+    }
+
+    #[test]
+    fn genome_execution_runtime_kind_restricted() {
+        let v = validator(SchemaKind::Genome).unwrap();
+        let mut value = minimal_genome_v2_with_execution();
+        value["execution"]["runtime"]["kind"] = serde_json::json!("haskell");
+        assert!(v.validate(&value).is_err());
+    }
+
+    #[test]
+    fn agent_lock_v2_with_execution_hash_accepted() {
+        let v = validator(SchemaKind::Agenomic).unwrap();
+        let value = serde_json::json!({
+            "spec_version": "0.2",
+            "agent_id": "agent://acme/foo",
+            "model": { "provider": "openai", "model_id": "gpt-4o" },
+            "tools": [],
+            "knowledge": [],
+            "execution_hash": "blake3:abc123def456"
+        });
+        assert!(v.validate(&value).is_ok());
+    }
+
+    #[test]
+    fn agent_lock_v01_without_execution_hash_still_accepted() {
+        let v = validator(SchemaKind::Agenomic).unwrap();
+        let value = serde_json::json!({
+            "spec_version": "0.1",
+            "agent_id": "agent://acme/foo",
+            "model": { "provider": "openai", "model_id": "gpt-4o" },
+            "tools": [],
+            "knowledge": []
+        });
+        assert!(v.validate(&value).is_ok());
     }
 }

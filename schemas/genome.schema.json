@@ -5,7 +5,7 @@
   "type": "object",
   "required": ["spec_version", "agent", "runtime", "tools", "skills", "knowledge", "policies"],
   "properties": {
-    "spec_version": { "type": "string", "enum": ["0.1"] },
+    "spec_version": { "type": "string", "enum": ["0.1", "0.2"] },
     "agent": {
       "type": "object",
       "required": ["id", "name", "domain", "criticality"],
@@ -83,6 +83,99 @@
       "type": "object",
       "properties": {
         "stores_user_specific_data": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "execution": {
+      "type": "object",
+      "description": "Portable execution contract consumed by agenomic-os to run this agent from an agent:// reference. Optional; introduced in spec 0.2.",
+      "required": ["entrypoint", "runtime"],
+      "properties": {
+        "entrypoint": {
+          "type": "object",
+          "required": ["kind"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": ["command"],
+              "description": "MVP supports `command` only. Future kinds (docker, wasm) are reserved."
+            },
+            "command": { "type": "string", "minLength": 1 },
+            "args": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          },
+          "additionalProperties": true
+        },
+        "runtime": {
+          "type": "object",
+          "required": ["kind"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": ["python", "node", "rust", "binary"]
+            },
+            "version": {
+              "type": "string",
+              "description": "Optional semver range, e.g. \">=3.11,<3.13\"."
+            }
+          },
+          "additionalProperties": true
+        },
+        "working_directory": {
+          "type": "string",
+          "description": "Relative to bundle root. Defaults to \".\" when omitted."
+        },
+        "env": {
+          "type": "object",
+          "description": "Declared environment variables. Variables NOT listed here are NOT propagated from the parent process to the agent.",
+          "properties": {
+            "required": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "optional": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            }
+          },
+          "additionalProperties": false
+        },
+        "permissions": {
+          "type": "object",
+          "description": "Capability declarations enforced by agenomic-os before launch. Empty/missing = denied.",
+          "properties": {
+            "filesystem": {
+              "type": "object",
+              "properties": {
+                "read": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "write": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              },
+              "additionalProperties": false
+            },
+            "network": {
+              "type": "object",
+              "properties": {
+                "allow": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "description": "Host or CIDR. Empty = no network access."
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": true
     }
