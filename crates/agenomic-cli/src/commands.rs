@@ -513,8 +513,215 @@ pub fn cmd_inspect(
     format: OutputFormat,
     no_color: bool,
 ) -> CliResult<ExitCode> {
-    let s = inspect_bundle(&args.target)?;
+    if args.target.starts_with("agent://") {
+        return os_inspect(args, format, no_color);
+    }
+    if args.local || args.bundle_path.is_some() {
+        return Err(CliError::OsUriInvalid(
+            "--local and --bundle-path require an agent:// reference; \
+             pass a path target without them for bundle inspection"
+                .into(),
+        ));
+    }
+    let target = Path::new(&args.target);
+    let s = inspect_bundle(target)?;
     render(&s, format, no_color)?;
+    Ok(ExitCode::Success)
+}
+
+fn os_inspect(
+    args: &InspectArgs,
+    format: OutputFormat,
+    no_color: bool,
+) -> CliResult<ExitCode> {
+    use agenomic_os::{AgentReference, ExecutionContract};
+
+    let reference: AgentReference = args.target.parse::<AgentReference>().map_err(CliError::from)?;
+    let resolved = resolve_reference(&reference, args.local, args.bundle_path.as_deref())?;
+
+    let genome_path = resolved.bundle_path.join("genome.yaml");
+    let yaml = std::fs::read_to_string(&genome_path).map_err(|e| io_at(&genome_path, e))?;
+    let contract =
+        ExecutionContract::from_genome_yaml(&yaml).map_err(CliError::from)?;
+
+    let body = serde_json::json!({
+        "reference": reference.canonical(),
+        "bundle_path": resolved.bundle_path,
+        "signed": resolved.signature.is_some(),
+        "execution": contract,
+    });
+    print_value(&body, format)?;
+    let _ = no_color;
+    Ok(ExitCode::Success)
+}
+
+fn print_value(value: &serde_json::Value, format: OutputFormat) -> CliResult<()> {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    match format {
+        OutputFormat::Human | OutputFormat::JsonPretty => {
+            let s = serde_json::to_string_pretty(value)
+                .map_err(|e| CliError::Internal(format!("json: {e}")))?;
+            out.write_all(s.as_bytes())
+                .and_then(|()| out.write_all(b"\n"))
+                .map_err(|e| CliError::Internal(format!("write: {e}")))?;
+        }
+        OutputFormat::Json => {
+            let s = serde_json::to_string(value)
+                .map_err(|e| CliError::Internal(format!("json: {e}")))?;
+            out.write_all(s.as_bytes())
+                .and_then(|()| out.write_all(b"\n"))
+                .map_err(|e| CliError::Internal(format!("write: {e}")))?;
+        }
+        OutputFormat::Yaml => {
+            let s = serde_yaml::to_string(value)
+                .map_err(|e| CliError::Internal(format!("yaml: {e}")))?;
+            out.write_all(s.as_bytes())
+                .map_err(|e| CliError::Internal(format!("write: {e}")))?;
+        }
+    }
+    Ok(())
+}
+
+fn resolve_reference(
+    reference: &agenomic_os::AgentReference,
+    local: bool,
+    bundle_path: Option<&Path>,
+) -> CliResult<agenomic_os::ResolvedAgent> {
+    use agenomic_os::{AgentResolver, CacheLocation, LocalResolver, ResolvedAgent};
+
+    if let Some(p) = bundle_path {
+        let genome = p.join("genome.yaml");
+        if !genome.is_file() {
+            return Err(CliError::OsResolverFailed(format!(
+                "{} is not a bundle directory (no genome.yaml)",
+                p.display()
+            )));
+        }
+        return Ok(ResolvedAgent {
+            reference: reference.clone(),
+            bundle_path: p.to_path_buf(),
+            signature: None,
+        });
+    }
+    let cache = if local {
+        let cwd = std::env::current_dir().map_err(|e| CliError::Internal(e.to_string()))?;
+        CacheLocation::project_local(cwd)
+    } else {
+        CacheLocation::Global
+    };
+    let resolver = LocalResolver::new(cache);
+    let rt = tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
+    rt.block_on(resolver.resolve(reference)).map_err(CliError::from)
+}
+
+pub fn cmd_run(args: &RunArgs, format: OutputFormat, no_color: bool) -> CliResult<ExitCode> {
+    use agenomic_os::{
+        AgentReference, CommandLauncher, ExecutionContract, LaunchPlan, Launcher, Policy,
+    };
+
+    let reference: AgentReference = args.reference.parse::<AgentReference>().map_err(CliError::from)?;
+
+    if reference.qualifier.is_none() && args.bundle_path.is_none() && !args.local {
+        // Unqualified remote-style references resolve to nothing in the
+        // local-only MVP; surface that explicitly rather than blame the cache.
+        return Err(CliError::OsBundleUnsigned(reference.canonical()));
+    }
+
+    let resolved = resolve_reference(&reference, args.local, args.bundle_path.as_deref())?;
+
+    let genome_path = resolved.bundle_path.join("genome.yaml");
+    let yaml = std::fs::read_to_string(&genome_path).map_err(|e| io_at(&genome_path, e))?;
+    let contract = ExecutionContract::from_genome_yaml(&yaml).map_err(CliError::from)?;
+
+    let env_overrides = parse_env_overrides(&args.env)?;
+    let policy = Policy::from_contract(&contract)
+        .with_network_overrides(args.allow_network.iter().cloned())
+        .with_env_overrides(env_overrides);
+
+    let plan = LaunchPlan {
+        reference: reference.clone(),
+        bundle_path: resolved.bundle_path.clone(),
+        contract,
+        policy,
+    };
+
+    let rt = tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
+    let handle = rt.block_on(CommandLauncher::new().launch(plan)).map_err(CliError::from)?;
+
+    if !handle.stdout.is_empty() {
+        print!("{}", handle.stdout);
+    }
+    if !handle.stderr.is_empty() {
+        eprint!("{}", handle.stderr);
+    }
+    print_value(
+        &serde_json::json!({
+            "exit_code": handle.exit_code,
+            "events": handle.trace.events.len(),
+        }),
+        format,
+    )?;
+    let _ = no_color;
+    if handle.exit_code == 0 {
+        Ok(ExitCode::Success)
+    } else {
+        Err(CliError::OsLauncherFailed(format!(
+            "agent exited with code {}",
+            handle.exit_code
+        )))
+    }
+}
+
+fn parse_env_overrides(entries: &[String]) -> CliResult<std::collections::BTreeMap<String, String>> {
+    let mut out = std::collections::BTreeMap::new();
+    for entry in entries {
+        let (k, v) = entry.split_once('=').ok_or_else(|| {
+            CliError::OsPolicyViolation(format!(
+                "--env value {entry:?} must be KEY=VALUE"
+            ))
+        })?;
+        if k.is_empty() {
+            return Err(CliError::OsPolicyViolation(
+                "--env KEY must not be empty".into(),
+            ));
+        }
+        out.insert(k.to_string(), v.to_string());
+    }
+    Ok(out)
+}
+
+pub fn cmd_port(args: &PortArgs, format: OutputFormat, no_color: bool) -> CliResult<ExitCode> {
+    let proposal = agenomic_os::port::propose(&args.path).map_err(CliError::from)?;
+
+    let body = serde_json::json!({
+        "source_path": proposal.source_path,
+        "runtime_kind": proposal.runtime_kind.map(|k| k.label()),
+        "framework": proposal.framework,
+        "proposed_execution_yaml": proposal.proposed_execution_yaml,
+        "gaps": proposal
+            .gaps
+            .iter()
+            .map(|g| serde_json::json!({
+                "field": g.field,
+                "reason": g.reason,
+                "severity": match g.severity {
+                    agenomic_os::GapSeverity::Required => "required",
+                    agenomic_os::GapSeverity::Recommended => "recommended",
+                    agenomic_os::GapSeverity::Informational => "informational",
+                },
+            }))
+            .collect::<Vec<_>>(),
+    });
+    print_value(&body, format)?;
+    let _ = no_color;
+    if proposal
+        .gaps
+        .iter()
+        .any(|g| matches!(g.severity, agenomic_os::GapSeverity::Required))
+    {
+        return Ok(ExitCode::ValidationFailed);
+    }
     Ok(ExitCode::Success)
 }
 

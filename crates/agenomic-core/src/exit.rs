@@ -19,6 +19,14 @@ pub enum ExitCode {
     DiffRiskExceeded = 8,
     AttestationVerificationFailed = 9,
     AtepIntegrityFailed = 10,
+    // agenomic-os taxonomy. See docs/agent-uri.md and crates/agenomic-os.
+    OsUriInvalid = 11,
+    OsResolverFailed = 12,
+    OsBundleUnsigned = 13,
+    OsContractInvalid = 14,
+    OsLauncherFailed = 15,
+    OsPolicyViolation = 16,
+    OsPortFailed = 17,
 }
 
 impl ExitCode {
@@ -53,5 +61,12 @@ mod tests {
         assert_eq!(ExitCode::DiffRiskExceeded.as_i32(), 8);
         assert_eq!(ExitCode::AttestationVerificationFailed.as_i32(), 9);
         assert_eq!(ExitCode::AtepIntegrityFailed.as_i32(), 10);
+        assert_eq!(ExitCode::OsUriInvalid.as_i32(), 11);
+        assert_eq!(ExitCode::OsResolverFailed.as_i32(), 12);
+        assert_eq!(ExitCode::OsBundleUnsigned.as_i32(), 13);
+        assert_eq!(ExitCode::OsContractInvalid.as_i32(), 14);
+        assert_eq!(ExitCode::OsLauncherFailed.as_i32(), 15);
+        assert_eq!(ExitCode::OsPolicyViolation.as_i32(), 16);
+        assert_eq!(ExitCode::OsPortFailed.as_i32(), 17);
     }
 }

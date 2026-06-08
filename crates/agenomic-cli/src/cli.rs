@@ -73,8 +73,12 @@ pub enum Commands {
     Validate(ValidateArgs),
     /// Build a `.bundle.tar.zst` from a directory.
     Build(BuildArgs),
-    /// Inspect a bundle directory or archive.
+    /// Inspect a bundle directory, an archive, or an `agent://` reference.
     Inspect(InspectArgs),
+    /// Resolve an `agent://` reference and launch the bundled agent.
+    Run(RunArgs),
+    /// Propose an `execution:` block for an existing codebase.
+    Port(PortArgs),
     /// Print the canonical hash of a bundle.
     Hash(HashArgs),
     /// Diff two bundles.
@@ -209,7 +213,42 @@ pub struct BuildArgs {
 
 #[derive(Debug, Parser)]
 pub struct InspectArgs {
-    pub target: PathBuf,
+    /// Bundle directory, bundle archive, or `agent://<org>/<slug>` reference.
+    pub target: String,
+    /// When `target` is an `agent://` reference, look up the bundle in the
+    /// current project's `./.agenomic/bundles/` instead of the global cache.
+    #[arg(long)]
+    pub local: bool,
+    /// When `target` is an `agent://` reference, resolve the bundle from
+    /// this explicit path instead of any cache.
+    #[arg(long)]
+    pub bundle_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Parser)]
+pub struct RunArgs {
+    /// `agent://<org>/<slug>[@<qualifier>]` reference to launch.
+    pub reference: String,
+    /// Look up the bundle in `./.agenomic/bundles/` instead of the global cache.
+    #[arg(long)]
+    pub local: bool,
+    /// Resolve the bundle from this explicit path instead of any cache.
+    #[arg(long)]
+    pub bundle_path: Option<PathBuf>,
+    /// Extra `KEY=VALUE` env entries merged into the child (repeatable).
+    /// Useful for satisfying required env vars from a profile.
+    #[arg(long = "env", value_name = "KEY=VALUE")]
+    pub env: Vec<String>,
+    /// Hostname or CIDR added to the network allow-list. MVP-advisory only.
+    #[arg(long = "allow-network", value_name = "HOST")]
+    pub allow_network: Vec<String>,
+}
+
+#[derive(Debug, Parser)]
+pub struct PortArgs {
+    /// Path to the codebase to analyse.
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
 }
 
 #[derive(Debug, Parser)]
