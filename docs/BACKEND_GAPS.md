@@ -55,6 +55,22 @@ it should fail closed with a diagnostic that references this file.
 - **MVP behavior**: env filtering, strict `current_dir`, no stdin by default,
   declared permissions enforced at the spec level. No kernel-level
   isolation.
+- **Note**: OPA/Rego policy enforcement *is* now available — `agenomic-policy`
+  evaluates `policies/*.rego` as a fail-closed gate before launch (see
+  `agenomic run` / `agenomic policy eval`). That gate is a spec-level
+  authorization decision, not kernel isolation; both layers are complementary.
+
+### Runtime compile — live MCP tool transport
+
+- **Status**: partially implemented.
+- **Affected**: `agenomic-compile`, generated `runtime/*.compiled/` trees.
+- **Implemented**: `agenomic compile` lowers a genome into deterministic,
+  self-contained adapters for `plain` (FastAPI + provider SDK), `langgraph`,
+  and `crewai`, each with a hashed `manifest.json`.
+- **Gap**: declared MCP tools are emitted as typed stubs (server + version
+  recorded) rather than live bindings; turning a stub into a real MCP call is
+  the operator's integration step. Docker/wasm runtime emission is also out of
+  scope until the `entrypoint.kind` enum widens (see "Docker / wasm launchers").
 
 ### Replay distribution
 

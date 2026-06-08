@@ -8,6 +8,21 @@ All notable changes to `agenomic-cli` are documented here. Format follows
 
 ### Added
 
+- **`agenomic compile` — genome → runtime adapters.** New `agenomic-compile`
+  crate and command that lower a bundle's `genome.yaml` into runnable,
+  self-contained source under `runtime/<target>.compiled/`. Targets: `plain`
+  (FastAPI + provider SDK), `langgraph`, and `crewai`. Output is deterministic;
+  each tree embeds its prompts and a `manifest.json` pinning per-file BLAKE3 and
+  the source genome hash. Flags: `--target` (repeatable), `--all`, `--output`,
+  `--dry-run`. See `docs/bundle-format.md` and `docs/command-reference.md`.
+- **OPA/Rego policy enforcement.** New `agenomic-policy` crate (wrapping the
+  pure-Rust `regorus` engine) evaluates `policies/*.rego` against a launch
+  context. `agenomic policy eval` reports the decision; `agenomic run` now runs
+  the same gate **fail-closed before spawning** the agent whenever a bundle ships
+  `.rego` policies. Policies use `package agenomic` with a default-false `allow`
+  rule and an optional `deny[reason]` set; denial exits 16. Adds an example
+  `policies/launch.rego` to the claims-agent bundle.
+
 - **Repo-aware `agm init`.** When run in a project with a recognised manifest
   (`pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`, `agenomic.yaml`),
   `init` now detects agent id (git remote), name/description/authors,

@@ -18,6 +18,8 @@ members = [
     "crates/agenomic-diagnostics",
     "crates/agenomic-detect",
     "crates/agenomic-os",
+    "crates/agenomic-compile",
+    "crates/agenomic-policy",
     "crates/agenomic-cli",
     "xtask",
 ]
@@ -49,6 +51,8 @@ agenomic-config = { path = "crates/agenomic-config", version = "0.1.1-alpha" }
 agenomic-diagnostics = { path = "crates/agenomic-diagnostics", version = "0.1.1-alpha" }
 agenomic-detect = { path = "crates/agenomic-detect", version = "0.1.1-alpha" }
 agenomic-os = { path = "crates/agenomic-os", version = "0.1.1-alpha" }
+agenomic-compile = { path = "crates/agenomic-compile", version = "0.1.1-alpha" }
+agenomic-policy = { path = "crates/agenomic-policy", version = "0.1.1-alpha" }
 
 # CLI / parsing
 clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
@@ -94,6 +98,10 @@ zstd = "0.13"
 
 # Schema validation
 jsonschema = { version = "0.18", default-features = false, features = ["draft201909", "draft202012"] }
+
+# Policy (OPA / Rego). Pure-Rust interpreter; no external `opa` binary, keeps
+# the offline-first invariant. `arc` makes the engine Send + Sync.
+regorus = { version = "0.10", default-features = false, features = ["std", "arc", "regex"] }
 
 # HTTP
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "multipart"] }
