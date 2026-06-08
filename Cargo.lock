@@ -249,6 +249,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "agenomic-os"
+version = "0.1.0"
+dependencies = [
+ "agenomic-core",
+ "agenomic-detect",
+ "agenomic-fs",
+ "agenomic-spec",
+ "async-trait",
+ "directories",
+ "miette",
+ "proptest",
+ "serde",
+ "serde_yaml",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "agenomic-replay-local"
 version = "0.1.0"
 dependencies = [
