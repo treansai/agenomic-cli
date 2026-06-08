@@ -1,0 +1,26 @@
+[package]
+name = "agenomic-os"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Agent Genome Orchestration Substrate — resolves agent:// references to local bundles and proposes portable execution contracts"
+
+[dependencies]
+agenomic-core = { workspace = true }
+agenomic-spec = { workspace = true }
+agenomic-fs = { workspace = true }
+agenomic-detect = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
+miette = { workspace = true }
+async-trait = { workspace = true }
+directories = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+proptest = { workspace = true }
+tempfile = { workspace = true }

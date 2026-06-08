@@ -17,6 +17,7 @@ members = [
     "crates/agenomic-config",
     "crates/agenomic-diagnostics",
     "crates/agenomic-detect",
+    "crates/agenomic-os",
     "crates/agenomic-cli",
     "xtask",
 ]
@@ -47,6 +48,7 @@ agenomic-cloud-client = { path = "crates/agenomic-cloud-client", version = "0.1.
 agenomic-config = { path = "crates/agenomic-config", version = "0.1.0" }
 agenomic-diagnostics = { path = "crates/agenomic-diagnostics", version = "0.1.0" }
 agenomic-detect = { path = "crates/agenomic-detect", version = "0.1.0" }
+agenomic-os = { path = "crates/agenomic-os", version = "0.1.0" }
 
 # CLI / parsing
 clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
