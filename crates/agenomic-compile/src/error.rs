@@ -16,7 +16,7 @@ pub enum CompileError {
     #[error("unknown compile target: {0}")]
     #[diagnostic(
         code(agenomic::compile::unknown_target),
-        help("supported targets: plain, langgraph, crewai")
+        help("supported targets: plain, langgraph, crewai, docker, wasm")
     )]
     UnknownTarget(String),
 

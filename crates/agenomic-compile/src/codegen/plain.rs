@@ -12,19 +12,32 @@ pub(crate) fn generate(genome: &Genome) -> CompiledArtifact {
     let provider = provider_for(&genome.spec.runtime.model_provider);
     let key_env = api_key_env(&genome.spec.runtime.model_provider);
 
-    a.insert("agent.py", agent_py(genome, key_env));
-    a.insert(
+    emit_fastapi_app(genome, "plain", &mut a);
+    a.insert("README.md", readme(genome, provider.label, key_env));
+    a
+}
+
+/// Insert the shared FastAPI service files (`agent.py`, `requirements.txt`)
+/// into `artifact`. Reused by the `docker` target, which wraps the same service
+/// in a container. `target_label` only affects the generated-file banner.
+pub(crate) fn emit_fastapi_app(
+    genome: &Genome,
+    target_label: &str,
+    artifact: &mut CompiledArtifact,
+) {
+    let provider = provider_for(&genome.spec.runtime.model_provider);
+    let key_env = api_key_env(&genome.spec.runtime.model_provider);
+    artifact.insert("agent.py", agent_py(genome, key_env, target_label));
+    artifact.insert(
         "requirements.txt",
         format!(
             "fastapi>=0.110\nuvicorn>=0.29\npydantic>=2.6\n{}\n",
             provider.requirement
         ),
     );
-    a.insert("README.md", readme(genome, provider.label, key_env));
-    a
 }
 
-fn agent_py(genome: &Genome, key_env: &str) -> String {
+fn agent_py(genome: &Genome, key_env: &str, target_label: &str) -> String {
     let provider = genome.spec.runtime.model_provider.to_ascii_lowercase();
     let call = match provider.as_str() {
         "anthropic" => anthropic_call(),
@@ -96,7 +109,7 @@ def invoke(req: Invocation) -> dict:
 {call}
     return {{"output": output, "model": MODEL}}
 "#,
-        banner = banner(genome, "plain"),
+        banner = banner(genome, target_label),
         import = import,
         key_env = key_env,
         model = genome.spec.runtime.model_id,

@@ -145,21 +145,45 @@ policies: []
     fn compiles_all_targets_with_expected_entrypoints() {
         let dir = fixture_bundle();
         let arts = compile_bundle(dir.path(), &CompileTarget::ALL).unwrap();
-        assert_eq!(arts.len(), 3);
+        assert_eq!(arts.len(), 5);
 
-        let plain = &arts[0];
-        assert_eq!(plain.target, CompileTarget::Plain);
-        assert!(plain.files.contains_key("agent.py"));
-        assert!(plain.files.contains_key("manifest.json"));
-        assert!(plain.files.contains_key("prompts/system.md"));
-        // Embedded skill prompt content is carried through.
+        // Each target keys off a distinct entrypoint file; all carry a manifest
+        // and the embedded prompts.
+        let by_target = |t: CompileTarget| arts.iter().find(|a| a.target == t).unwrap();
+        let entrypoints = [
+            (CompileTarget::Plain, "agent.py"),
+            (CompileTarget::LangGraph, "graph.py"),
+            (CompileTarget::CrewAi, "crew.py"),
+            (CompileTarget::Docker, "Dockerfile"),
+            (CompileTarget::Wasm, "app.py"),
+        ];
+        for (target, entry) in entrypoints {
+            let art = by_target(target);
+            assert!(art.files.contains_key(entry), "{target} missing {entry}");
+            assert!(art.files.contains_key("manifest.json"));
+            assert!(art.files.contains_key("prompts/system.md"));
+        }
+
+        // Embedded skill prompt content is carried through (checked on plain).
         assert_eq!(
-            plain.files.get("prompts/skills/classify_claim.md").unwrap(),
+            by_target(CompileTarget::Plain)
+                .files
+                .get("prompts/skills/classify_claim.md")
+                .unwrap(),
             "Classify."
         );
 
-        assert!(arts[1].files.contains_key("graph.py"));
-        assert!(arts[2].files.contains_key("crew.py"));
+        // Docker reuses the plain FastAPI app and pins the base image.
+        let docker = by_target(CompileTarget::Docker);
+        assert!(docker.files.contains_key("agent.py"));
+        assert!(docker.files["Dockerfile"].contains("python:3.12-slim"));
+
+        // WASM ships a wit world and a componentize-py build script, with the
+        // skill prompt inlined into the component (no filesystem dependency).
+        let wasm = by_target(CompileTarget::Wasm);
+        assert!(wasm.files.contains_key("wit/agent.wit"));
+        assert!(wasm.files.contains_key("build.sh"));
+        assert!(wasm.files["app.py"].contains("Classify."));
     }
 
     #[test]

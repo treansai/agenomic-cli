@@ -11,7 +11,9 @@ All notable changes to `agenomic-cli` are documented here. Format follows
 - **`agenomic compile` — genome → runtime adapters.** New `agenomic-compile`
   crate and command that lower a bundle's `genome.yaml` into runnable,
   self-contained source under `runtime/<target>.compiled/`. Targets: `plain`
-  (FastAPI + provider SDK), `langgraph`, and `crewai`. Output is deterministic;
+  (FastAPI + provider SDK), `langgraph`, `crewai`, `docker` (the `plain` service
+  as a pinned OCI image), and `wasm` (a `componentize-py` WASI component with
+  prompts inlined). Output is deterministic;
   each tree embeds its prompts and a `manifest.json` pinning per-file BLAKE3 and
   the source genome hash. Flags: `--target` (repeatable), `--all`, `--output`,
   `--dry-run`. See `docs/bundle-format.md` and `docs/command-reference.md`.

@@ -17,14 +17,20 @@ pub enum CompileTarget {
     LangGraph,
     /// A CrewAI crew with one task per skill.
     CrewAi,
+    /// The `plain` FastAPI service packaged as an OCI image (`Dockerfile`).
+    Docker,
+    /// A `componentize-py` WASM component exporting an `invoke` function.
+    Wasm,
 }
 
 impl CompileTarget {
     /// All targets, in deterministic order. Used by `--all`.
-    pub const ALL: [CompileTarget; 3] = [
+    pub const ALL: [CompileTarget; 5] = [
         CompileTarget::Plain,
         CompileTarget::LangGraph,
         CompileTarget::CrewAi,
+        CompileTarget::Docker,
+        CompileTarget::Wasm,
     ];
 
     /// Stable label used in CLI args and on disk.
@@ -33,6 +39,8 @@ impl CompileTarget {
             CompileTarget::Plain => "plain",
             CompileTarget::LangGraph => "langgraph",
             CompileTarget::CrewAi => "crewai",
+            CompileTarget::Docker => "docker",
+            CompileTarget::Wasm => "wasm",
         }
     }
 
@@ -56,6 +64,8 @@ impl FromStr for CompileTarget {
             "plain" | "fastapi" => Ok(CompileTarget::Plain),
             "langgraph" => Ok(CompileTarget::LangGraph),
             "crewai" | "crew" => Ok(CompileTarget::CrewAi),
+            "docker" | "oci" => Ok(CompileTarget::Docker),
+            "wasm" | "wasi" | "component" => Ok(CompileTarget::Wasm),
             other => Err(CompileError::UnknownTarget(other.to_string())),
         }
     }

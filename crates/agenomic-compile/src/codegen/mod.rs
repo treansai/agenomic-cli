@@ -14,8 +14,10 @@
 
 mod common;
 mod crewai;
+mod docker;
 mod langgraph;
 mod plain;
+mod wasm;
 
 use crate::artifact::CompiledArtifact;
 use crate::genome::Genome;
@@ -30,5 +32,7 @@ pub(crate) fn generate(genome: &Genome, target: CompileTarget) -> CompiledArtifa
         CompileTarget::Plain => plain::generate(genome),
         CompileTarget::LangGraph => langgraph::generate(genome),
         CompileTarget::CrewAi => crewai::generate(genome),
+        CompileTarget::Docker => docker::generate(genome),
+        CompileTarget::Wasm => wasm::generate(genome),
     }
 }

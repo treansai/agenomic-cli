@@ -66,11 +66,14 @@ it should fail closed with a diagnostic that references this file.
 - **Affected**: `agenomic-compile`, generated `runtime/*.compiled/` trees.
 - **Implemented**: `agenomic compile` lowers a genome into deterministic,
   self-contained adapters for `plain` (FastAPI + provider SDK), `langgraph`,
-  and `crewai`, each with a hashed `manifest.json`.
+  `crewai`, `docker` (the `plain` service as a pinned OCI image), and `wasm`
+  (a `componentize-py` WASI component), each with a hashed `manifest.json`.
 - **Gap**: declared MCP tools are emitted as typed stubs (server + version
   recorded) rather than live bindings; turning a stub into a real MCP call is
-  the operator's integration step. Docker/wasm runtime emission is also out of
-  scope until the `entrypoint.kind` enum widens (see "Docker / wasm launchers").
+  the operator's integration step. The `docker`/`wasm` *artifacts* are emitted
+  but are run by their own hosts — `agenomic run`'s launcher still handles
+  `command` entrypoints only (see "Docker / wasm launchers"). For `wasm`,
+  outbound model calls additionally require a WASI-HTTP-capable host.
 
 ### Replay distribution
 

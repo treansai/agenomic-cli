@@ -72,11 +72,18 @@ Validate a bundle directory or `.tar.zst` archive.
 
 Build a `.bundle.tar.zst`.
 
-### `agenomic compile [BUNDLE] [--target plain|langgraph|crewai]... [--all] [--output DIR] [--dry-run]`
+### `agenomic compile [BUNDLE] [--target plain|langgraph|crewai|docker|wasm]... [--all] [--output DIR] [--dry-run]`
 
-Compile the bundle's `genome.yaml` into runnable, per-framework runtime
-adapters under `runtime/<target>.compiled/` (the `genome → runtime` step of the
-bundle format). With no `--target` and no `--all`, every target is compiled.
+Compile the bundle's `genome.yaml` into runnable runtime adapters under
+`runtime/<target>.compiled/` (the `genome → runtime` step of the bundle format).
+With no `--target` and no `--all`, every target is compiled. Targets:
+
+- `plain` — FastAPI service calling the provider SDK directly.
+- `langgraph` — a `StateGraph` with one node per skill.
+- `crewai` — a Crew with one `Task` per skill.
+- `docker` — the `plain` service packaged as an OCI image (pinned `Dockerfile`).
+- `wasm` — a `componentize-py` WASI component exporting `agenomic:agent/invoke`
+  (prompts inlined; outbound model calls need a WASI-HTTP-capable host).
 
 Each compiled tree is self-contained: the system prompt and skill prompts are
 embedded under `prompts/`, and a `manifest.json` pins the BLAKE3 of every
