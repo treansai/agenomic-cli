@@ -5,7 +5,7 @@
   "type": "object",
   "required": ["spec_version", "agent_id", "model", "tools", "knowledge"],
   "properties": {
-    "spec_version": { "type": "string", "enum": ["0.1"] },
+    "spec_version": { "type": "string", "enum": ["0.1", "0.2"] },
     "agent_id": { "type": "string", "minLength": 1 },
     "model": {
       "type": "object",
@@ -43,6 +43,11 @@
         },
         "additionalProperties": true
       }
+    },
+    "execution_hash": {
+      "type": "string",
+      "description": "BLAKE3 hash of the canonicalized `execution` block from genome.yaml. Used by agenomic-os to detect execution-contract drift between bundle build time and run time. Optional; introduced in spec 0.2.",
+      "minLength": 1
     }
   },
   "additionalProperties": true
