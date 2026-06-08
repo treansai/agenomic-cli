@@ -48,6 +48,8 @@ pub fn run() -> i32 {
         Commands::Validate(args) => commands::cmd_validate(args, format, no_color),
         Commands::Build(args) => commands::cmd_build(args, format, no_color),
         Commands::Inspect(args) => commands::cmd_inspect(args, format, no_color),
+        Commands::Run(args) => commands::cmd_run(args, format, no_color),
+        Commands::Port(args) => commands::cmd_port(args, format, no_color),
         Commands::Hash(args) => commands::cmd_hash(args, format, no_color),
         Commands::Diff(args) => commands::cmd_diff(args, format, no_color),
         Commands::Replay(args) => commands::cmd_replay(args, format, no_color),

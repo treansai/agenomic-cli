@@ -1,12 +1,13 @@
 //! Internal error type for `agenomic-os`.
 //!
-//! These variants are not yet wired into `agenomic_core::CliError` or the
-//! workspace exit-code catalog — that conversion lands with the CLI
-//! integration in a subsequent PR. Until then, callers of this crate consume
-//! `OsError` directly.
+//! `OsError` is the rich diagnostic form used inside this crate. CLI
+//! integration converts it to [`agenomic_core::CliError`] via the
+//! [`From`] impl at the bottom of this module so the existing exit-code
+//! catalog (exit codes 11–17) drives process termination.
 
 use std::path::PathBuf;
 
+use agenomic_core::CliError;
 use miette::Diagnostic;
 use thiserror::Error;
 
@@ -56,6 +57,31 @@ pub enum OsError {
     #[diagnostic(code(agenomic::os::port::failed))]
     PortFailed { reason: String },
 
+    #[error("policy violation: {reason}")]
+    #[diagnostic(
+        code(agenomic::os::policy::violation),
+        help("review the `execution.permissions` block and any --allow-* overrides")
+    )]
+    PolicyViolation { reason: String },
+
+    #[error("required environment variable {name} is not set")]
+    #[diagnostic(
+        code(agenomic::os::policy::missing_required_env),
+        help("set the variable in the parent process, in the profile, or via --env")
+    )]
+    MissingRequiredEnv { name: String },
+
+    #[error("launcher failed for {command}: {reason}")]
+    #[diagnostic(code(agenomic::os::launcher::failed))]
+    LauncherFailed { command: String, reason: String },
+
+    #[error("refusing unsigned remote bundle {reference}")]
+    #[diagnostic(
+        code(agenomic::os::resolver::unsigned_remote),
+        help("unsigned remote bundles are refused by default; add the publisher to the trust list or pass --allow-unsigned to override (not recommended)")
+    )]
+    UnsignedRemoteBundle { reference: String },
+
     #[error("home directory not available; cannot resolve global cache root")]
     #[diagnostic(
         code(agenomic::os::cache::no_home),
@@ -81,3 +107,26 @@ pub enum OsError {
 }
 
 pub type OsResult<T> = Result<T, OsError>;
+
+impl From<OsError> for CliError {
+    fn from(e: OsError) -> Self {
+        match e {
+            OsError::UriInvalid { ref reason } => CliError::OsUriInvalid(reason.clone()),
+            OsError::BundleNotFound { .. }
+            | OsError::BundleMalformed { .. }
+            | OsError::NoHomeDirectory => CliError::OsResolverFailed(e.to_string()),
+            OsError::UnsignedRemoteBundle { ref reference } => {
+                CliError::OsBundleUnsigned(reference.clone())
+            }
+            OsError::ContractInvalid { .. }
+            | OsError::ContractMissing
+            | OsError::UnsupportedRuntime { .. } => CliError::OsContractInvalid(e.to_string()),
+            OsError::LauncherFailed { .. } => CliError::OsLauncherFailed(e.to_string()),
+            OsError::PolicyViolation { .. } | OsError::MissingRequiredEnv { .. } => {
+                CliError::OsPolicyViolation(e.to_string())
+            }
+            OsError::PortFailed { ref reason } => CliError::OsPortFailed(reason.clone()),
+            OsError::Io { .. } | OsError::Yaml { .. } => CliError::Internal(e.to_string()),
+        }
+    }
+}

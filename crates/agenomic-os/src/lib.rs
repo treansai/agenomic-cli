@@ -25,8 +25,11 @@
 pub mod cache;
 pub mod contract;
 pub mod error;
+pub mod launcher;
+pub mod policy;
 pub mod port;
 pub mod resolver;
+pub mod trace;
 pub mod uri;
 
 pub use cache::CacheLocation;
@@ -35,6 +38,9 @@ pub use contract::{
     NetworkPermissions, PermissionsSpec, RuntimeKind, RuntimeSpec,
 };
 pub use error::{OsError, OsResult};
+pub use launcher::{CommandLauncher, LaunchPlan, Launcher, RunHandle};
+pub use policy::Policy;
 pub use port::{Gap, GapSeverity, PortProposal};
 pub use resolver::{AgentResolver, LocalResolver, ResolvedAgent};
+pub use trace::{Trace, TraceEvent};
 pub use uri::{AgentReference, Qualifier, Query};

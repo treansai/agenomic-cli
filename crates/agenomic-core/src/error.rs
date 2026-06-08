@@ -100,6 +100,49 @@ pub enum CliError {
     #[error("diff risk exceeded threshold: {0}")]
     #[diagnostic(code(agenomic::diff::risk_exceeded))]
     DiffRiskExceeded(String),
+
+    #[error("invalid agent:// URI: {0}")]
+    #[diagnostic(
+        code(agenomic::os::uri_invalid),
+        help("see docs/agent-uri.md for the accepted grammar")
+    )]
+    OsUriInvalid(String),
+
+    #[error("agent resolution failed: {0}")]
+    #[diagnostic(
+        code(agenomic::os::resolver_failed),
+        help("materialize the bundle into the cache, pass --local for an in-repo path, or pass --bundle-path explicitly")
+    )]
+    OsResolverFailed(String),
+
+    #[error("refusing unsigned remote bundle: {0}")]
+    #[diagnostic(
+        code(agenomic::os::bundle_unsigned),
+        help("unsigned remote bundles are refused by default; add the publisher to the trust list or use --allow-unsigned for an explicit override")
+    )]
+    OsBundleUnsigned(String),
+
+    #[error("execution contract invalid: {0}")]
+    #[diagnostic(
+        code(agenomic::os::contract_invalid),
+        help("verify the `execution:` block in genome.yaml against schemas/genome.schema.json")
+    )]
+    OsContractInvalid(String),
+
+    #[error("launcher failed: {0}")]
+    #[diagnostic(code(agenomic::os::launcher_failed))]
+    OsLauncherFailed(String),
+
+    #[error("policy violation: {0}")]
+    #[diagnostic(
+        code(agenomic::os::policy_violation),
+        help("review the `execution.permissions` block and any --allow-* overrides")
+    )]
+    OsPolicyViolation(String),
+
+    #[error("port proposal failed: {0}")]
+    #[diagnostic(code(agenomic::os::port_failed))]
+    OsPortFailed(String),
 }
 
 impl CliError {
@@ -129,6 +172,13 @@ impl CliError {
             Self::AttestationVerificationFailed(_) => ExitCode::AttestationVerificationFailed,
             Self::ContractFailed(_) => ExitCode::ContractFailed,
             Self::DiffRiskExceeded(_) => ExitCode::DiffRiskExceeded,
+            Self::OsUriInvalid(_) => ExitCode::OsUriInvalid,
+            Self::OsResolverFailed(_) => ExitCode::OsResolverFailed,
+            Self::OsBundleUnsigned(_) => ExitCode::OsBundleUnsigned,
+            Self::OsContractInvalid(_) => ExitCode::OsContractInvalid,
+            Self::OsLauncherFailed(_) => ExitCode::OsLauncherFailed,
+            Self::OsPolicyViolation(_) => ExitCode::OsPolicyViolation,
+            Self::OsPortFailed(_) => ExitCode::OsPortFailed,
         }
     }
 }
@@ -163,5 +213,31 @@ mod tests {
     fn atep_integrity_maps_to_10() {
         let e = CliError::AtepIntegrity { reason: "x".into() };
         assert_eq!(e.exit_code().as_i32(), 10);
+    }
+
+    #[test]
+    fn os_variants_map_to_their_codes() {
+        assert_eq!(CliError::OsUriInvalid("x".into()).exit_code().as_i32(), 11);
+        assert_eq!(
+            CliError::OsResolverFailed("x".into()).exit_code().as_i32(),
+            12
+        );
+        assert_eq!(
+            CliError::OsBundleUnsigned("x".into()).exit_code().as_i32(),
+            13
+        );
+        assert_eq!(
+            CliError::OsContractInvalid("x".into()).exit_code().as_i32(),
+            14
+        );
+        assert_eq!(
+            CliError::OsLauncherFailed("x".into()).exit_code().as_i32(),
+            15
+        );
+        assert_eq!(
+            CliError::OsPolicyViolation("x".into()).exit_code().as_i32(),
+            16
+        );
+        assert_eq!(CliError::OsPortFailed("x".into()).exit_code().as_i32(), 17);
     }
 }

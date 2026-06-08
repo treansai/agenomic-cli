@@ -32,6 +32,7 @@ agenomic-config = { workspace = true }
 agenomic-cloud-client = { workspace = true }
 agenomic-diagnostics = { workspace = true }
 agenomic-detect = { workspace = true }
+agenomic-os = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
 git-version = { workspace = true }
