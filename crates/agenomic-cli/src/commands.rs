@@ -7,7 +7,8 @@ use agenomic_attestation::{
     create_attestation, verify_attestation, AttestationOptions, SigningMode,
 };
 use agenomic_bundle::{
-    build_bundle, extract_bundle, inspect_bundle, BuildBundleOptions, ExtractOptions,
+    build_bundle, compile_runtime_artifacts, extract_bundle, inspect_bundle, BuildBundleOptions,
+    CompileRuntimeOptions, ExtractOptions,
 };
 use agenomic_core::{io_at, CliError, CliResult, ExitCode, Severity, ValidationLevel};
 use agenomic_diff::{diff_bundles, DiffOptions};
@@ -1283,7 +1284,11 @@ pub fn cmd_trace(args: &TraceCommand) -> CliResult<ExitCode> {
     }
 }
 
-pub fn cmd_bundle(args: &BundleCommand) -> CliResult<ExitCode> {
+pub fn cmd_bundle(
+    args: &BundleCommand,
+    format: OutputFormat,
+    _no_color: bool,
+) -> CliResult<ExitCode> {
     match &args.command {
         BundleSub::Extract {
             archive,
@@ -1306,6 +1311,43 @@ pub fn cmd_bundle(args: &BundleCommand) -> CliResult<ExitCode> {
             let s = serde_json::to_string_pretty(&manifest)
                 .map_err(|e| CliError::Internal(format!("{e}")))?;
             println!("{s}");
+            Ok(ExitCode::Success)
+        }
+        BundleSub::CompileRuntime {
+            target,
+            adapters,
+            output_dir,
+        } => {
+            let result = compile_runtime_artifacts(CompileRuntimeOptions {
+                input_dir: target.clone(),
+                output_dir: output_dir.clone(),
+                adapters: adapters.iter().map(|a| a.to_runtime_adapter()).collect(),
+            })?;
+            let summary = serde_json::json!({
+                "output_dir": result.output_dir,
+                "artifacts": result.artifacts.iter().map(|artifact| serde_json::json!({
+                    "adapter": artifact.adapter.label(),
+                    "path": artifact.path,
+                    "ready": artifact.ready,
+                    "warnings": artifact.warnings,
+                })).collect::<Vec<_>>(),
+            });
+            match format {
+                OutputFormat::Human => {
+                    println!(
+                        "compiled runtime artifacts into {}",
+                        result.output_dir.display()
+                    );
+                    for artifact in &result.artifacts {
+                        let status = if artifact.ready { "ready" } else { "partial" };
+                        println!("  - {} ({status})", artifact.path.display());
+                        for warning in &artifact.warnings {
+                            println!("      warning: {warning}");
+                        }
+                    }
+                }
+                _ => print_value(&summary, format)?,
+            }
             Ok(ExitCode::Success)
         }
     }

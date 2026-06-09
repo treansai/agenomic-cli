@@ -235,6 +235,14 @@ Extract a `.bundle.tar.zst`.
 
 Print the canonical Merkle manifest as JSON.
 
+### `agenomic bundle compile-runtime <DIR> [--adapter plain|langgraph|crewai ...] [--output-dir DIR]`
+
+Compile `genome.yaml` into deterministic `runtime/*.compiled` adapter
+artifacts. With no `--adapter`, the compiler emits `plain` plus any
+framework-specific adapter implied by the genome (`langgraph` /
+`crewai`). The generated files are metadata + execution plans, not
+framework source code.
+
 ### `agenomic trace validate <PATH>` and `agenomic trace summarize <PATH>`
 
 Validate / summarize a JSONL trace file.
