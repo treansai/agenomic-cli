@@ -913,6 +913,87 @@ fn launch_context_from_contract(
     })
 }
 
+pub fn cmd_governance(
+    args: &GovernanceCommand,
+    format: OutputFormat,
+    _no_color: bool,
+) -> CliResult<ExitCode> {
+    use agenomic_governance::{
+        audit, io::read_traces, AdversarialReviewer, DiagnosticAgent, HypothesisAgent, Verdict,
+    };
+
+    match &args.command {
+        GovernanceSub::Cluster { traces } => {
+            let loaded = read_traces(traces).map_err(CliError::from)?;
+            let clusters = DiagnosticAgent::new().cluster(&loaded);
+            print_value(&serde_json::json!({ "clusters": clusters }), format)?;
+            Ok(ExitCode::Success)
+        }
+        GovernanceSub::Hypothesize { clusters } => {
+            let raw = read_governance_input(clusters)?;
+            // Accept either a `{clusters: [...]}` envelope or a bare `[...]`.
+            let parsed: serde_json::Value = serde_json::from_str(&raw)
+                .map_err(|e| CliError::Schema(format!("clusters JSON: {e}")))?;
+            let inner = parsed.get("clusters").cloned().unwrap_or(parsed);
+            let clusters: Vec<agenomic_governance::Cluster> = serde_json::from_value(inner)
+                .map_err(|e| CliError::Schema(format!("clusters JSON: {e}")))?;
+            let proposals = HypothesisAgent::new().hypothesize_many(&clusters);
+            print_value(&serde_json::json!({ "proposals": proposals }), format)?;
+            Ok(ExitCode::Success)
+        }
+        GovernanceSub::Critique { proposal } => {
+            let raw = read_governance_input(proposal)?;
+            let p: agenomic_governance::Proposal = serde_json::from_str(&raw)
+                .map_err(|e| CliError::Schema(format!("proposal JSON: {e}")))?;
+            let critique = AdversarialReviewer::new().critique(&p);
+            let blocked = matches!(critique.verdict, Verdict::Block);
+            print_value(&serde_json::json!({ "critique": critique }), format)?;
+            if blocked {
+                Ok(ExitCode::OsPolicyViolation)
+            } else {
+                Ok(ExitCode::Success)
+            }
+        }
+        GovernanceSub::Audit {
+            traces,
+            fail_on_block,
+        } => {
+            let loaded = read_traces(traces).map_err(CliError::from)?;
+            let report = audit(&loaded);
+            let blocked = report.has_blocking_findings();
+            print_value(
+                &serde_json::json!({
+                    "clusters": report.clusters,
+                    "proposals": report.proposals,
+                    "critiques": report.critiques,
+                    "blocked": blocked,
+                }),
+                format,
+            )?;
+            if *fail_on_block && blocked {
+                Ok(ExitCode::OsPolicyViolation)
+            } else {
+                Ok(ExitCode::Success)
+            }
+        }
+    }
+}
+
+/// Read a JSON file path, or stdin when path == "-". Used by the governance
+/// sub-commands that take a single JSON document on the command line.
+fn read_governance_input(path: &Path) -> CliResult<String> {
+    use std::io::Read;
+    if path.as_os_str() == "-" {
+        let mut s = String::new();
+        std::io::stdin()
+            .read_to_string(&mut s)
+            .map_err(|e| CliError::Internal(format!("read stdin: {e}")))?;
+        Ok(s)
+    } else {
+        std::fs::read_to_string(path).map_err(|e| io_at(path, e))
+    }
+}
+
 pub fn cmd_hash(args: &HashArgs, _format: OutputFormat, _no_color: bool) -> CliResult<ExitCode> {
     let manifest = if args.target.is_dir() {
         agenomic_hash::compute_manifest(&args.target)?

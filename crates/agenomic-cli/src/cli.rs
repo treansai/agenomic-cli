@@ -83,6 +83,8 @@ pub enum Commands {
     Compile(CompileArgs),
     /// Evaluate the bundle's OPA/Rego policies against a launch context.
     Policy(PolicyCommand),
+    /// Governance agents over flagged production traces (diagnostic / hypothesis / adversarial).
+    Governance(GovernanceCommand),
     /// Print the canonical hash of a bundle.
     Hash(HashArgs),
     /// Diff two bundles.
@@ -317,6 +319,39 @@ pub enum PolicySub {
         /// `execution:` block when omitted.
         #[arg(long)]
         input: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Parser)]
+pub struct GovernanceCommand {
+    #[command(subcommand)]
+    pub command: GovernanceSub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum GovernanceSub {
+    /// Cluster a JSONL stream of flagged traces (Mode 1: failure clustering).
+    Cluster {
+        /// Path to the JSONL traces file, or `-` for stdin.
+        traces: PathBuf,
+    },
+    /// Generate textual remediation proposals from clusters (Mode 2: hypothesis generation).
+    Hypothesize {
+        /// Path to a clusters JSON file (output of `governance cluster`), or `-` for stdin.
+        clusters: PathBuf,
+    },
+    /// Critique a single proposal (Mode 3: adversarial reviewer). Exits 16 on Block.
+    Critique {
+        /// Path to a proposal JSON file, or `-` for stdin.
+        proposal: PathBuf,
+    },
+    /// Run the full Diagnostic → Hypothesis → Adversarial chain end-to-end.
+    Audit {
+        /// Path to the JSONL traces file, or `-` for stdin.
+        traces: PathBuf,
+        /// Exit 16 when at least one proposal lands at `Verdict::Block`.
+        #[arg(long)]
+        fail_on_block: bool,
     },
 }
 

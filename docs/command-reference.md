@@ -95,6 +95,35 @@ live MCP servers is the operator's integration step.
 `--dry-run` prints the file list without writing. `--output DIR` writes under
 `DIR/<target>.compiled/` instead of `<bundle>/runtime/`.
 
+### `agenomic governance cluster <TRACES.jsonl>`
+
+Group a stream of flagged production traces by `(signal, skill)` and surface
+the top keywords per cluster (Mode 1 of Point 4 — "failure clustering"). Input
+is one JSON object per line with `{trace_id, agent_id, skill, signal,
+input_snippet, output_snippet}`; pass `-` for stdin. Output is deterministic.
+
+### `agenomic governance hypothesize <CLUSTERS.json>`
+
+Turn each cluster into a textual remediation proposal (Mode 2 — "hypothesis
+generation"). The hypothesis agent **never mutates a bundle**; it produces JSON
+a human reads. Action kinds: `extend_skill_examples`, `narrow_skill_scope`,
+`add_policy_rule`, `escalation_overhaul`, `none`.
+
+### `agenomic governance critique <PROPOSAL.json>`
+
+Adversarially review one proposal (Mode 3 — "adversarial reviewer"). Heuristics
+include "evidence base too small (<3 traces)", "large prompt expansion risks
+over-triggering", "scope narrowing without explicit exclusions masks the
+failure", and "policy rule lacks an anchoring keyword". Verdict is `pass` /
+`warn` / `block`; **exits `16` (OsPolicyViolation) on `block`**.
+
+### `agenomic governance audit <TRACES.jsonl> [--fail-on-block]`
+
+Run the full Diagnostic → Hypothesis → Adversarial chain end-to-end and emit
+clusters + proposals + critiques in one document. With `--fail-on-block`, exits
+16 when any proposal lands at `Verdict::Block`. Useful as a single CI step or
+as the input to a downstream human-approval gate (Mode 4).
+
 ### `agenomic policy eval [BUNDLE] [--input FILE]`
 
 Evaluate the bundle's `policies/*.rego` (OPA/Rego) against a launch context and

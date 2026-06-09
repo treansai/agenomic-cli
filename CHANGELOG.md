@@ -8,6 +8,19 @@ All notable changes to `agenomic-cli` are documented here. Format follows
 
 ### Added
 
+- **Governance agents (Point 4 / BACKEND_GAPS Gap 5).** New `agenomic-governance`
+  crate plus `agenomic governance {cluster,hypothesize,critique,audit}`. Three
+  pure, deterministic engines over flagged production traces:
+  - `DiagnosticAgent` — groups traces by `(signal, skill)`, mines keywords
+    (Mode 1: failure clustering).
+  - `HypothesisAgent` — emits typed `Proposal`s (`extend_skill_examples`,
+    `narrow_skill_scope`, `add_policy_rule`, `escalation_overhaul`, `none`).
+    **Never mutates a bundle** (Mode 2: hypothesis generation).
+  - `AdversarialReviewer` — fail-closed rule battery, verdict `pass` / `warn` /
+    `block` (Mode 3: adversarial review). `block` exits 16.
+  `audit` chains the three end-to-end. Modes 4 (human-approval gate) and 5
+  (shadow deployment) layer above this — these engines produce the artifacts
+  that gate consumes.
 - **`entrypoint.kind` accepts `docker` and `wasm`.** `agenomic run` now
   dispatches via `agenomic_os::launch_for_kind` to a per-kind launcher: the
   existing `CommandLauncher`, a new `DockerLauncher` (`docker run --rm -i

@@ -91,6 +91,7 @@ dependencies = [
  "agenomic-diagnostics",
  "agenomic-diff",
  "agenomic-fs",
+ "agenomic-governance",
  "agenomic-hash",
  "agenomic-os",
  "agenomic-policy",
@@ -250,6 +251,20 @@ dependencies = [
  "serde",
  "tempfile",
  "walkdir",
+]
+
+[[package]]
+name = "agenomic-governance"
+version = "0.1.1-alpha"
+dependencies = [
+ "agenomic-core",
+ "blake3",
+ "hex",
+ "miette",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

@@ -81,6 +81,24 @@ it should fail closed with a diagnostic that references this file.
   `command` entrypoints only (see "Docker / wasm launchers"). For `wasm`,
   outbound model calls additionally require a WASI-HTTP-capable host.
 
+### Governance agents (Point 4 / Gap 5)
+
+- **Status**: partially implemented (CLI/local layer).
+- **Implemented**: `agenomic-governance` crate plus `agenomic governance
+  {cluster,hypothesize,critique,audit}`. Mode 1 (failure clustering) groups
+  flagged traces by `(signal, skill)` with deterministic keyword mining.
+  Mode 2 (hypothesis generation) emits typed `Proposal`s that never mutate
+  the bundle. Mode 3 (adversarial reviewer) runs a fail-closed rule battery
+  and returns `pass` / `warn` / `block` (block → exit 16). All three engines
+  are pure functions — same input → byte-identical output — so they chain
+  cleanly into a downstream attestation.
+- **Gap**: Mode 4 (human approval gate) and Mode 5 (shadow / canary
+  deployment at 0/5/25/100% traffic) belong above this layer; the CLI emits
+  the artifacts a gate / replay-runner consumes but does not yet ship the
+  gate itself. The cloud-side `AdversarialReview` entity from
+  `agenomic-web/BACKEND_GAPS.md` Gap 5 is also still open — these engines
+  are the local computation side of that workflow.
+
 ### Replay distribution
 
 - **Status**: not implemented.
