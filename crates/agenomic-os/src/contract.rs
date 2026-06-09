@@ -30,15 +30,38 @@ fn default_working_directory() -> String {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entrypoint {
     pub kind: EntrypointKind,
+    /// `command` only: the program to spawn.
     pub command: Option<String>,
     #[serde(default)]
     pub args: Vec<String>,
+    /// `docker` only: OCI image reference.
+    #[serde(default)]
+    pub image: Option<String>,
+    /// `wasm` only: bundle-relative path to the `.wasm` component.
+    #[serde(default)]
+    pub module: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EntrypointKind {
+    /// Spawn the program named by `entrypoint.command` directly.
     Command,
+    /// Run an OCI image via `docker run`.
+    Docker,
+    /// Run a WASI component via `wasmtime run`.
+    Wasm,
+}
+
+impl EntrypointKind {
+    /// Lowercase label used in errors and trace events.
+    pub fn label(self) -> &'static str {
+        match self {
+            EntrypointKind::Command => "command",
+            EntrypointKind::Docker => "docker",
+            EntrypointKind::Wasm => "wasm",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,32 +126,43 @@ impl ExecutionContract {
     /// Returns [`OsError::ContractMissing`] when no block is present, and
     /// [`OsError::ContractInvalid`] when present but malformed.
     pub fn from_genome_yaml(yaml: &str) -> OsResult<Self> {
-        let v: serde_yaml::Value = serde_yaml::from_str(yaml).map_err(|e| {
-            OsError::ContractInvalid {
+        let v: serde_yaml::Value =
+            serde_yaml::from_str(yaml).map_err(|e| OsError::ContractInvalid {
                 reason: format!("genome.yaml is not valid YAML: {e}"),
-            }
-        })?;
-        let exec = v
-            .get("execution")
-            .ok_or(OsError::ContractMissing)?
-            .clone();
-        let contract: ExecutionContract = serde_yaml::from_value(exec).map_err(|e| {
-            OsError::ContractInvalid {
+            })?;
+        let exec = v.get("execution").ok_or(OsError::ContractMissing)?.clone();
+        let contract: ExecutionContract =
+            serde_yaml::from_value(exec).map_err(|e| OsError::ContractInvalid {
                 reason: format!("execution block: {e}"),
-            }
-        })?;
+            })?;
         contract.validate()?;
         Ok(contract)
     }
 
     /// Cross-field validation beyond what serde enforces.
     fn validate(&self) -> OsResult<()> {
-        if matches!(self.entrypoint.kind, EntrypointKind::Command)
-            && self.entrypoint.command.as_deref().unwrap_or("").is_empty()
-        {
-            return Err(OsError::ContractInvalid {
-                reason: "entrypoint.command must be set when kind = command".into(),
-            });
+        match self.entrypoint.kind {
+            EntrypointKind::Command => {
+                if self.entrypoint.command.as_deref().unwrap_or("").is_empty() {
+                    return Err(OsError::ContractInvalid {
+                        reason: "entrypoint.command must be set when kind = command".into(),
+                    });
+                }
+            }
+            EntrypointKind::Docker => {
+                if self.entrypoint.image.as_deref().unwrap_or("").is_empty() {
+                    return Err(OsError::ContractInvalid {
+                        reason: "entrypoint.image must be set when kind = docker".into(),
+                    });
+                }
+            }
+            EntrypointKind::Wasm => {
+                if self.entrypoint.module.as_deref().unwrap_or("").is_empty() {
+                    return Err(OsError::ContractInvalid {
+                        reason: "entrypoint.module must be set when kind = wasm".into(),
+                    });
+                }
+            }
         }
         Ok(())
     }

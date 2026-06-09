@@ -26,10 +26,7 @@ pub enum OsError {
         code(agenomic::os::resolver::bundle_not_found),
         help("materialize the bundle into the cache or pass --local to point at an in-repo path")
     )]
-    BundleNotFound {
-        reference: String,
-        location: String,
-    },
+    BundleNotFound { reference: String, location: String },
 
     #[error("bundle at {path} is malformed: {reason}")]
     #[diagnostic(code(agenomic::os::resolver::bundle_malformed))]
