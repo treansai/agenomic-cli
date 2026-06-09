@@ -1058,12 +1058,11 @@ fn emit_governance_events(
     // Chain onto the existing governance head so the trail is tamper-evident.
     let head = store.stream_head(StreamId::Governance)?;
     let seq_start = head.as_ref().map(|(s, _)| s + 1).unwrap_or(0);
-    let mut seq = seq_start;
     let mut parent = head.map(|(_, h)| h);
     let now = chrono::Utc::now().timestamp_millis() as u64;
 
     let mut events = Vec::with_capacity(descriptors.len());
-    for (i, d) in descriptors.iter().enumerate() {
+    for (seq, (i, d)) in (seq_start..).zip(descriptors.iter().enumerate()) {
         let header = EventHeader {
             schema_version: 1,
             event_id: ulid::Ulid::new().to_bytes(),
@@ -1080,7 +1079,6 @@ fn emit_governance_events(
         let payload = EventPayload(json_to_cbor(d.payload.clone()));
         let event = AtepEvent::seal(header, payload, &sk, key_id.clone())?;
         parent = Some(event.causal_hash);
-        seq += 1;
         events.push(event);
     }
     store.append_batch(StreamId::Governance, &events)?;
