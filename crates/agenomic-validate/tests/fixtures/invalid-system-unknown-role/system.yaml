@@ -1,0 +1,13 @@
+spec_version: '0.2'
+system:
+  id: 'system://acme/orchestra'
+  name: 'Acme Orchestra'
+agents:
+  - role: intake
+    id: 'agent://acme/intake'
+orchestration:
+  style: graph
+  entrypoint: intake
+  edges:
+    - from: intake
+      to: ghost
