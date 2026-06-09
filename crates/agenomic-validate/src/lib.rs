@@ -30,6 +30,12 @@ pub const REQUIRED_FILES: &[&str] = &["genome.yaml", "behavior.contract.yaml"];
 /// assert!(r.valid);
 /// ```
 pub fn validate_bundle(dir: &Path, level: ValidationLevel) -> CliResult<ValidationReport> {
+    // System bundles (spec 0.2, RFC 0009) carry a `system.yaml` instead of a
+    // genome and are validated by their own rules.
+    if dir.join("system.yaml").is_file() && !dir.join("genome.yaml").is_file() {
+        return validate_system_bundle(dir, level);
+    }
+
     let mut report = ValidationReport {
         valid: true,
         ..Default::default()
@@ -149,6 +155,8 @@ pub fn validate_bundle(dir: &Path, level: ValidationLevel) -> CliResult<Validati
             &mut report,
         )?;
     }
+
+    validate_workflow_files(dir, &mut report)?;
 
     cross_reference(&genome_text, &lock_text, &contract_text, &mut report);
 
@@ -276,6 +284,81 @@ pub fn validate_behavior_contract(contract_yaml: &str) -> CliResult<ValidationRe
     Ok(report)
 }
 
+/// Validate a single standalone manifest file (YAML).
+///
+/// The manifest kind is inferred from its top-level keys: `workflow` →
+/// workflow manifest, `system` → system manifest, `agent` → genome.
+pub fn validate_manifest_file(path: &Path) -> CliResult<ValidationReport> {
+    let text = std::fs::read_to_string(path).map_err(|e| io_at(path, e))?;
+    let doc: serde_yaml::Value = match serde_yaml::from_str(&text) {
+        Ok(v) => v,
+        Err(e) => {
+            let mut report = ValidationReport {
+                valid: false,
+                ..Default::default()
+            };
+            report.push_error(ValidationIssue {
+                code: "agenomic::bundle::yaml_parse".into(),
+                severity: Severity::High,
+                message: format!("{}: parse error: {e}", path.display()),
+                path: Some(path.display().to_string()),
+                hint: None,
+                doc: None,
+            });
+            return Ok(report);
+        }
+    };
+    if doc.get("workflow").is_some() {
+        validate_workflow(&text)
+    } else if doc.get("system").is_some() {
+        validate_system(&text)
+    } else if doc.get("agent").is_some() {
+        validate_genome(&text)
+    } else {
+        Err(CliError::Schema(
+            "cannot infer manifest kind: expected a top-level `workflow`, `system`, or `agent` key"
+                .into(),
+        ))
+    }
+}
+
+/// Validate a single workflow manifest YAML string (spec 0.2, RFC 0009).
+pub fn validate_workflow(workflow_yaml: &str) -> CliResult<ValidationReport> {
+    let mut report = ValidationReport {
+        valid: true,
+        ..Default::default()
+    };
+    run_schema(
+        SchemaKind::Workflow,
+        workflow_yaml,
+        "workflow.yaml",
+        &mut report,
+    )?;
+    if let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(workflow_yaml) {
+        workflow_semantic_checks(&doc, "workflow.yaml", &mut report);
+    }
+    if !report.errors.is_empty() {
+        report.valid = false;
+    }
+    Ok(report)
+}
+
+/// Validate a single system manifest YAML string (spec 0.2, RFC 0009).
+pub fn validate_system(system_yaml: &str) -> CliResult<ValidationReport> {
+    let mut report = ValidationReport {
+        valid: true,
+        ..Default::default()
+    };
+    run_schema(SchemaKind::System, system_yaml, "system.yaml", &mut report)?;
+    if let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(system_yaml) {
+        system_semantic_checks(&doc, None, &mut report);
+    }
+    if !report.errors.is_empty() {
+        report.valid = false;
+    }
+    Ok(report)
+}
+
 /// Validate an ATEP event JSON document.
 pub fn validate_atep_event(event_json: &str) -> CliResult<ValidationReport> {
     let mut report = ValidationReport {
@@ -371,6 +454,278 @@ fn serde_yaml_to_json(v: serde_yaml::Value) -> serde_json::Value {
             serde_json::Value::Object(out)
         }
         serde_yaml::Value::Tagged(t) => serde_yaml_to_json(t.value),
+    }
+}
+
+/// Validate a system bundle: `system.yaml` plus its owned workflow manifests
+/// (spec 0.2, RFC 0009).
+fn validate_system_bundle(dir: &Path, level: ValidationLevel) -> CliResult<ValidationReport> {
+    let mut report = ValidationReport {
+        valid: true,
+        ..Default::default()
+    };
+
+    // ---- Basic ----
+    let system_text = read_if_exists(&dir.join("system.yaml"))?;
+    let system_doc = match &system_text {
+        Some(t) => match serde_yaml::from_str::<serde_yaml::Value>(t) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                report.push_error(ValidationIssue {
+                    code: "agenomic::bundle::yaml_parse".into(),
+                    severity: Severity::High,
+                    message: format!("system.yaml: parse error: {e}"),
+                    path: Some("system.yaml".into()),
+                    hint: None,
+                    doc: None,
+                });
+                None
+            }
+        },
+        None => None,
+    };
+
+    if matches!(level, ValidationLevel::Basic) {
+        if !report.errors.is_empty() {
+            report.valid = false;
+        }
+        return Ok(report);
+    }
+
+    // ---- Strict ----
+    if let Some(t) = &system_text {
+        run_schema(SchemaKind::System, t, "system.yaml", &mut report)?;
+    }
+    if let Some(doc) = &system_doc {
+        system_semantic_checks(doc, Some(dir), &mut report);
+    }
+    validate_workflow_files(dir, &mut report)?;
+
+    if matches!(level, ValidationLevel::Strict) {
+        if !report.errors.is_empty() {
+            report.valid = false;
+        }
+        return Ok(report);
+    }
+
+    // ---- Ci ----
+    let scan_issues = security::security_scan(dir)?;
+    for issue in scan_issues {
+        if issue.severity >= Severity::High {
+            report.push_error(issue);
+        } else {
+            report.push_warning(issue);
+        }
+    }
+
+    if !report.errors.is_empty() || report.warnings.iter().any(|i| i.severity >= Severity::High) {
+        report.valid = false;
+    }
+
+    Ok(report)
+}
+
+/// Schema-validate the optional orchestration manifests of a bundle:
+/// `workflow.yaml` at the root and every YAML file under `workflows/`.
+fn validate_workflow_files(dir: &Path, report: &mut ValidationReport) -> CliResult<()> {
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    let root = dir.join("workflow.yaml");
+    if root.is_file() {
+        files.push(root);
+    }
+    let workflows_dir = dir.join("workflows");
+    if workflows_dir.is_dir() {
+        let mut entries: Vec<_> = std::fs::read_dir(&workflows_dir)
+            .map_err(|e| io_at(&workflows_dir, e))?
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| {
+                p.is_file()
+                    && p.extension().and_then(|x| x.to_str()).is_some_and(|x| {
+                        x.eq_ignore_ascii_case("yaml") || x.eq_ignore_ascii_case("yml")
+                    })
+            })
+            .collect();
+        entries.sort();
+        files.extend(entries);
+    }
+
+    for file in files {
+        let label = file
+            .strip_prefix(dir)
+            .unwrap_or(&file)
+            .to_string_lossy()
+            .to_string();
+        if let Some(text) = read_if_exists(&file)? {
+            match serde_yaml::from_str::<serde_yaml::Value>(&text) {
+                Ok(doc) => {
+                    run_schema(SchemaKind::Workflow, &text, &label, report)?;
+                    workflow_semantic_checks(&doc, &label, report);
+                }
+                Err(e) => {
+                    report.push_error(ValidationIssue {
+                        code: "agenomic::bundle::yaml_parse".into(),
+                        severity: Severity::High,
+                        message: format!("{label}: parse error: {e}"),
+                        path: Some(label.clone()),
+                        hint: None,
+                        doc: None,
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Checks RFC 0009 requires beyond JSON Schema: step ids unique across the
+/// workflow (including loop bodies), and every `depends_on` entry naming an
+/// existing step at the same nesting level.
+fn workflow_semantic_checks(
+    doc: &serde_yaml::Value,
+    file_label: &str,
+    report: &mut ValidationReport,
+) {
+    fn check_level(
+        steps: &[serde_yaml::Value],
+        file_label: &str,
+        all_ids: &mut HashSet<String>,
+        report: &mut ValidationReport,
+    ) {
+        let level_ids: HashSet<&str> = steps
+            .iter()
+            .filter_map(|s| s.get("id").and_then(|x| x.as_str()))
+            .collect();
+        for step in steps {
+            let id = step.get("id").and_then(|x| x.as_str()).unwrap_or("?");
+            if !all_ids.insert(id.to_string()) {
+                report.push_error(ValidationIssue {
+                    code: "agenomic::workflow::duplicate_step_id".into(),
+                    severity: Severity::High,
+                    message: format!("duplicate step id '{id}'"),
+                    path: Some(file_label.to_string()),
+                    hint: None,
+                    doc: None,
+                });
+            }
+            if let Some(deps) = step.get("depends_on").and_then(|x| x.as_sequence()) {
+                for dep in deps.iter().filter_map(|d| d.as_str()) {
+                    if !level_ids.contains(dep) {
+                        report.push_error(ValidationIssue {
+                            code: "agenomic::workflow::unknown_dependency".into(),
+                            severity: Severity::High,
+                            message: format!(
+                                "step '{id}' depends on unknown step '{dep}' (must exist at the same nesting level)"
+                            ),
+                            path: Some(file_label.to_string()),
+                            hint: None,
+                            doc: None,
+                        });
+                    }
+                }
+            }
+            if let Some(body) = step.get("body").and_then(|x| x.as_sequence()) {
+                check_level(body, file_label, all_ids, report);
+            }
+        }
+    }
+
+    if let Some(steps) = doc.get("steps").and_then(|x| x.as_sequence()) {
+        let mut all_ids = HashSet::new();
+        check_level(steps, file_label, &mut all_ids, report);
+    }
+}
+
+/// Checks RFC 0009 requires beyond JSON Schema: member roles unique,
+/// orchestration entrypoint/supervisor/edges referencing declared roles
+/// (`END` allowed as edge target), and — when the bundle directory is known —
+/// every `workflows[].path` existing on disk.
+fn system_semantic_checks(
+    doc: &serde_yaml::Value,
+    dir: Option<&Path>,
+    report: &mut ValidationReport,
+) {
+    let mut roles: HashSet<String> = HashSet::new();
+    if let Some(agents) = doc.get("agents").and_then(|x| x.as_sequence()) {
+        for agent in agents {
+            if let Some(role) = agent.get("role").and_then(|x| x.as_str()) {
+                if !roles.insert(role.to_string()) {
+                    report.push_error(ValidationIssue {
+                        code: "agenomic::system::duplicate_role".into(),
+                        severity: Severity::High,
+                        message: format!("duplicate member role '{role}'"),
+                        path: Some("system.yaml".into()),
+                        hint: None,
+                        doc: None,
+                    });
+                }
+            }
+        }
+    }
+
+    if let Some(orch) = doc.get("orchestration") {
+        for key in ["entrypoint", "supervisor"] {
+            if let Some(role) = orch.get(key).and_then(|x| x.as_str()) {
+                if !roles.contains(role) {
+                    report.push_error(ValidationIssue {
+                        code: "agenomic::system::unknown_role".into(),
+                        severity: Severity::High,
+                        message: format!("orchestration.{key} references undeclared role '{role}'"),
+                        path: Some("system.yaml".into()),
+                        hint: None,
+                        doc: None,
+                    });
+                }
+            }
+        }
+        if let Some(edges) = orch.get("edges").and_then(|x| x.as_sequence()) {
+            for edge in edges {
+                let from = edge.get("from").and_then(|x| x.as_str());
+                let to = edge.get("to").and_then(|x| x.as_str());
+                if let Some(from) = from {
+                    if !roles.contains(from) {
+                        report.push_error(ValidationIssue {
+                            code: "agenomic::system::unknown_role".into(),
+                            severity: Severity::High,
+                            message: format!("edge references undeclared role '{from}'"),
+                            path: Some("system.yaml".into()),
+                            hint: None,
+                            doc: None,
+                        });
+                    }
+                }
+                if let Some(to) = to {
+                    if to != "END" && !roles.contains(to) {
+                        report.push_error(ValidationIssue {
+                            code: "agenomic::system::unknown_role".into(),
+                            severity: Severity::High,
+                            message: format!("edge references undeclared role '{to}'"),
+                            path: Some("system.yaml".into()),
+                            hint: None,
+                            doc: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    if let (Some(dir), Some(workflows)) = (dir, doc.get("workflows").and_then(|x| x.as_sequence()))
+    {
+        for wf in workflows {
+            if let Some(path) = wf.get("path").and_then(|x| x.as_str()) {
+                if !dir.join(path).is_file() {
+                    report.push_error(ValidationIssue {
+                        code: "agenomic::system::missing_workflow_file".into(),
+                        severity: Severity::High,
+                        message: format!("workflows[].path '{path}' does not exist in the bundle"),
+                        path: Some(path.to_string()),
+                        hint: None,
+                        doc: None,
+                    });
+                }
+            }
+        }
     }
 }
 

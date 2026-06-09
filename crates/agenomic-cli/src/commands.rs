@@ -13,7 +13,7 @@ use agenomic_bundle::{
 use agenomic_core::{io_at, CliError, CliResult, ExitCode, Severity, ValidationLevel};
 use agenomic_diff::{diff_bundles, DiffOptions};
 use agenomic_replay_local::{run_local_replay, ReplayOptions};
-use agenomic_validate::{validate_archive, validate_bundle};
+use agenomic_validate::{validate_archive, validate_bundle, validate_manifest_file};
 
 use crate::cli::*;
 use crate::render::render;
@@ -447,8 +447,17 @@ pub fn cmd_validate(
         LevelArg::Strict => ValidationLevel::Strict,
         LevelArg::Ci => ValidationLevel::Ci,
     };
+    let is_yaml_file = args.target.is_file()
+        && args
+            .target
+            .extension()
+            .and_then(|x| x.to_str())
+            .is_some_and(|x| x.eq_ignore_ascii_case("yaml") || x.eq_ignore_ascii_case("yml"));
     let report = if args.target.is_dir() {
         validate_bundle(&args.target, level)?
+    } else if is_yaml_file {
+        // Standalone manifest (genome, workflow, or system) outside a bundle.
+        validate_manifest_file(&args.target)?
     } else {
         validate_archive(&args.target, level)?
     };
@@ -1049,12 +1058,11 @@ fn emit_governance_events(
     // Chain onto the existing governance head so the trail is tamper-evident.
     let head = store.stream_head(StreamId::Governance)?;
     let seq_start = head.as_ref().map(|(s, _)| s + 1).unwrap_or(0);
-    let mut seq = seq_start;
     let mut parent = head.map(|(_, h)| h);
     let now = chrono::Utc::now().timestamp_millis() as u64;
 
     let mut events = Vec::with_capacity(descriptors.len());
-    for (i, d) in descriptors.iter().enumerate() {
+    for (seq, (i, d)) in (seq_start..).zip(descriptors.iter().enumerate()) {
         let header = EventHeader {
             schema_version: 1,
             event_id: ulid::Ulid::new().to_bytes(),
@@ -1071,7 +1079,6 @@ fn emit_governance_events(
         let payload = EventPayload(json_to_cbor(d.payload.clone()));
         let event = AtepEvent::seal(header, payload, &sk, key_id.clone())?;
         parent = Some(event.causal_hash);
-        seq += 1;
         events.push(event);
     }
     store.append_batch(StreamId::Governance, &events)?;

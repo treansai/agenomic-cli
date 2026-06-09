@@ -1,0 +1,38 @@
+spec_version: '0.2'
+system:
+  id: 'system://acme/orchestra'
+  name: 'Acme Orchestra'
+  domain: 'claims'
+  criticality: 'high'
+agents:
+  - role: intake
+    id: 'agent://acme/intake'
+    autonomy:
+      allowed_actions: [read_fnol]
+  - role: triage
+    id: 'agent://acme/triage'
+  - role: decision
+    id: 'agent://acme/decision'
+    autonomy:
+      forbidden_actions: [authorize_payout]
+orchestration:
+  style: graph
+  engine:
+    kind: temporal
+  entrypoint: intake
+  edges:
+    - from: intake
+      to: triage
+    - from: triage
+      to: decision
+      when: 'expertise_required == false'
+    - from: triage
+      to: END
+      when: 'expertise_required == true'
+signals:
+  - name: expert_report_received
+workflows:
+  - id: 'workflow://acme/lifecycle'
+    path: workflows/lifecycle.yaml
+forbidden_autonomy:
+  - trigger_payment

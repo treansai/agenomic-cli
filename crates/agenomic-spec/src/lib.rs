@@ -9,8 +9,9 @@ use agenomic_core::{CliError, CliResult};
 ///
 /// `0.2` is additive over `0.1`: it introduces the optional top-level
 /// `execution` block (genome) and `execution_hash` field (agent.lock), both
-/// consumed by `agenomic-os`. Documents declaring `spec_version: 0.1` remain
-/// valid and unchanged.
+/// consumed by `agenomic-os`, plus the `workflow.yaml` and `system.yaml`
+/// manifests for workflows and multi-agent systems (RFC 0009). Documents
+/// declaring `spec_version: 0.1` remain valid and unchanged.
 pub const SUPPORTED_SPEC_VERSIONS: &[&str] = &["0.1", "0.2"];
 /// Default spec version emitted by `agenomic init`.
 ///
@@ -39,6 +40,8 @@ pub enum SchemaKind {
     ReplayReport,
     ReleaseAttestation,
     AtepEvent,
+    Workflow,
+    System,
 }
 
 impl SchemaKind {
@@ -51,11 +54,13 @@ impl SchemaKind {
             Self::ReplayReport => "replay-report",
             Self::ReleaseAttestation => "release-attestation",
             Self::AtepEvent => "atep-event",
+            Self::Workflow => "workflow",
+            Self::System => "system",
         }
     }
 
     /// All embedded schema kinds.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 9] = [
         Self::Genome,
         Self::Agenomic,
         Self::BehaviorContract,
@@ -63,6 +68,8 @@ impl SchemaKind {
         Self::ReplayReport,
         Self::ReleaseAttestation,
         Self::AtepEvent,
+        Self::Workflow,
+        Self::System,
     ];
 }
 
@@ -75,6 +82,8 @@ const REPLAY_REPORT_SCHEMA: &str = include_str!("../../../schemas/replay-report.
 const RELEASE_ATTESTATION_SCHEMA: &str =
     include_str!("../../../schemas/release-attestation.schema.json");
 const ATEP_EVENT_SCHEMA: &str = include_str!("../../../schemas/atep-event.schema.json");
+const WORKFLOW_SCHEMA: &str = include_str!("../../../schemas/workflow.schema.json");
+const SYSTEM_SCHEMA: &str = include_str!("../../../schemas/system.schema.json");
 
 /// Return the raw JSON text of an embedded schema.
 ///
@@ -91,6 +100,8 @@ pub fn embedded_schema(kind: SchemaKind) -> &'static str {
         SchemaKind::ReplayReport => REPLAY_REPORT_SCHEMA,
         SchemaKind::ReleaseAttestation => RELEASE_ATTESTATION_SCHEMA,
         SchemaKind::AtepEvent => ATEP_EVENT_SCHEMA,
+        SchemaKind::Workflow => WORKFLOW_SCHEMA,
+        SchemaKind::System => SYSTEM_SCHEMA,
     }
 }
 
@@ -306,5 +317,87 @@ mod tests {
             "knowledge": []
         });
         assert!(v.validate(&value).is_ok());
+    }
+
+    #[test]
+    fn minimal_workflow_accepted() {
+        let v = validator(SchemaKind::Workflow).unwrap();
+        let value = serde_json::json!({
+            "spec_version": "0.2",
+            "workflow": { "id": "workflow://acme/flow", "name": "Flow" },
+            "steps": [
+                { "id": "answer", "type": "agent", "agent": "agent://acme/foo" }
+            ]
+        });
+        assert!(v.validate(&value).is_ok());
+    }
+
+    #[test]
+    fn workflow_spec_repo_version_string_accepted() {
+        let v = validator(SchemaKind::Workflow).unwrap();
+        let value = serde_json::json!({
+            "spec_version": "agenomic/v0.2",
+            "workflow": { "id": "workflow://acme/flow", "name": "Flow" },
+            "steps": [
+                { "id": "gate", "type": "human", "gate": { "role": "handler" } }
+            ]
+        });
+        assert!(v.validate(&value).is_ok());
+    }
+
+    #[test]
+    fn workflow_agent_step_requires_agent_ref() {
+        let v = validator(SchemaKind::Workflow).unwrap();
+        let value = serde_json::json!({
+            "spec_version": "0.2",
+            "workflow": { "id": "workflow://acme/flow", "name": "Flow" },
+            "steps": [ { "id": "answer", "type": "agent" } ]
+        });
+        assert!(v.validate(&value).is_err());
+    }
+
+    #[test]
+    fn workflow_missing_steps_rejected() {
+        let v = validator(SchemaKind::Workflow).unwrap();
+        let value = serde_json::json!({
+            "spec_version": "0.2",
+            "workflow": { "id": "workflow://acme/flow", "name": "Flow" }
+        });
+        assert!(v.validate(&value).is_err());
+    }
+
+    #[test]
+    fn minimal_system_accepted() {
+        let v = validator(SchemaKind::System).unwrap();
+        let value = serde_json::json!({
+            "spec_version": "0.2",
+            "system": { "id": "system://acme/orchestra", "name": "Orchestra" },
+            "agents": [ { "role": "solo", "id": "agent://acme/foo" } ],
+            "orchestration": { "style": "pipeline", "entrypoint": "solo" }
+        });
+        assert!(v.validate(&value).is_ok());
+    }
+
+    #[test]
+    fn system_unknown_orchestration_style_rejected() {
+        let v = validator(SchemaKind::System).unwrap();
+        let value = serde_json::json!({
+            "spec_version": "0.2",
+            "system": { "id": "system://acme/orchestra", "name": "Orchestra" },
+            "agents": [ { "role": "solo", "id": "agent://acme/foo" } ],
+            "orchestration": { "style": "anarchy" }
+        });
+        assert!(v.validate(&value).is_err());
+    }
+
+    #[test]
+    fn system_missing_agents_rejected() {
+        let v = validator(SchemaKind::System).unwrap();
+        let value = serde_json::json!({
+            "spec_version": "0.2",
+            "system": { "id": "system://acme/orchestra", "name": "Orchestra" },
+            "orchestration": { "style": "graph" }
+        });
+        assert!(v.validate(&value).is_err());
     }
 }

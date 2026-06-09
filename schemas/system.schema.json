@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agenomic.dev/schemas/v0.2/system.schema.json",
+  "title": "Agenomic System",
+  "description": "Declarative multi-agent system: member agents, the orchestration topology connecting them, shared state and signals, and the system-wide autonomy/guardrail/escalation envelope. Introduced in spec 0.2 (RFC 0009).",
+  "type": "object",
+  "required": ["spec_version", "system", "agents", "orchestration"],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": ["0.2", "agenomic/v0.2"]
+    },
+    "system": {
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "domain": { "type": "string" },
+        "criticality": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical",
+            "standard",
+            "sensitive",
+            "regulated_customer_facing",
+            "life_critical"
+          ]
+        },
+        "version": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "agents": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["role", "id"],
+        "properties": {
+          "role": { "type": "string", "minLength": 1 },
+          "id": { "type": "string", "minLength": 1 },
+          "genome": { "type": "string" },
+          "description": { "type": "string" },
+          "autonomy": {
+            "type": "object",
+            "properties": {
+              "allowed_actions": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 }
+              },
+              "forbidden_actions": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 }
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "orchestration": {
+      "type": "object",
+      "required": ["style"],
+      "properties": {
+        "style": {
+          "type": "string",
+          "enum": ["pipeline", "graph", "supervisor", "swarm", "custom"]
+        },
+        "description": { "type": "string" },
+        "engine": {
+          "type": "object",
+          "description": "Non-normative hint about the runtime executing the orchestration (e.g. temporal, langgraph, crewai, custom). Tooling MUST NOT require it.",
+          "required": ["kind"],
+          "properties": {
+            "kind": { "type": "string", "minLength": 1 },
+            "version": { "type": "string" }
+          },
+          "additionalProperties": true
+        },
+        "entrypoint": { "type": "string" },
+        "supervisor": { "type": "string" },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["from", "to"],
+            "properties": {
+              "from": { "type": "string", "minLength": 1 },
+              "to": { "type": "string", "minLength": 1 },
+              "when": { "type": "string" }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "shared_state": {
+      "type": "object",
+      "description": "Reference to the shared state schema. Schema only; runtime state is never bundled.",
+      "properties": {
+        "schema_path": { "type": "string" },
+        "schema_version": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "signals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "description": { "type": "string" },
+          "payload_schema_path": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "workflows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path"],
+        "properties": {
+          "id": { "type": "string" },
+          "path": { "type": "string", "minLength": 1 },
+          "description": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "communication_guardrails": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "escalation_rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["condition", "route"],
+        "properties": {
+          "condition": { "type": "string", "minLength": 1 },
+          "route": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": true
+      }
+    },
+    "forbidden_autonomy": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
+  },
+  "additionalProperties": true
+}

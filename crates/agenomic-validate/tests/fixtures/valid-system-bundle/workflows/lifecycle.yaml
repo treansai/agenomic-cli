@@ -1,0 +1,20 @@
+spec_version: '0.2'
+workflow:
+  id: 'workflow://acme/lifecycle'
+  name: 'Lifecycle'
+steps:
+  - id: intake
+    type: agent
+    agent: 'agent://acme/intake'
+  - id: await_report
+    type: wait
+    depends_on: [intake]
+    when: 'expertise_required == true'
+    wait_for:
+      signals: [expert_report_received]
+      timeout: 90d
+      on_timeout: escalate
+  - id: decide
+    type: agent
+    agent: 'agent://acme/decision'
+    depends_on: [intake, await_report]

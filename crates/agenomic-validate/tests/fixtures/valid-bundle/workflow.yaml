@@ -1,0 +1,25 @@
+spec_version: '0.2'
+workflow:
+  id: 'workflow://acme/foo-flow'
+  name: 'Foo Flow'
+  domain: 'general'
+  criticality: 'medium'
+steps:
+  - id: classify
+    type: agent
+    agent: 'agent://acme/foo'
+    skill: classify
+  - id: route
+    type: tool
+    tool:
+      name: routing_rules
+      protocol: local
+    depends_on: [classify]
+  - id: review
+    type: human
+    depends_on: [route]
+    when: 'requires_human == true'
+    gate:
+      role: handler
+      action: review
+      sla: 48h
