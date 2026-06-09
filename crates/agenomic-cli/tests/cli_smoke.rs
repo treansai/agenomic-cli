@@ -14,9 +14,9 @@ fn agenomic() -> Command {
 fn help_works() {
     let output = agenomic().arg("--help").output().unwrap();
     assert!(output.status.success());
-    assert!(
-        predicates::str::contains("Agenomic CLI").eval(&String::from_utf8_lossy(&output.stdout))
-    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(predicates::str::contains("Agenomic CLI").eval(&stdout));
+    assert!(predicates::str::contains("bucket").eval(&stdout));
 }
 
 #[test]
@@ -88,4 +88,52 @@ fn completions_bash_emits_script() {
     assert!(s.status.success());
     let txt = String::from_utf8_lossy(&s.stdout);
     assert!(txt.contains("_agenomic"));
+}
+
+#[test]
+fn bundle_compile_runtime_writes_artifacts() {
+    let d = tempdir().unwrap();
+    let bundle = d.path().join("agent");
+    std::fs::create_dir_all(bundle.join("prompts")).unwrap();
+    std::fs::write(
+        bundle.join("genome.yaml"),
+        r#"spec_version: '0.1'
+agent:
+  id: 'agent://test/runtime'
+  name: 'Runtime Test'
+  domain: 'general'
+  criticality: 'low'
+runtime:
+  framework: 'langgraph'
+  runtime_kind: 'python'
+  model_provider: 'anthropic'
+  model_id: 'claude-sonnet-4-6'
+  entrypoint: 'runtime_test.__main__:main'
+tools: []
+skills: []
+knowledge: []
+policies: []
+"#,
+    )
+    .unwrap();
+    std::fs::write(bundle.join("agent.lock.yaml"), "spec_version: '0.1'\n").unwrap();
+    std::fs::write(
+        bundle.join("behavior.contract.yaml"),
+        "spec_version: '0.1'\n",
+    )
+    .unwrap();
+    std::fs::write(bundle.join("prompts/system.md"), "system").unwrap();
+
+    let s = agenomic()
+        .args(["bundle", "compile-runtime", bundle.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        s.status.success(),
+        "compile-runtime failed: {}",
+        String::from_utf8_lossy(&s.stderr)
+    );
+
+    assert!(bundle.join("runtime/plain.compiled").is_file());
+    assert!(bundle.join("runtime/langgraph.compiled").is_file());
 }

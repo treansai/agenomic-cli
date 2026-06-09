@@ -15,11 +15,23 @@ Use Agenomic Cloud when you need:
 
 ```bash
 agenomic cloud login --endpoint https://api.agenomic.io --api-key <KEY>
+agenomic bucket use --name default
 agenomic cloud whoami
 ```
 
 Credentials are stored at `~/.config/agenomic/credentials.toml` with mode
 0600 on Unix.
+
+## Buckets
+
+`agenomic cloud push-agent` always targets a bucket. The CLI resolves the
+destination in this order:
+
+1. The active bucket selected with `agenomic bucket use --name <bucket>`
+2. The implicit `default` bucket
+
+If the target bucket does not exist yet, the CLI creates it and moves the
+agent into that bucket before uploading the bundle.
 
 ## Idempotency
 

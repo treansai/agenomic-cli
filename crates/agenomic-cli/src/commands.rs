@@ -7,7 +7,8 @@ use agenomic_attestation::{
     create_attestation, verify_attestation, AttestationOptions, SigningMode,
 };
 use agenomic_bundle::{
-    build_bundle, extract_bundle, inspect_bundle, BuildBundleOptions, ExtractOptions,
+    build_bundle, compile_runtime_artifacts, extract_bundle, inspect_bundle, BuildBundleOptions,
+    CompileRuntimeOptions, ExtractOptions,
 };
 use agenomic_core::{io_at, CliError, CliResult, ExitCode, Severity, ValidationLevel};
 use agenomic_diff::{diff_bundles, DiffOptions};
@@ -529,20 +530,18 @@ pub fn cmd_inspect(
     Ok(ExitCode::Success)
 }
 
-fn os_inspect(
-    args: &InspectArgs,
-    format: OutputFormat,
-    no_color: bool,
-) -> CliResult<ExitCode> {
+fn os_inspect(args: &InspectArgs, format: OutputFormat, no_color: bool) -> CliResult<ExitCode> {
     use agenomic_os::{AgentReference, ExecutionContract};
 
-    let reference: AgentReference = args.target.parse::<AgentReference>().map_err(CliError::from)?;
+    let reference: AgentReference = args
+        .target
+        .parse::<AgentReference>()
+        .map_err(CliError::from)?;
     let resolved = resolve_reference(&reference, args.local, args.bundle_path.as_deref())?;
 
     let genome_path = resolved.bundle_path.join("genome.yaml");
     let yaml = std::fs::read_to_string(&genome_path).map_err(|e| io_at(&genome_path, e))?;
-    let contract =
-        ExecutionContract::from_genome_yaml(&yaml).map_err(CliError::from)?;
+    let contract = ExecutionContract::from_genome_yaml(&yaml).map_err(CliError::from)?;
 
     let body = serde_json::json!({
         "reference": reference.canonical(),
@@ -612,15 +611,17 @@ fn resolve_reference(
     };
     let resolver = LocalResolver::new(cache);
     let rt = tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
-    rt.block_on(resolver.resolve(reference)).map_err(CliError::from)
+    rt.block_on(resolver.resolve(reference))
+        .map_err(CliError::from)
 }
 
 pub fn cmd_run(args: &RunArgs, format: OutputFormat, no_color: bool) -> CliResult<ExitCode> {
-    use agenomic_os::{
-        AgentReference, CommandLauncher, ExecutionContract, LaunchPlan, Launcher, Policy,
-    };
+    use agenomic_os::{launch_for_kind, AgentReference, ExecutionContract, LaunchPlan, Policy};
 
-    let reference: AgentReference = args.reference.parse::<AgentReference>().map_err(CliError::from)?;
+    let reference: AgentReference = args
+        .reference
+        .parse::<AgentReference>()
+        .map_err(CliError::from)?;
 
     if reference.qualifier.is_none() && args.bundle_path.is_none() && !args.local {
         // Unqualified remote-style references resolve to nothing in the
@@ -633,6 +634,29 @@ pub fn cmd_run(args: &RunArgs, format: OutputFormat, no_color: bool) -> CliResul
     let genome_path = resolved.bundle_path.join("genome.yaml");
     let yaml = std::fs::read_to_string(&genome_path).map_err(|e| io_at(&genome_path, e))?;
     let contract = ExecutionContract::from_genome_yaml(&yaml).map_err(CliError::from)?;
+
+    // Fail-closed OPA/Rego gate: if the bundle ships `policies/*.rego`, the
+    // launch context must be explicitly allowed before we spawn anything. A
+    // bundle without rego policies keeps the previous (advisory) behaviour.
+    let policy_bundle =
+        agenomic_policy::PolicyBundle::load(&resolved.bundle_path).map_err(CliError::from)?;
+    if !policy_bundle.is_empty() {
+        let agent_id = reference.canonical();
+        let criticality = genome_criticality(&yaml);
+        let input = launch_context_from_contract(&agent_id, &criticality, &contract);
+        let decision = policy_bundle.evaluate(&input).map_err(CliError::from)?;
+        if !decision.allowed {
+            let reasons = if decision.denies.is_empty() {
+                "policy did not allow this launch".to_string()
+            } else {
+                decision.denies.join("; ")
+            };
+            return Err(CliError::OsPolicyViolation(format!(
+                "rego policy gate denied launch ({}): {reasons}",
+                decision.policies.join(", ")
+            )));
+        }
+    }
 
     let env_overrides = parse_env_overrides(&args.env)?;
     let policy = Policy::from_contract(&contract)
@@ -647,7 +671,7 @@ pub fn cmd_run(args: &RunArgs, format: OutputFormat, no_color: bool) -> CliResul
     };
 
     let rt = tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
-    let handle = rt.block_on(CommandLauncher::new().launch(plan)).map_err(CliError::from)?;
+    let handle = rt.block_on(launch_for_kind(plan)).map_err(CliError::from)?;
 
     if !handle.stdout.is_empty() {
         print!("{}", handle.stdout);
@@ -673,13 +697,13 @@ pub fn cmd_run(args: &RunArgs, format: OutputFormat, no_color: bool) -> CliResul
     }
 }
 
-fn parse_env_overrides(entries: &[String]) -> CliResult<std::collections::BTreeMap<String, String>> {
+fn parse_env_overrides(
+    entries: &[String],
+) -> CliResult<std::collections::BTreeMap<String, String>> {
     let mut out = std::collections::BTreeMap::new();
     for entry in entries {
         let (k, v) = entry.split_once('=').ok_or_else(|| {
-            CliError::OsPolicyViolation(format!(
-                "--env value {entry:?} must be KEY=VALUE"
-            ))
+            CliError::OsPolicyViolation(format!("--env value {entry:?} must be KEY=VALUE"))
         })?;
         if k.is_empty() {
             return Err(CliError::OsPolicyViolation(
@@ -723,6 +747,359 @@ pub fn cmd_port(args: &PortArgs, format: OutputFormat, no_color: bool) -> CliRes
         return Ok(ExitCode::ValidationFailed);
     }
     Ok(ExitCode::Success)
+}
+
+pub fn cmd_compile(
+    args: &CompileArgs,
+    format: OutputFormat,
+    _no_color: bool,
+) -> CliResult<ExitCode> {
+    use agenomic_compile::CompileTarget;
+
+    // Default to all targets when neither --target nor --all is given.
+    let targets: Vec<CompileTarget> = if args.all || args.target.is_empty() {
+        CompileTarget::ALL.to_vec()
+    } else {
+        let mut ts: Vec<CompileTarget> = args.target.iter().map(|t| t.to_target()).collect();
+        ts.sort();
+        ts.dedup();
+        ts
+    };
+
+    let artifacts =
+        agenomic_compile::compile_bundle(&args.bundle, &targets).map_err(CliError::from)?;
+
+    let mut summaries = Vec::new();
+    for artifact in &artifacts {
+        let dest_root = match &args.output {
+            Some(out) => out.join(artifact.target.dir_name()),
+            None => args.bundle.join("runtime").join(artifact.target.dir_name()),
+        };
+        if !args.dry_run {
+            artifact.emit_to_dir(&dest_root).map_err(CliError::from)?;
+        }
+        summaries.push(serde_json::json!({
+            "target": artifact.target.label(),
+            "output_dir": dest_root,
+            "files": artifact.files.keys().collect::<Vec<_>>(),
+            "written": !args.dry_run,
+        }));
+    }
+
+    let body = serde_json::json!({
+        "bundle": args.bundle,
+        "targets": targets.iter().map(|t| t.label()).collect::<Vec<_>>(),
+        "dry_run": args.dry_run,
+        "artifacts": summaries,
+    });
+
+    if matches!(format, OutputFormat::Human) {
+        for s in &summaries {
+            let target = s["target"].as_str().unwrap_or("?");
+            let dir = s["output_dir"].as_str().unwrap_or_default();
+            let n = s["files"].as_array().map(|a| a.len()).unwrap_or(0);
+            if args.dry_run {
+                println!("would compile {target}: {n} files → {dir}");
+            } else {
+                println!("compiled {target}: {n} files → {dir}");
+            }
+        }
+    } else {
+        print_value(&body, format)?;
+    }
+    Ok(ExitCode::Success)
+}
+
+pub fn cmd_policy(
+    args: &PolicyCommand,
+    format: OutputFormat,
+    _no_color: bool,
+) -> CliResult<ExitCode> {
+    match &args.command {
+        PolicySub::Eval { bundle, input } => {
+            let policy_bundle =
+                agenomic_policy::PolicyBundle::load(bundle).map_err(CliError::from)?;
+
+            let input_doc = match input {
+                Some(path) => {
+                    let raw = std::fs::read_to_string(path).map_err(|e| io_at(path, e))?;
+                    serde_json::from_str(&raw).map_err(|e| {
+                        CliError::Schema(format!("policy input {}: {e}", path.display()))
+                    })?
+                }
+                None => bundle_launch_context(bundle)?,
+            };
+
+            let decision = policy_bundle.evaluate(&input_doc).map_err(CliError::from)?;
+            let body = serde_json::json!({
+                "bundle": bundle,
+                "policies": decision.policies,
+                "allowed": decision.allowed,
+                "allow_rule": decision.allow_rule,
+                "denies": decision.denies,
+                "input": input_doc,
+            });
+            print_value(&body, format)?;
+            if decision.allowed {
+                Ok(ExitCode::Success)
+            } else {
+                Ok(ExitCode::OsPolicyViolation)
+            }
+        }
+    }
+}
+
+/// Derive a default policy input document from a bundle's `execution:` block:
+/// the fields a `policies/*.rego` is most likely to gate on. Bundles without an
+/// execution block yield a minimal `{agent_id}` context.
+fn bundle_launch_context(bundle: &Path) -> CliResult<serde_json::Value> {
+    use agenomic_os::ExecutionContract;
+
+    let genome_path = bundle.join("genome.yaml");
+    let yaml = std::fs::read_to_string(&genome_path).map_err(|e| io_at(&genome_path, e))?;
+    let agent_id = serde_yaml::from_str::<serde_yaml::Value>(&yaml)
+        .ok()
+        .and_then(|v| {
+            v.get("agent")
+                .and_then(|a| a.get("id"))
+                .and_then(|i| i.as_str().map(String::from))
+        })
+        .unwrap_or_default();
+    let criticality = genome_criticality(&yaml);
+
+    match ExecutionContract::from_genome_yaml(&yaml) {
+        Ok(contract) => Ok(launch_context_from_contract(
+            &agent_id,
+            &criticality,
+            &contract,
+        )),
+        // No execution block: still provide what we know.
+        Err(_) => Ok(serde_json::json!({
+            "agent_id": agent_id,
+            "criticality": criticality,
+        })),
+    }
+}
+
+/// Extract `agent.criticality` from a genome YAML string (empty when absent).
+fn genome_criticality(yaml: &str) -> String {
+    serde_yaml::from_str::<serde_yaml::Value>(yaml)
+        .ok()
+        .and_then(|v| {
+            v.get("agent")
+                .and_then(|a| a.get("criticality"))
+                .and_then(|c| c.as_str().map(String::from))
+        })
+        .unwrap_or_default()
+}
+
+/// Shared shape of the JSON `input` document fed to Rego, built from the
+/// execution contract. Kept stable so policies can rely on the field names.
+fn launch_context_from_contract(
+    agent_id: &str,
+    criticality: &str,
+    contract: &agenomic_os::ExecutionContract,
+) -> serde_json::Value {
+    serde_json::json!({
+        "agent_id": agent_id,
+        "criticality": criticality,
+        "runtime_kind": contract.runtime.kind.label(),
+        "working_directory": contract.working_directory,
+        "env_required": contract.env.required,
+        "env_optional": contract.env.optional,
+        "network_allow": contract.permissions.network.allow,
+        "network_allow_count": contract.permissions.network.allow.len(),
+        "fs_read": contract.permissions.filesystem.read,
+        "fs_write": contract.permissions.filesystem.write,
+    })
+}
+
+pub fn cmd_governance(
+    args: &GovernanceCommand,
+    format: OutputFormat,
+    _no_color: bool,
+) -> CliResult<ExitCode> {
+    use agenomic_governance::{
+        audit, cluster_descriptor, critique_descriptor, io::read_traces, proposal_descriptor,
+        AdversarialReviewer, DiagnosticAgent, HypothesisAgent, Verdict,
+    };
+
+    match &args.command {
+        GovernanceSub::Cluster { traces, emit } => {
+            let loaded = read_traces(traces).map_err(CliError::from)?;
+            let clusters = DiagnosticAgent::new().cluster(&loaded);
+            let descriptors: Vec<_> = clusters.iter().map(cluster_descriptor).collect();
+            let atep = emit_governance_events(emit, &descriptors)?;
+            print_value(
+                &with_atep(serde_json::json!({ "clusters": clusters }), atep),
+                format,
+            )?;
+            Ok(ExitCode::Success)
+        }
+        GovernanceSub::Hypothesize { clusters, emit } => {
+            let raw = read_governance_input(clusters)?;
+            // Accept either a `{clusters: [...]}` envelope or a bare `[...]`.
+            let parsed: serde_json::Value = serde_json::from_str(&raw)
+                .map_err(|e| CliError::Schema(format!("clusters JSON: {e}")))?;
+            let inner = parsed.get("clusters").cloned().unwrap_or(parsed);
+            let clusters: Vec<agenomic_governance::Cluster> = serde_json::from_value(inner)
+                .map_err(|e| CliError::Schema(format!("clusters JSON: {e}")))?;
+            let proposals = HypothesisAgent::new().hypothesize_many(&clusters);
+            let descriptors: Vec<_> = proposals.iter().map(proposal_descriptor).collect();
+            let atep = emit_governance_events(emit, &descriptors)?;
+            print_value(
+                &with_atep(serde_json::json!({ "proposals": proposals }), atep),
+                format,
+            )?;
+            Ok(ExitCode::Success)
+        }
+        GovernanceSub::Critique { proposal, emit } => {
+            let raw = read_governance_input(proposal)?;
+            let p: agenomic_governance::Proposal = serde_json::from_str(&raw)
+                .map_err(|e| CliError::Schema(format!("proposal JSON: {e}")))?;
+            let critique = AdversarialReviewer::new().critique(&p);
+            let blocked = matches!(critique.verdict, Verdict::Block);
+            let atep = emit_governance_events(emit, &[critique_descriptor(&critique)])?;
+            print_value(
+                &with_atep(serde_json::json!({ "critique": critique }), atep),
+                format,
+            )?;
+            if blocked {
+                Ok(ExitCode::OsPolicyViolation)
+            } else {
+                Ok(ExitCode::Success)
+            }
+        }
+        GovernanceSub::Audit {
+            traces,
+            fail_on_block,
+            emit,
+        } => {
+            let loaded = read_traces(traces).map_err(CliError::from)?;
+            let report = audit(&loaded);
+            let blocked = report.has_blocking_findings();
+            let descriptors = agenomic_governance::audit_descriptors(&report);
+            let atep = emit_governance_events(emit, &descriptors)?;
+            print_value(
+                &with_atep(
+                    serde_json::json!({
+                        "clusters": report.clusters,
+                        "proposals": report.proposals,
+                        "critiques": report.critiques,
+                        "blocked": blocked,
+                    }),
+                    atep,
+                ),
+                format,
+            )?;
+            if *fail_on_block && blocked {
+                Ok(ExitCode::OsPolicyViolation)
+            } else {
+                Ok(ExitCode::Success)
+            }
+        }
+    }
+}
+
+/// Merge an optional ATEP-emission summary into a governance result body
+/// under the `atep` key (omitted when no emission happened).
+fn with_atep(mut body: serde_json::Value, atep: Option<serde_json::Value>) -> serde_json::Value {
+    if let (Some(obj), Some(summary)) = (body.as_object_mut(), atep) {
+        obj.insert("atep".into(), summary);
+    }
+    body
+}
+
+/// Seal `descriptors` onto the ATEP `governance` stream of the store named by
+/// `emit`, chaining each event onto the previous one (parents = prior causal
+/// hash) and continuing the stream's `stream_seq`. Returns `None` when no
+/// store was requested, or a JSON summary when events were appended.
+///
+/// This is the bridge that finally gives the (previously empty) `governance`
+/// stream a signed, hash-linked audit trail: every diagnostic / hypothesis /
+/// adversarial result becomes a sealed event.
+fn emit_governance_events(
+    emit: &AtepEmitArgs,
+    descriptors: &[agenomic_governance::GovernanceEventDescriptor],
+) -> CliResult<Option<serde_json::Value>> {
+    use agenomic_atep::{
+        load_signing_key, short_key_id, AtepEvent, AtepManifest, AtepStore, EventHeader,
+        EventPayload, Hlc, StreamId,
+    };
+
+    let (store_dir, key_path) = match (&emit.atep, &emit.signing_key) {
+        (None, None) => return Ok(None),
+        (Some(_), None) | (None, Some(_)) => {
+            return Err(CliError::Internal(
+                "--atep and --signing-key must be provided together".into(),
+            ))
+        }
+        (Some(d), Some(k)) => (d, k),
+    };
+
+    // The store dictates the agent_id; events must carry the same one.
+    let manifest_path = store_dir.join("manifest.json");
+    let manifest_bytes = std::fs::read(&manifest_path).map_err(|e| io_at(&manifest_path, e))?;
+    let manifest: AtepManifest = serde_json::from_slice(&manifest_bytes)
+        .map_err(|e| CliError::Internal(format!("atep manifest: {e}")))?;
+    let mut store = AtepStore::open_or_init(store_dir, &manifest.agent_id)?;
+    let sk = load_signing_key(key_path)?;
+    let key_id = short_key_id(&sk.verifying_key());
+
+    // Chain onto the existing governance head so the trail is tamper-evident.
+    let head = store.stream_head(StreamId::Governance)?;
+    let seq_start = head.as_ref().map(|(s, _)| s + 1).unwrap_or(0);
+    let mut seq = seq_start;
+    let mut parent = head.map(|(_, h)| h);
+    let now = chrono::Utc::now().timestamp_millis() as u64;
+
+    let mut events = Vec::with_capacity(descriptors.len());
+    for (i, d) in descriptors.iter().enumerate() {
+        let header = EventHeader {
+            schema_version: 1,
+            event_id: ulid::Ulid::new().to_bytes(),
+            agent_id: manifest.agent_id.clone(),
+            stream: StreamId::Governance,
+            stream_seq: seq,
+            // Logical counter = batch index keeps intra-batch order stable even
+            // within one millisecond.
+            clock: Hlc::new(now, i as u32, 1),
+            parents: parent.into_iter().collect(),
+            event_type: d.event_type.clone(),
+            payload_schema_uri: d.payload_schema_uri(),
+        };
+        let payload = EventPayload(json_to_cbor(d.payload.clone()));
+        let event = AtepEvent::seal(header, payload, &sk, key_id.clone())?;
+        parent = Some(event.causal_hash);
+        seq += 1;
+        events.push(event);
+    }
+    store.append_batch(StreamId::Governance, &events)?;
+
+    Ok(Some(serde_json::json!({
+        "store": store_dir,
+        "agent_id": manifest.agent_id,
+        "stream": "governance",
+        "events_appended": events.len(),
+        "stream_seq_start": seq_start,
+        "signer_key_id": key_id,
+        "store_merkle_root": hex::encode(store.store_merkle_root()),
+    })))
+}
+
+/// Read a JSON file path, or stdin when path == "-". Used by the governance
+/// sub-commands that take a single JSON document on the command line.
+fn read_governance_input(path: &Path) -> CliResult<String> {
+    use std::io::Read;
+    if path.as_os_str() == "-" {
+        let mut s = String::new();
+        std::io::stdin()
+            .read_to_string(&mut s)
+            .map_err(|e| CliError::Internal(format!("read stdin: {e}")))?;
+        Ok(s)
+    } else {
+        std::fs::read_to_string(path).map_err(|e| io_at(path, e))
+    }
 }
 
 pub fn cmd_hash(args: &HashArgs, _format: OutputFormat, _no_color: bool) -> CliResult<ExitCode> {
@@ -1014,7 +1391,11 @@ pub fn cmd_trace(args: &TraceCommand) -> CliResult<ExitCode> {
     }
 }
 
-pub fn cmd_bundle(args: &BundleCommand) -> CliResult<ExitCode> {
+pub fn cmd_bundle(
+    args: &BundleCommand,
+    format: OutputFormat,
+    _no_color: bool,
+) -> CliResult<ExitCode> {
     match &args.command {
         BundleSub::Extract {
             archive,
@@ -1039,15 +1420,74 @@ pub fn cmd_bundle(args: &BundleCommand) -> CliResult<ExitCode> {
             println!("{s}");
             Ok(ExitCode::Success)
         }
+        BundleSub::CompileRuntime {
+            target,
+            adapters,
+            output_dir,
+        } => {
+            let result = compile_runtime_artifacts(CompileRuntimeOptions {
+                input_dir: target.clone(),
+                output_dir: output_dir.clone(),
+                adapters: adapters.iter().map(|a| a.to_runtime_adapter()).collect(),
+            })?;
+            let summary = serde_json::json!({
+                "output_dir": result.output_dir,
+                "artifacts": result.artifacts.iter().map(|artifact| serde_json::json!({
+                    "adapter": artifact.adapter.label(),
+                    "path": artifact.path,
+                    "ready": artifact.ready,
+                    "warnings": artifact.warnings,
+                })).collect::<Vec<_>>(),
+            });
+            match format {
+                OutputFormat::Human => {
+                    println!(
+                        "compiled runtime artifacts into {}",
+                        result.output_dir.display()
+                    );
+                    for artifact in &result.artifacts {
+                        let status = if artifact.ready { "ready" } else { "partial" };
+                        println!("  - {} ({status})", artifact.path.display());
+                        for warning in &artifact.warnings {
+                            println!("      warning: {warning}");
+                        }
+                    }
+                }
+                _ => print_value(&summary, format)?,
+            }
+            Ok(ExitCode::Success)
+        }
     }
 }
 
-pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
+const DEFAULT_BUCKET_SLUG: &str = "default";
+
+pub fn cmd_bucket(args: &BucketCommand, profile: Option<&str>) -> CliResult<ExitCode> {
+    match &args.command {
+        BucketSub::Use { name } => {
+            let cfg = agenomic_config::load(profile)?;
+            let profile_name = cfg.profile.name;
+            let client = cloud_client_from_profile(profile)?;
+            let rt =
+                tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
+            let bucket = rt.block_on(ensure_bucket(&client, name))?;
+            agenomic_config::save_active_bucket(&profile_name, Some(&bucket.slug))?;
+            println!(
+                "active bucket for profile `{}` is now `{}`",
+                profile_name, bucket.slug
+            );
+            Ok(ExitCode::Success)
+        }
+    }
+}
+
+pub fn cmd_cloud(args: &CloudCommand, profile: Option<&str>) -> CliResult<ExitCode> {
     use secrecy::SecretString;
     match &args.command {
         CloudSub::Login { endpoint, api_key } => {
+            let profile_name = resolved_profile_name(profile)?;
             agenomic_config::save_profile(
-                "default",
+                &profile_name,
                 &agenomic_config::ProfileFileEntry {
                     mode: agenomic_config::ProfileMode::Cloud,
                     endpoint: Some(endpoint.clone()),
@@ -1055,14 +1495,14 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
                 },
             )?;
             agenomic_config::save_credentials(
-                "default",
+                &profile_name,
                 &SecretString::new(api_key.clone().into_boxed_str()),
             )?;
             println!("logged in to {endpoint}");
             Ok(ExitCode::Success)
         }
         CloudSub::Whoami => {
-            let cfg = agenomic_config::load(None)?;
+            let cfg = agenomic_config::load(profile)?;
             let endpoint = cfg.profile.endpoint.clone().ok_or_else(|| {
                 CliError::Internal(
                     "no endpoint configured; run `agenomic cloud login` first".into(),
@@ -1079,7 +1519,8 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
             Ok(ExitCode::Success)
         }
         CloudSub::Logout => {
-            agenomic_config::delete_credentials("default")?;
+            let profile_name = resolved_profile_name(profile)?;
+            agenomic_config::delete_credentials(&profile_name)?;
             println!("logged out");
             Ok(ExitCode::Success)
         }
@@ -1093,7 +1534,8 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
             use agenomic_cloud_client::{CreateAgentRequest, CreateBundleRequest};
             use base64::{engine::general_purpose::STANDARD, Engine};
 
-            let client = cloud_client_from_profile()?;
+            let cfg = agenomic_config::load(profile)?;
+            let client = cloud_client_from_profile(profile)?;
 
             // Cloud's `create_bundle` validates the supplied hash against
             // the canonical Merkle root recomputed from the archive; we must
@@ -1113,15 +1555,26 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
 
             let rt =
                 tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
+            let target_bucket = rt.block_on(resolve_target_bucket(
+                &client,
+                cfg.profile.active_bucket_slug.as_deref(),
+            ))?;
 
             // 1) resolve / create the agent
             let agent_id = match agent_id.clone() {
-                Some(id) => id,
+                Some(id) => {
+                    let agent = rt.block_on(
+                        client.move_agent_to_bucket(&id, Some(target_bucket.id.as_str())),
+                    )?;
+                    agent.id
+                }
                 None => {
                     let agent = rt.block_on(client.create_agent(CreateAgentRequest {
                         name: name.clone(),
                         description: description.clone(),
                     }))?;
+                    let agent =
+                        rt.block_on(ensure_agent_in_bucket(&client, agent, &target_bucket))?;
                     println!("created agent {} ({})", agent.id, agent.name);
                     agent.id
                 }
@@ -1153,7 +1606,7 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
             notes,
         } => {
             use agenomic_cloud_client::CreateReleaseRequest;
-            let client = cloud_client_from_profile()?;
+            let client = cloud_client_from_profile(profile)?;
             let rt =
                 tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
             let release = rt.block_on(client.create_release(CreateReleaseRequest {
@@ -1175,7 +1628,7 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
             mode,
         } => {
             use agenomic_cloud_client::CreateReplayJobRequest;
-            let client = cloud_client_from_profile()?;
+            let client = cloud_client_from_profile(profile)?;
             let rt =
                 tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
             let job = rt.block_on(client.create_replay_job(CreateReplayJobRequest {
@@ -1198,7 +1651,7 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
             replay_job_id,
         } => {
             use agenomic_cloud_client::CreateAttestationRequest;
-            let client = cloud_client_from_profile()?;
+            let client = cloud_client_from_profile(profile)?;
             let rt =
                 tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
             let att = rt.block_on(client.create_attestation(CreateAttestationRequest {
@@ -1219,8 +1672,10 @@ pub fn cmd_cloud(args: &CloudCommand) -> CliResult<ExitCode> {
 
 /// Build a `CloudClient` from the active profile, failing with the
 /// canonical error if no endpoint or key is configured.
-fn cloud_client_from_profile() -> CliResult<agenomic_cloud_client::CloudClient> {
-    let cfg = agenomic_config::load(None)?;
+fn cloud_client_from_profile(
+    profile: Option<&str>,
+) -> CliResult<agenomic_cloud_client::CloudClient> {
+    let cfg = agenomic_config::load(profile)?;
     let endpoint = cfg.profile.endpoint.clone().ok_or_else(|| {
         CliError::Internal("no endpoint configured; run `agenomic cloud login` first".into())
     })?;
@@ -1228,5 +1683,80 @@ fn cloud_client_from_profile() -> CliResult<agenomic_cloud_client::CloudClient> 
     Ok(agenomic_cloud_client::CloudClient::new(endpoint, api_key))
 }
 
+fn resolved_profile_name(profile: Option<&str>) -> CliResult<String> {
+    Ok(agenomic_config::load(profile)?.profile.name)
+}
+
+async fn resolve_target_bucket(
+    client: &agenomic_cloud_client::CloudClient,
+    active_bucket_slug: Option<&str>,
+) -> CliResult<agenomic_cloud_client::BucketRecord> {
+    ensure_bucket(client, selected_bucket_slug(active_bucket_slug)).await
+}
+
+fn selected_bucket_slug(active_bucket_slug: Option<&str>) -> &str {
+    active_bucket_slug.unwrap_or(DEFAULT_BUCKET_SLUG)
+}
+
+async fn ensure_bucket(
+    client: &agenomic_cloud_client::CloudClient,
+    slug: &str,
+) -> CliResult<agenomic_cloud_client::BucketRecord> {
+    match client.get_bucket_by_slug(slug).await? {
+        Some(bucket) => Ok(bucket),
+        None => {
+            client
+                .create_bucket(agenomic_cloud_client::CreateBucketRequest {
+                    name: slug.to_string(),
+                    slug: Some(slug.to_string()),
+                    description: None,
+                })
+                .await
+        }
+    }
+}
+
+async fn ensure_agent_in_bucket(
+    client: &agenomic_cloud_client::CloudClient,
+    agent: agenomic_cloud_client::AgentRecord,
+    target_bucket: &agenomic_cloud_client::BucketRecord,
+) -> CliResult<agenomic_cloud_client::AgentRecord> {
+    if !should_move_agent_to_bucket(agent.bucket_id.as_deref(), target_bucket.id.as_str()) {
+        return Ok(agent);
+    }
+    client
+        .move_agent_to_bucket(&agent.id, Some(target_bucket.id.as_str()))
+        .await
+}
+
+fn should_move_agent_to_bucket(current_bucket_id: Option<&str>, target_bucket_id: &str) -> bool {
+    current_bucket_id != Some(target_bucket_id)
+}
+
 // Severity is referenced via SeverityArg::to_severity; silence unused-import
 fn _unused_severity(_s: Severity) {}
+
+#[cfg(test)]
+mod tests {
+    use super::{selected_bucket_slug, should_move_agent_to_bucket, DEFAULT_BUCKET_SLUG};
+
+    #[test]
+    fn selected_bucket_slug_defaults_to_default() {
+        assert_eq!(selected_bucket_slug(None), DEFAULT_BUCKET_SLUG);
+    }
+
+    #[test]
+    fn selected_bucket_slug_uses_active_bucket() {
+        assert_eq!(selected_bucket_slug(Some("bench")), "bench");
+    }
+
+    #[test]
+    fn unbucketed_agent_is_moved() {
+        assert!(should_move_agent_to_bucket(None, "bucket-1"));
+    }
+
+    #[test]
+    fn agent_already_in_target_bucket_is_not_moved() {
+        assert!(!should_move_agent_to_bucket(Some("bucket-1"), "bucket-1"));
+    }
+}

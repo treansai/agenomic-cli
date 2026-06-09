@@ -6,9 +6,14 @@
 //! compressed bytes themselves).
 
 pub mod build;
+pub mod compile;
 pub mod extract;
 pub mod inspect;
 
 pub use build::{build_bundle, read_archive_to_pairs, BuildBundleOptions, BundleBuildResult};
+pub use compile::{
+    compile_runtime_artifacts, CompileRuntimeOptions, CompileRuntimeResult,
+    CompiledRuntimeArtifactSummary, RuntimeAdapter,
+};
 pub use extract::{extract_bundle, ExtractOptions};
 pub use inspect::{inspect_bundle, BundleSummary, ToolSummary};

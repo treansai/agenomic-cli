@@ -162,7 +162,15 @@ impl AtepStore {
         }
         let label = stream.label().to_string();
         let (path, _) = self.next_segment_path(&label);
-        let file = std::fs::File::create(&path).map_err(|e| io_at(&path, e))?;
+        // Open read+write: `SegmentWriter::finalize` reads the frames back to
+        // compute the segment CRC, so a write-only handle fails with EBADF.
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .map_err(|e| io_at(&path, e))?;
         let mut writer = SegmentWriter::new(file)?;
         for ev in events {
             if ev.header.stream != stream {
@@ -201,6 +209,18 @@ impl AtepStore {
             }
         }
         Ok(out)
+    }
+
+    /// The head of a stream: `(last_stream_seq, last_causal_hash)`, or `None`
+    /// when the stream has no events yet. Used to chain a new batch onto the
+    /// existing hash-linked history (parents = previous event's causal hash)
+    /// and to continue `stream_seq` numbering.
+    pub fn stream_head(
+        &self,
+        stream: StreamId,
+    ) -> CliResult<Option<(u64, crate::event::CausalHash)>> {
+        let events = self.read_stream(stream)?;
+        Ok(events.last().map(|e| (e.header.stream_seq, e.causal_hash)))
     }
 
     /// Iterate all events across all streams in canonical order
@@ -411,6 +431,52 @@ mod tests {
         assert_eq!(rep.verified_signatures, 3);
         assert_eq!(rep.stream_counts.get("capability"), Some(&2));
         assert_eq!(rep.stream_counts.get("identity"), Some(&1));
+    }
+
+    #[test]
+    fn append_batch_roundtrips_and_verifies() {
+        let d = tempdir().unwrap();
+        let sk = SigningKey::generate(&mut OsRng);
+        let agent = "agent://acme/foo";
+        let mut store = AtepStore::open_or_init(d.path(), agent).unwrap();
+
+        let batch = vec![
+            mk(agent, &sk, StreamId::Governance, 0, 100),
+            mk(agent, &sk, StreamId::Governance, 1, 200),
+            mk(agent, &sk, StreamId::Governance, 2, 300),
+        ];
+        store.append_batch(StreamId::Governance, &batch).unwrap();
+
+        let store2 = AtepStore::open_or_init(d.path(), agent).unwrap();
+        let rep = store2.verify_all(&sk.verifying_key()).unwrap();
+        assert_eq!(rep.total_events, 3);
+        assert_eq!(rep.stream_counts.get("governance"), Some(&3));
+        // All three landed in a single segment.
+        assert_eq!(
+            store2.manifest().streams.get("governance").unwrap().len(),
+            1
+        );
+    }
+
+    #[test]
+    fn stream_head_tracks_last_event() {
+        let d = tempdir().unwrap();
+        let sk = SigningKey::generate(&mut OsRng);
+        let agent = "agent://acme/foo";
+        let mut store = AtepStore::open_or_init(d.path(), agent).unwrap();
+        assert!(store.stream_head(StreamId::Governance).unwrap().is_none());
+
+        let e1 = mk(agent, &sk, StreamId::Governance, 0, 100);
+        let e1_hash = e1.causal_hash;
+        store.append_event(e1).unwrap();
+        let e2 = mk(agent, &sk, StreamId::Governance, 1, 200);
+        let e2_hash = e2.causal_hash;
+        store.append_event(e2).unwrap();
+
+        let (seq, head) = store.stream_head(StreamId::Governance).unwrap().unwrap();
+        assert_eq!(seq, 1);
+        assert_eq!(head, e2_hash);
+        assert_ne!(head, e1_hash);
     }
 
     #[test]

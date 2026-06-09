@@ -19,7 +19,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agenomic-atep"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "agenomic-core",
  "agenomic-fs",
@@ -40,7 +40,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-attestation"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "agenomic-atep",
  "agenomic-bundle",
@@ -60,7 +60,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-bundle"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "agenomic-core",
  "agenomic-fs",
@@ -77,12 +77,13 @@ dependencies = [
 
 [[package]]
 name = "agenomic-cli"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "agenomic-atep",
  "agenomic-attestation",
  "agenomic-bundle",
  "agenomic-cloud-client",
+ "agenomic-compile",
  "agenomic-config",
  "agenomic-contract",
  "agenomic-core",
@@ -90,8 +91,10 @@ dependencies = [
  "agenomic-diagnostics",
  "agenomic-diff",
  "agenomic-fs",
+ "agenomic-governance",
  "agenomic-hash",
  "agenomic-os",
+ "agenomic-policy",
  "agenomic-replay-local",
  "agenomic-report",
  "agenomic-spec",
@@ -118,11 +121,12 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ulid",
+ "wiremock",
 ]
 
 [[package]]
 name = "agenomic-cloud-client"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "agenomic-core",
  "async-trait",
@@ -136,8 +140,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "agenomic-compile"
+version = "0.1.1-alpha"
+dependencies = [
+ "agenomic-core",
+ "blake3",
+ "hex",
+ "miette",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "agenomic-config"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "agenomic-core",
  "agenomic-fs",
@@ -150,7 +169,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-contract"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "agenomic-core",
  "serde",
@@ -160,7 +179,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-core"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "chrono",
  "miette",
@@ -171,7 +190,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-detect"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "agenomic-core",
  "agenomic-fs",
@@ -189,7 +208,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-diagnostics"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "agenomic-atep",
  "agenomic-config",
@@ -211,7 +230,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-diff"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "agenomic-bundle",
  "agenomic-core",
@@ -224,7 +243,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-fs"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "agenomic-core",
  "glob",
@@ -235,8 +254,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "agenomic-governance"
+version = "0.1.1-alpha"
+dependencies = [
+ "agenomic-core",
+ "blake3",
+ "hex",
+ "miette",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "agenomic-hash"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "agenomic-core",
  "agenomic-fs",
@@ -251,7 +284,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-os"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "agenomic-core",
  "agenomic-detect",
@@ -271,8 +304,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "agenomic-policy"
+version = "0.1.1-alpha"
+dependencies = [
+ "agenomic-core",
+ "glob",
+ "miette",
+ "regorus",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "agenomic-replay-local"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "agenomic-atep",
  "agenomic-bundle",
@@ -291,7 +338,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-report"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "agenomic-attestation",
  "agenomic-bundle",
@@ -308,7 +355,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-spec"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "agenomic-core",
  "jsonschema",
@@ -319,7 +366,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-validate"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "agenomic-bundle",
  "agenomic-core",
@@ -648,6 +695,17 @@ name = "cfg_aliases"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
+
+[[package]]
+name = "chacha20"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f8d983286843e49675a4b7a2d174efe136dc93a18d69130dd18198a6c167601"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.0",
+ "rand_core 0.10.1",
+]
 
 [[package]]
 name = "chrono"
@@ -1282,6 +1340,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "r-efi 6.0.0",
+ "rand_core 0.10.1",
  "wasip2",
  "wasip3",
 ]
@@ -1659,7 +1718,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19753d40da53d0ec41604750eeb969097a90fb2d7f7992730d904541c04e2c19"
 dependencies = [
  "bstr",
- "hashbrown 0.15.5",
+ "hashbrown 0.17.1",
 ]
 
 [[package]]
@@ -2753,6 +2812,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "msvc_spectre_libs"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29e871a9861f3664f18b7e04e9301d4edd55090c2dadb4b1c602e26ab32b1f5b"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "nom"
 version = "8.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3209,6 +3277,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rand"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2e8e8bcc7961af1fdac401278c6a831614941f6164ee3bf4ce61b7edb162207"
+dependencies = [
+ "chacha20",
+ "getrandom 0.4.2",
+ "rand_core 0.10.1",
+]
+
+[[package]]
 name = "rand_chacha"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3245,6 +3324,12 @@ checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
 dependencies = [
  "getrandom 0.3.4",
 ]
+
+[[package]]
+name = "rand_core"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
 name = "rand_xorshift"
@@ -3303,6 +3388,27 @@ name = "regex-syntax"
 version = "0.8.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
+
+[[package]]
+name = "regorus"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "419a0413adeece71e4d4a64fb75adc359cb807496f0dfd10f429517be908b807"
+dependencies = [
+ "anyhow",
+ "indexmap",
+ "lazy_static",
+ "msvc_spectre_libs",
+ "num-bigint",
+ "num-traits",
+ "parking_lot",
+ "rand 0.10.1",
+ "regex",
+ "serde",
+ "serde_json",
+ "spin",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "reqwest"
@@ -3660,6 +3766,12 @@ dependencies = [
  "libc",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "spin"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
 
 [[package]]
 name = "spki"
@@ -4871,7 +4983,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "agenomic-spec",
  "anyhow",

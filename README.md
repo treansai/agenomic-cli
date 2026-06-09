@@ -24,9 +24,19 @@ cargo install --path crates/agenomic-cli
 
 ```bash
 agenomic validate ./my-agent --level strict
+agenomic bundle compile-runtime ./my-agent
 agenomic build ./my-agent --output dist/my-agent.bundle.tar.zst
+agenomic cloud login --endpoint https://api.agenomic.io --api-key <KEY>
+agenomic bucket use --name default
+agenomic cloud push-agent dist/my-agent.bundle.tar.zst --name "My Agent"
 agenomic attest dist/my-agent.bundle.tar.zst --output attestation.json
 ```
+
+`agenomic bundle compile-runtime` materializes deterministic
+`runtime/*.compiled` launch plans from `genome.yaml`. The MVP emits
+metadata + execution plans for `plain`, `langgraph`, and `crewai`
+adapters so a bundle can carry portable runtime targets before build /
+registry upload.
 
 ## Documentation
 

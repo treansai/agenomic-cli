@@ -11,12 +11,10 @@ use proptest::prelude::*;
 
 fn segment_strategy() -> impl Strategy<Value = String> {
     // [a-z0-9-] with no leading/trailing dash and no '.'/'..'
-    "[a-z0-9][a-z0-9-]{0,30}[a-z0-9]|[a-z0-9]".prop_filter(
-        "no leading/trailing dash",
-        |s: &String| {
+    "[a-z0-9][a-z0-9-]{0,30}[a-z0-9]|[a-z0-9]"
+        .prop_filter("no leading/trailing dash", |s: &String| {
             !s.starts_with('-') && !s.ends_with('-') && s != "." && s != ".."
-        },
-    )
+        })
 }
 
 fn version_strategy() -> impl Strategy<Value = String> {

@@ -40,6 +40,23 @@ impl SeverityArg {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum RuntimeAdapterArg {
+    Plain,
+    Langgraph,
+    Crewai,
+}
+
+impl RuntimeAdapterArg {
+    pub fn to_runtime_adapter(self) -> agenomic_bundle::RuntimeAdapter {
+        match self {
+            Self::Plain => agenomic_bundle::RuntimeAdapter::Plain,
+            Self::Langgraph => agenomic_bundle::RuntimeAdapter::Langgraph,
+            Self::Crewai => agenomic_bundle::RuntimeAdapter::Crewai,
+        }
+    }
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "agenomic", version, about = "Agenomic CLI", long_about = None)]
 #[command(propagate_version = true)]
@@ -79,6 +96,12 @@ pub enum Commands {
     Run(RunArgs),
     /// Propose an `execution:` block for an existing codebase.
     Port(PortArgs),
+    /// Compile a genome into per-framework runtime adapters (`runtime/*.compiled`).
+    Compile(CompileArgs),
+    /// Evaluate the bundle's OPA/Rego policies against a launch context.
+    Policy(PolicyCommand),
+    /// Governance agents over flagged production traces (diagnostic / hypothesis / adversarial).
+    Governance(GovernanceCommand),
     /// Print the canonical hash of a bundle.
     Hash(HashArgs),
     /// Diff two bundles.
@@ -95,7 +118,9 @@ pub enum Commands {
     Atep(AtepCommand),
     /// Cloud authentication.
     Cloud(CloudCommand),
-    /// Bundle utilities (extract, manifest).
+    /// Bucket selection for cloud pushes.
+    Bucket(BucketCommand),
+    /// Bundle utilities (extract, manifest, runtime compilation).
     Bundle(BundleCommand),
     /// Run system diagnostics.
     Doctor,
@@ -251,6 +276,124 @@ pub struct PortArgs {
     pub path: PathBuf,
 }
 
+/// A compile target selectable via `--target`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum TargetArg {
+    Plain,
+    Langgraph,
+    Crewai,
+    Docker,
+    Wasm,
+}
+
+impl TargetArg {
+    pub fn to_target(self) -> agenomic_compile::CompileTarget {
+        use agenomic_compile::CompileTarget;
+        match self {
+            TargetArg::Plain => CompileTarget::Plain,
+            TargetArg::Langgraph => CompileTarget::LangGraph,
+            TargetArg::Crewai => CompileTarget::CrewAi,
+            TargetArg::Docker => CompileTarget::Docker,
+            TargetArg::Wasm => CompileTarget::Wasm,
+        }
+    }
+}
+
+#[derive(Debug, Parser)]
+pub struct CompileArgs {
+    /// Bundle directory containing `genome.yaml` and `prompts/`.
+    #[arg(default_value = ".")]
+    pub bundle: PathBuf,
+    /// Target framework(s) to compile (repeatable). Defaults to all when
+    /// neither `--target` nor `--all` is given.
+    #[arg(long = "target", value_enum)]
+    pub target: Vec<TargetArg>,
+    /// Compile every supported target.
+    #[arg(long)]
+    pub all: bool,
+    /// Write under this directory instead of `<bundle>/runtime/`.
+    #[arg(long)]
+    pub output: Option<PathBuf>,
+    /// Generate but do not write; print the file list (and the manifest) only.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Parser)]
+pub struct PolicyCommand {
+    #[command(subcommand)]
+    pub command: PolicySub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PolicySub {
+    /// Evaluate `policies/*.rego` against an input document.
+    Eval {
+        /// Bundle directory containing a `policies/` folder.
+        #[arg(default_value = ".")]
+        bundle: PathBuf,
+        /// JSON input document. Defaults to a context derived from the bundle's
+        /// `execution:` block when omitted.
+        #[arg(long)]
+        input: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Parser)]
+pub struct GovernanceCommand {
+    #[command(subcommand)]
+    pub command: GovernanceSub,
+}
+
+/// Shared ATEP-emission flags for the governance subcommands. When both are
+/// set, the engine's results are sealed onto the store's signed `governance`
+/// stream as a hash-linked batch.
+#[derive(Debug, Parser, Clone)]
+pub struct AtepEmitArgs {
+    /// Emit the results as signed events on the ATEP `governance` stream at
+    /// this store directory (must already be `agenomic atep init`-ialized).
+    #[arg(long)]
+    pub atep: Option<PathBuf>,
+    /// ed25519 signing key for the emitted events. Required with `--atep`.
+    #[arg(long)]
+    pub signing_key: Option<PathBuf>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum GovernanceSub {
+    /// Cluster a JSONL stream of flagged traces (Mode 1: failure clustering).
+    Cluster {
+        /// Path to the JSONL traces file, or `-` for stdin.
+        traces: PathBuf,
+        #[command(flatten)]
+        emit: AtepEmitArgs,
+    },
+    /// Generate textual remediation proposals from clusters (Mode 2: hypothesis generation).
+    Hypothesize {
+        /// Path to a clusters JSON file (output of `governance cluster`), or `-` for stdin.
+        clusters: PathBuf,
+        #[command(flatten)]
+        emit: AtepEmitArgs,
+    },
+    /// Critique a single proposal (Mode 3: adversarial reviewer). Exits 16 on Block.
+    Critique {
+        /// Path to a proposal JSON file, or `-` for stdin.
+        proposal: PathBuf,
+        #[command(flatten)]
+        emit: AtepEmitArgs,
+    },
+    /// Run the full Diagnostic → Hypothesis → Adversarial chain end-to-end.
+    Audit {
+        /// Path to the JSONL traces file, or `-` for stdin.
+        traces: PathBuf,
+        /// Exit 16 when at least one proposal lands at `Verdict::Block`.
+        #[arg(long)]
+        fail_on_block: bool,
+        #[command(flatten)]
+        emit: AtepEmitArgs,
+    },
+}
+
 #[derive(Debug, Parser)]
 pub struct HashArgs {
     pub target: PathBuf,
@@ -372,6 +515,22 @@ pub struct CloudCommand {
     pub command: CloudSub,
 }
 
+#[derive(Debug, Parser)]
+pub struct BucketCommand {
+    #[command(subcommand)]
+    pub command: BucketSub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BucketSub {
+    /// Select the active bucket for subsequent cloud pushes.
+    Use {
+        /// Bucket name/slug. Created if it does not already exist.
+        #[arg(long)]
+        name: String,
+    },
+}
+
 #[derive(Debug, Subcommand)]
 pub enum CloudSub {
     Login {
@@ -464,5 +623,16 @@ pub enum BundleSub {
     },
     Manifest {
         target: PathBuf,
+    },
+    CompileRuntime {
+        /// Bundle directory to compile. Archives are not supported yet.
+        target: PathBuf,
+        /// Adapter(s) to emit. Empty = `plain` plus any framework-specific
+        /// adapter implied by the genome (`langgraph` / `crewai`).
+        #[arg(long = "adapter", value_enum)]
+        adapters: Vec<RuntimeAdapterArg>,
+        /// Override the destination directory. Defaults to `<target>/runtime`.
+        #[arg(long)]
+        output_dir: Option<PathBuf>,
     },
 }

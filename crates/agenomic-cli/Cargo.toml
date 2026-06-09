@@ -33,6 +33,9 @@ agenomic-cloud-client = { workspace = true }
 agenomic-diagnostics = { workspace = true }
 agenomic-detect = { workspace = true }
 agenomic-os = { workspace = true }
+agenomic-compile = { workspace = true }
+agenomic-policy = { workspace = true }
+agenomic-governance = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
 git-version = { workspace = true }
@@ -57,3 +60,4 @@ assert_cmd = { workspace = true }
 predicates = { workspace = true }
 tempfile = { workspace = true }
 insta = { workspace = true }
+wiremock = { workspace = true }
