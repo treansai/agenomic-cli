@@ -179,6 +179,7 @@ mod tests {
         assert!(matches!(err, OsError::ContractInvalid { .. }));
     }
 
+    #[cfg(unix)]
     #[test]
     fn absolute_module_rejected() {
         let c = contract(Some("/etc/passwd"), vec![]);

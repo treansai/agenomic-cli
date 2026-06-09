@@ -163,6 +163,27 @@ pub(crate) async fn spawn_planned(
     })
 }
 
+/// `bundle_path.join(contract.working_directory)`, refusing absolute paths and
+/// any `..` segment so the working directory stays inside the bundle.
+pub(crate) fn resolve_working_directory(plan: &LaunchPlan) -> OsResult<PathBuf> {
+    let wd = &plan.contract.working_directory;
+    let candidate = std::path::Path::new(wd);
+    if candidate.is_absolute() {
+        return Err(OsError::PolicyViolation {
+            reason: format!("working_directory must be relative to the bundle (got {wd:?})"),
+        });
+    }
+    if candidate
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(OsError::PolicyViolation {
+            reason: format!("working_directory may not contain '..' (got {wd:?})"),
+        });
+    }
+    Ok(plan.bundle_path.join(candidate))
+}
+
 #[cfg(test)]
 mod dispatch_tests {
     use super::*;
@@ -222,6 +243,7 @@ mod dispatch_tests {
     /// and wasm we expect a `LauncherFailed` (the host binary is not installed
     /// in CI) — which is exactly the path that proves dispatch happened: a
     /// wrong-kind dispatch would have hit `ContractInvalid` instead.
+    #[cfg(unix)]
     #[tokio::test]
     async fn command_kind_runs_through_command_launcher() {
         let td = TempDir::new().unwrap();
@@ -253,25 +275,4 @@ mod dispatch_tests {
             other => panic!("unexpected dispatch outcome: {other:?}"),
         }
     }
-}
-
-/// `bundle_path.join(contract.working_directory)`, refusing absolute paths and
-/// any `..` segment so the working directory stays inside the bundle.
-pub(crate) fn resolve_working_directory(plan: &LaunchPlan) -> OsResult<PathBuf> {
-    let wd = &plan.contract.working_directory;
-    let candidate = std::path::Path::new(wd);
-    if candidate.is_absolute() {
-        return Err(OsError::PolicyViolation {
-            reason: format!("working_directory must be relative to the bundle (got {wd:?})"),
-        });
-    }
-    if candidate
-        .components()
-        .any(|c| matches!(c, std::path::Component::ParentDir))
-    {
-        return Err(OsError::PolicyViolation {
-            reason: format!("working_directory may not contain '..' (got {wd:?})"),
-        });
-    }
-    Ok(plan.bundle_path.join(candidate))
 }

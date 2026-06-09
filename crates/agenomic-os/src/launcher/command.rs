@@ -65,7 +65,9 @@ mod tests {
         RuntimeKind, RuntimeSpec,
     };
     use crate::policy::Policy;
+    #[cfg(unix)]
     use crate::trace::TraceEvent;
+    #[cfg(unix)]
     use std::collections::BTreeMap;
     use tempfile::TempDir;
 
@@ -100,6 +102,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn echoes_stdout_and_captures_exit_zero() {
         let td = TempDir::new().unwrap();
@@ -118,6 +121,7 @@ mod tests {
             .any(|e| matches!(e, TraceEvent::ProcessExited { code: 0, .. })));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn non_zero_exit_surfaces_to_handle() {
         let td = TempDir::new().unwrap();
@@ -130,6 +134,7 @@ mod tests {
         assert_eq!(handle.exit_code, 7);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn undeclared_parent_env_does_not_leak_to_child() {
         let td = TempDir::new().unwrap();
@@ -155,6 +160,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn declared_env_does_reach_child() {
         let td = TempDir::new().unwrap();
@@ -183,6 +189,7 @@ mod tests {
         assert!(matches!(err, OsError::MissingRequiredEnv { .. }));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn rejects_absolute_working_directory() {
         let td = TempDir::new().unwrap();

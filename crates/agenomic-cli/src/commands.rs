@@ -1584,6 +1584,9 @@ fn should_move_agent_to_bucket(current_bucket_id: Option<&str>, target_bucket_id
     current_bucket_id != Some(target_bucket_id)
 }
 
+// Severity is referenced via SeverityArg::to_severity; silence unused-import
+fn _unused_severity(_s: Severity) {}
+
 #[cfg(test)]
 mod tests {
     use super::{selected_bucket_slug, should_move_agent_to_bucket, DEFAULT_BUCKET_SLUG};
@@ -1608,6 +1611,3 @@ mod tests {
         assert!(!should_move_agent_to_bucket(Some("bucket-1"), "bucket-1"));
     }
 }
-
-// Severity is referenced via SeverityArg::to_severity; silence unused-import
-fn _unused_severity(_s: Severity) {}
