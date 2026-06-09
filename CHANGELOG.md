@@ -8,6 +8,49 @@ All notable changes to `agenomic-cli` are documented here. Format follows
 
 ### Added
 
+- **Governance agents (Point 4 / BACKEND_GAPS Gap 5).** New `agenomic-governance`
+  crate plus `agenomic governance {cluster,hypothesize,critique,audit}`. Three
+  pure, deterministic engines over flagged production traces:
+  - `DiagnosticAgent` — groups traces by `(signal, skill)`, mines keywords
+    (Mode 1: failure clustering).
+  - `HypothesisAgent` — emits typed `Proposal`s (`extend_skill_examples`,
+    `narrow_skill_scope`, `add_policy_rule`, `escalation_overhaul`, `none`).
+    **Never mutates a bundle** (Mode 2: hypothesis generation).
+  - `AdversarialReviewer` — fail-closed rule battery, verdict `pass` / `warn` /
+    `block` (Mode 3: adversarial review). `block` exits 16.
+  `audit` chains the three end-to-end. Modes 4 (human-approval gate) and 5
+  (shadow deployment) layer above this — these engines produce the artifacts
+  that gate consumes.
+- **`entrypoint.kind` accepts `docker` and `wasm`.** `agenomic run` now
+  dispatches via `agenomic_os::launch_for_kind` to a per-kind launcher: the
+  existing `CommandLauncher`, a new `DockerLauncher` (`docker run --rm -i
+  --network=none|bridge -e <NAME> <image>`), and a new `WasmLauncher`
+  (`wasmtime run [--dir …] [-S http] <module>`). All three go through the
+  same fail-closed env filter, working-directory containment, and trace
+  pipeline. Declared env vars are forwarded *by name only* — values come
+  from the filtered child env so secrets stay out of `argv`. Schema and
+  `ExecutionContract` updated; `entrypoint.image` (docker) and
+  `entrypoint.module` (wasm) are validated at parse time.
+
+### Internal
+
+- **`agenomic compile` — genome → runtime adapters.** New `agenomic-compile`
+  crate and command that lower a bundle's `genome.yaml` into runnable,
+  self-contained source under `runtime/<target>.compiled/`. Targets: `plain`
+  (FastAPI + provider SDK), `langgraph`, `crewai`, `docker` (the `plain` service
+  as a pinned OCI image), and `wasm` (a `componentize-py` WASI component with
+  prompts inlined). Output is deterministic;
+  each tree embeds its prompts and a `manifest.json` pinning per-file BLAKE3 and
+  the source genome hash. Flags: `--target` (repeatable), `--all`, `--output`,
+  `--dry-run`. See `docs/bundle-format.md` and `docs/command-reference.md`.
+- **OPA/Rego policy enforcement.** New `agenomic-policy` crate (wrapping the
+  pure-Rust `regorus` engine) evaluates `policies/*.rego` against a launch
+  context. `agenomic policy eval` reports the decision; `agenomic run` now runs
+  the same gate **fail-closed before spawning** the agent whenever a bundle ships
+  `.rego` policies. Policies use `package agenomic` with a default-false `allow`
+  rule and an optional `deny[reason]` set; denial exits 16. Adds an example
+  `policies/launch.rego` to the claims-agent bundle.
+
 - **Repo-aware `agm init`.** When run in a project with a recognised manifest
   (`pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`, `agenomic.yaml`),
   `init` now detects agent id (git remote), name/description/authors,

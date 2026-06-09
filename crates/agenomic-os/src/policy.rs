@@ -133,6 +133,8 @@ mod tests {
                 kind: EntrypointKind::Command,
                 command: Some("python".into()),
                 args: vec![],
+                image: None,
+                module: None,
             },
             runtime: RuntimeSpec {
                 kind: RuntimeKind::Python,

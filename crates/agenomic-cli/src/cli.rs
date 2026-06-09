@@ -96,6 +96,12 @@ pub enum Commands {
     Run(RunArgs),
     /// Propose an `execution:` block for an existing codebase.
     Port(PortArgs),
+    /// Compile a genome into per-framework runtime adapters (`runtime/*.compiled`).
+    Compile(CompileArgs),
+    /// Evaluate the bundle's OPA/Rego policies against a launch context.
+    Policy(PolicyCommand),
+    /// Governance agents over flagged production traces (diagnostic / hypothesis / adversarial).
+    Governance(GovernanceCommand),
     /// Print the canonical hash of a bundle.
     Hash(HashArgs),
     /// Diff two bundles.
@@ -268,6 +274,102 @@ pub struct PortArgs {
     /// Path to the codebase to analyse.
     #[arg(default_value = ".")]
     pub path: PathBuf,
+}
+
+/// A compile target selectable via `--target`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum TargetArg {
+    Plain,
+    Langgraph,
+    Crewai,
+    Docker,
+    Wasm,
+}
+
+impl TargetArg {
+    pub fn to_target(self) -> agenomic_compile::CompileTarget {
+        use agenomic_compile::CompileTarget;
+        match self {
+            TargetArg::Plain => CompileTarget::Plain,
+            TargetArg::Langgraph => CompileTarget::LangGraph,
+            TargetArg::Crewai => CompileTarget::CrewAi,
+            TargetArg::Docker => CompileTarget::Docker,
+            TargetArg::Wasm => CompileTarget::Wasm,
+        }
+    }
+}
+
+#[derive(Debug, Parser)]
+pub struct CompileArgs {
+    /// Bundle directory containing `genome.yaml` and `prompts/`.
+    #[arg(default_value = ".")]
+    pub bundle: PathBuf,
+    /// Target framework(s) to compile (repeatable). Defaults to all when
+    /// neither `--target` nor `--all` is given.
+    #[arg(long = "target", value_enum)]
+    pub target: Vec<TargetArg>,
+    /// Compile every supported target.
+    #[arg(long)]
+    pub all: bool,
+    /// Write under this directory instead of `<bundle>/runtime/`.
+    #[arg(long)]
+    pub output: Option<PathBuf>,
+    /// Generate but do not write; print the file list (and the manifest) only.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Parser)]
+pub struct PolicyCommand {
+    #[command(subcommand)]
+    pub command: PolicySub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PolicySub {
+    /// Evaluate `policies/*.rego` against an input document.
+    Eval {
+        /// Bundle directory containing a `policies/` folder.
+        #[arg(default_value = ".")]
+        bundle: PathBuf,
+        /// JSON input document. Defaults to a context derived from the bundle's
+        /// `execution:` block when omitted.
+        #[arg(long)]
+        input: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Parser)]
+pub struct GovernanceCommand {
+    #[command(subcommand)]
+    pub command: GovernanceSub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum GovernanceSub {
+    /// Cluster a JSONL stream of flagged traces (Mode 1: failure clustering).
+    Cluster {
+        /// Path to the JSONL traces file, or `-` for stdin.
+        traces: PathBuf,
+    },
+    /// Generate textual remediation proposals from clusters (Mode 2: hypothesis generation).
+    Hypothesize {
+        /// Path to a clusters JSON file (output of `governance cluster`), or `-` for stdin.
+        clusters: PathBuf,
+    },
+    /// Critique a single proposal (Mode 3: adversarial reviewer). Exits 16 on Block.
+    Critique {
+        /// Path to a proposal JSON file, or `-` for stdin.
+        proposal: PathBuf,
+    },
+    /// Run the full Diagnostic → Hypothesis → Adversarial chain end-to-end.
+    Audit {
+        /// Path to the JSONL traces file, or `-` for stdin.
+        traces: PathBuf,
+        /// Exit 16 when at least one proposal lands at `Verdict::Block`.
+        #[arg(long)]
+        fail_on_block: bool,
+    },
 }
 
 #[derive(Debug, Parser)]

@@ -257,6 +257,7 @@ mod tests {
                 endpoint: None,
                 org: None,
                 api_key: None,
+                active_bucket_slug: None,
             },
             project: None,
         };

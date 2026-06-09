@@ -38,7 +38,9 @@ pub use contract::{
     NetworkPermissions, PermissionsSpec, RuntimeKind, RuntimeSpec,
 };
 pub use error::{OsError, OsResult};
-pub use launcher::{CommandLauncher, LaunchPlan, Launcher, RunHandle};
+pub use launcher::{
+    launch_for_kind, CommandLauncher, DockerLauncher, LaunchPlan, Launcher, RunHandle, WasmLauncher,
+};
 pub use policy::Policy;
 pub use port::{Gap, GapSeverity, PortProposal};
 pub use resolver::{AgentResolver, LocalResolver, ResolvedAgent};

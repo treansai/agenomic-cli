@@ -616,9 +616,7 @@ fn resolve_reference(
 }
 
 pub fn cmd_run(args: &RunArgs, format: OutputFormat, no_color: bool) -> CliResult<ExitCode> {
-    use agenomic_os::{
-        AgentReference, CommandLauncher, ExecutionContract, LaunchPlan, Launcher, Policy,
-    };
+    use agenomic_os::{launch_for_kind, AgentReference, ExecutionContract, LaunchPlan, Policy};
 
     let reference: AgentReference = args
         .reference
@@ -637,6 +635,29 @@ pub fn cmd_run(args: &RunArgs, format: OutputFormat, no_color: bool) -> CliResul
     let yaml = std::fs::read_to_string(&genome_path).map_err(|e| io_at(&genome_path, e))?;
     let contract = ExecutionContract::from_genome_yaml(&yaml).map_err(CliError::from)?;
 
+    // Fail-closed OPA/Rego gate: if the bundle ships `policies/*.rego`, the
+    // launch context must be explicitly allowed before we spawn anything. A
+    // bundle without rego policies keeps the previous (advisory) behaviour.
+    let policy_bundle =
+        agenomic_policy::PolicyBundle::load(&resolved.bundle_path).map_err(CliError::from)?;
+    if !policy_bundle.is_empty() {
+        let agent_id = reference.canonical();
+        let criticality = genome_criticality(&yaml);
+        let input = launch_context_from_contract(&agent_id, &criticality, &contract);
+        let decision = policy_bundle.evaluate(&input).map_err(CliError::from)?;
+        if !decision.allowed {
+            let reasons = if decision.denies.is_empty() {
+                "policy did not allow this launch".to_string()
+            } else {
+                decision.denies.join("; ")
+            };
+            return Err(CliError::OsPolicyViolation(format!(
+                "rego policy gate denied launch ({}): {reasons}",
+                decision.policies.join(", ")
+            )));
+        }
+    }
+
     let env_overrides = parse_env_overrides(&args.env)?;
     let policy = Policy::from_contract(&contract)
         .with_network_overrides(args.allow_network.iter().cloned())
@@ -650,9 +671,7 @@ pub fn cmd_run(args: &RunArgs, format: OutputFormat, no_color: bool) -> CliResul
     };
 
     let rt = tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
-    let handle = rt
-        .block_on(CommandLauncher::new().launch(plan))
-        .map_err(CliError::from)?;
+    let handle = rt.block_on(launch_for_kind(plan)).map_err(CliError::from)?;
 
     if !handle.stdout.is_empty() {
         print!("{}", handle.stdout);
@@ -728,6 +747,252 @@ pub fn cmd_port(args: &PortArgs, format: OutputFormat, no_color: bool) -> CliRes
         return Ok(ExitCode::ValidationFailed);
     }
     Ok(ExitCode::Success)
+}
+
+pub fn cmd_compile(
+    args: &CompileArgs,
+    format: OutputFormat,
+    _no_color: bool,
+) -> CliResult<ExitCode> {
+    use agenomic_compile::CompileTarget;
+
+    // Default to all targets when neither --target nor --all is given.
+    let targets: Vec<CompileTarget> = if args.all || args.target.is_empty() {
+        CompileTarget::ALL.to_vec()
+    } else {
+        let mut ts: Vec<CompileTarget> = args.target.iter().map(|t| t.to_target()).collect();
+        ts.sort();
+        ts.dedup();
+        ts
+    };
+
+    let artifacts =
+        agenomic_compile::compile_bundle(&args.bundle, &targets).map_err(CliError::from)?;
+
+    let mut summaries = Vec::new();
+    for artifact in &artifacts {
+        let dest_root = match &args.output {
+            Some(out) => out.join(artifact.target.dir_name()),
+            None => args.bundle.join("runtime").join(artifact.target.dir_name()),
+        };
+        if !args.dry_run {
+            artifact.emit_to_dir(&dest_root).map_err(CliError::from)?;
+        }
+        summaries.push(serde_json::json!({
+            "target": artifact.target.label(),
+            "output_dir": dest_root,
+            "files": artifact.files.keys().collect::<Vec<_>>(),
+            "written": !args.dry_run,
+        }));
+    }
+
+    let body = serde_json::json!({
+        "bundle": args.bundle,
+        "targets": targets.iter().map(|t| t.label()).collect::<Vec<_>>(),
+        "dry_run": args.dry_run,
+        "artifacts": summaries,
+    });
+
+    if matches!(format, OutputFormat::Human) {
+        for s in &summaries {
+            let target = s["target"].as_str().unwrap_or("?");
+            let dir = s["output_dir"].as_str().unwrap_or_default();
+            let n = s["files"].as_array().map(|a| a.len()).unwrap_or(0);
+            if args.dry_run {
+                println!("would compile {target}: {n} files → {dir}");
+            } else {
+                println!("compiled {target}: {n} files → {dir}");
+            }
+        }
+    } else {
+        print_value(&body, format)?;
+    }
+    Ok(ExitCode::Success)
+}
+
+pub fn cmd_policy(
+    args: &PolicyCommand,
+    format: OutputFormat,
+    _no_color: bool,
+) -> CliResult<ExitCode> {
+    match &args.command {
+        PolicySub::Eval { bundle, input } => {
+            let policy_bundle =
+                agenomic_policy::PolicyBundle::load(bundle).map_err(CliError::from)?;
+
+            let input_doc = match input {
+                Some(path) => {
+                    let raw = std::fs::read_to_string(path).map_err(|e| io_at(path, e))?;
+                    serde_json::from_str(&raw).map_err(|e| {
+                        CliError::Schema(format!("policy input {}: {e}", path.display()))
+                    })?
+                }
+                None => bundle_launch_context(bundle)?,
+            };
+
+            let decision = policy_bundle.evaluate(&input_doc).map_err(CliError::from)?;
+            let body = serde_json::json!({
+                "bundle": bundle,
+                "policies": decision.policies,
+                "allowed": decision.allowed,
+                "allow_rule": decision.allow_rule,
+                "denies": decision.denies,
+                "input": input_doc,
+            });
+            print_value(&body, format)?;
+            if decision.allowed {
+                Ok(ExitCode::Success)
+            } else {
+                Ok(ExitCode::OsPolicyViolation)
+            }
+        }
+    }
+}
+
+/// Derive a default policy input document from a bundle's `execution:` block:
+/// the fields a `policies/*.rego` is most likely to gate on. Bundles without an
+/// execution block yield a minimal `{agent_id}` context.
+fn bundle_launch_context(bundle: &Path) -> CliResult<serde_json::Value> {
+    use agenomic_os::ExecutionContract;
+
+    let genome_path = bundle.join("genome.yaml");
+    let yaml = std::fs::read_to_string(&genome_path).map_err(|e| io_at(&genome_path, e))?;
+    let agent_id = serde_yaml::from_str::<serde_yaml::Value>(&yaml)
+        .ok()
+        .and_then(|v| {
+            v.get("agent")
+                .and_then(|a| a.get("id"))
+                .and_then(|i| i.as_str().map(String::from))
+        })
+        .unwrap_or_default();
+    let criticality = genome_criticality(&yaml);
+
+    match ExecutionContract::from_genome_yaml(&yaml) {
+        Ok(contract) => Ok(launch_context_from_contract(
+            &agent_id,
+            &criticality,
+            &contract,
+        )),
+        // No execution block: still provide what we know.
+        Err(_) => Ok(serde_json::json!({
+            "agent_id": agent_id,
+            "criticality": criticality,
+        })),
+    }
+}
+
+/// Extract `agent.criticality` from a genome YAML string (empty when absent).
+fn genome_criticality(yaml: &str) -> String {
+    serde_yaml::from_str::<serde_yaml::Value>(yaml)
+        .ok()
+        .and_then(|v| {
+            v.get("agent")
+                .and_then(|a| a.get("criticality"))
+                .and_then(|c| c.as_str().map(String::from))
+        })
+        .unwrap_or_default()
+}
+
+/// Shared shape of the JSON `input` document fed to Rego, built from the
+/// execution contract. Kept stable so policies can rely on the field names.
+fn launch_context_from_contract(
+    agent_id: &str,
+    criticality: &str,
+    contract: &agenomic_os::ExecutionContract,
+) -> serde_json::Value {
+    serde_json::json!({
+        "agent_id": agent_id,
+        "criticality": criticality,
+        "runtime_kind": contract.runtime.kind.label(),
+        "working_directory": contract.working_directory,
+        "env_required": contract.env.required,
+        "env_optional": contract.env.optional,
+        "network_allow": contract.permissions.network.allow,
+        "network_allow_count": contract.permissions.network.allow.len(),
+        "fs_read": contract.permissions.filesystem.read,
+        "fs_write": contract.permissions.filesystem.write,
+    })
+}
+
+pub fn cmd_governance(
+    args: &GovernanceCommand,
+    format: OutputFormat,
+    _no_color: bool,
+) -> CliResult<ExitCode> {
+    use agenomic_governance::{
+        audit, io::read_traces, AdversarialReviewer, DiagnosticAgent, HypothesisAgent, Verdict,
+    };
+
+    match &args.command {
+        GovernanceSub::Cluster { traces } => {
+            let loaded = read_traces(traces).map_err(CliError::from)?;
+            let clusters = DiagnosticAgent::new().cluster(&loaded);
+            print_value(&serde_json::json!({ "clusters": clusters }), format)?;
+            Ok(ExitCode::Success)
+        }
+        GovernanceSub::Hypothesize { clusters } => {
+            let raw = read_governance_input(clusters)?;
+            // Accept either a `{clusters: [...]}` envelope or a bare `[...]`.
+            let parsed: serde_json::Value = serde_json::from_str(&raw)
+                .map_err(|e| CliError::Schema(format!("clusters JSON: {e}")))?;
+            let inner = parsed.get("clusters").cloned().unwrap_or(parsed);
+            let clusters: Vec<agenomic_governance::Cluster> = serde_json::from_value(inner)
+                .map_err(|e| CliError::Schema(format!("clusters JSON: {e}")))?;
+            let proposals = HypothesisAgent::new().hypothesize_many(&clusters);
+            print_value(&serde_json::json!({ "proposals": proposals }), format)?;
+            Ok(ExitCode::Success)
+        }
+        GovernanceSub::Critique { proposal } => {
+            let raw = read_governance_input(proposal)?;
+            let p: agenomic_governance::Proposal = serde_json::from_str(&raw)
+                .map_err(|e| CliError::Schema(format!("proposal JSON: {e}")))?;
+            let critique = AdversarialReviewer::new().critique(&p);
+            let blocked = matches!(critique.verdict, Verdict::Block);
+            print_value(&serde_json::json!({ "critique": critique }), format)?;
+            if blocked {
+                Ok(ExitCode::OsPolicyViolation)
+            } else {
+                Ok(ExitCode::Success)
+            }
+        }
+        GovernanceSub::Audit {
+            traces,
+            fail_on_block,
+        } => {
+            let loaded = read_traces(traces).map_err(CliError::from)?;
+            let report = audit(&loaded);
+            let blocked = report.has_blocking_findings();
+            print_value(
+                &serde_json::json!({
+                    "clusters": report.clusters,
+                    "proposals": report.proposals,
+                    "critiques": report.critiques,
+                    "blocked": blocked,
+                }),
+                format,
+            )?;
+            if *fail_on_block && blocked {
+                Ok(ExitCode::OsPolicyViolation)
+            } else {
+                Ok(ExitCode::Success)
+            }
+        }
+    }
+}
+
+/// Read a JSON file path, or stdin when path == "-". Used by the governance
+/// sub-commands that take a single JSON document on the command line.
+fn read_governance_input(path: &Path) -> CliResult<String> {
+    use std::io::Read;
+    if path.as_os_str() == "-" {
+        let mut s = String::new();
+        std::io::stdin()
+            .read_to_string(&mut s)
+            .map_err(|e| CliError::Internal(format!("read stdin: {e}")))?;
+        Ok(s)
+    } else {
+        std::fs::read_to_string(path).map_err(|e| io_at(path, e))
+    }
 }
 
 pub fn cmd_hash(args: &HashArgs, _format: OutputFormat, _no_color: bool) -> CliResult<ExitCode> {
@@ -1361,6 +1626,9 @@ fn should_move_agent_to_bucket(current_bucket_id: Option<&str>, target_bucket_id
     current_bucket_id != Some(target_bucket_id)
 }
 
+// Severity is referenced via SeverityArg::to_severity; silence unused-import
+fn _unused_severity(_s: Severity) {}
+
 #[cfg(test)]
 mod tests {
     use super::{selected_bucket_slug, should_move_agent_to_bucket, DEFAULT_BUCKET_SLUG};
@@ -1385,6 +1653,3 @@ mod tests {
         assert!(!should_move_agent_to_bucket(Some("bucket-1"), "bucket-1"));
     }
 }
-
-// Severity is referenced via SeverityArg::to_severity; silence unused-import
-fn _unused_severity(_s: Severity) {}
