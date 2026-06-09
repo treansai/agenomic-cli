@@ -13,7 +13,7 @@ use agenomic_bundle::{
 use agenomic_core::{io_at, CliError, CliResult, ExitCode, Severity, ValidationLevel};
 use agenomic_diff::{diff_bundles, DiffOptions};
 use agenomic_replay_local::{run_local_replay, ReplayOptions};
-use agenomic_validate::{validate_archive, validate_bundle};
+use agenomic_validate::{validate_archive, validate_bundle, validate_manifest_file};
 
 use crate::cli::*;
 use crate::render::render;
@@ -447,8 +447,17 @@ pub fn cmd_validate(
         LevelArg::Strict => ValidationLevel::Strict,
         LevelArg::Ci => ValidationLevel::Ci,
     };
+    let is_yaml_file = args.target.is_file()
+        && args
+            .target
+            .extension()
+            .and_then(|x| x.to_str())
+            .is_some_and(|x| x.eq_ignore_ascii_case("yaml") || x.eq_ignore_ascii_case("yml"));
     let report = if args.target.is_dir() {
         validate_bundle(&args.target, level)?
+    } else if is_yaml_file {
+        // Standalone manifest (genome, workflow, or system) outside a bundle.
+        validate_manifest_file(&args.target)?
     } else {
         validate_archive(&args.target, level)?
     };

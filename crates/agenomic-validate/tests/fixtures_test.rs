@@ -3,7 +3,9 @@
 use std::path::PathBuf;
 
 use agenomic_core::{Severity, ValidationLevel};
-use agenomic_validate::{validate_bundle, validate_system, validate_workflow};
+use agenomic_validate::{
+    validate_bundle, validate_manifest_file, validate_system, validate_workflow,
+};
 
 fn fix(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -150,6 +152,16 @@ steps:
         .errors
         .iter()
         .any(|e| e.code == "agenomic::workflow::duplicate_step_id"));
+}
+
+#[test]
+fn standalone_manifest_files_validate_by_kind() {
+    let wf = validate_manifest_file(&fix("valid-system-bundle/workflows/lifecycle.yaml")).unwrap();
+    assert!(wf.valid, "workflow manifest: {wf:?}");
+    let sys = validate_manifest_file(&fix("valid-system-bundle/system.yaml")).unwrap();
+    assert!(sys.valid, "system manifest: {sys:?}");
+    let genome = validate_manifest_file(&fix("valid-bundle/genome.yaml")).unwrap();
+    assert!(genome.valid, "genome manifest: {genome:?}");
 }
 
 #[test]

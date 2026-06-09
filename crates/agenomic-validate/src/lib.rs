@@ -284,6 +284,44 @@ pub fn validate_behavior_contract(contract_yaml: &str) -> CliResult<ValidationRe
     Ok(report)
 }
 
+/// Validate a single standalone manifest file (YAML).
+///
+/// The manifest kind is inferred from its top-level keys: `workflow` →
+/// workflow manifest, `system` → system manifest, `agent` → genome.
+pub fn validate_manifest_file(path: &Path) -> CliResult<ValidationReport> {
+    let text = std::fs::read_to_string(path).map_err(|e| io_at(path, e))?;
+    let doc: serde_yaml::Value = match serde_yaml::from_str(&text) {
+        Ok(v) => v,
+        Err(e) => {
+            let mut report = ValidationReport {
+                valid: false,
+                ..Default::default()
+            };
+            report.push_error(ValidationIssue {
+                code: "agenomic::bundle::yaml_parse".into(),
+                severity: Severity::High,
+                message: format!("{}: parse error: {e}", path.display()),
+                path: Some(path.display().to_string()),
+                hint: None,
+                doc: None,
+            });
+            return Ok(report);
+        }
+    };
+    if doc.get("workflow").is_some() {
+        validate_workflow(&text)
+    } else if doc.get("system").is_some() {
+        validate_system(&text)
+    } else if doc.get("agent").is_some() {
+        validate_genome(&text)
+    } else {
+        Err(CliError::Schema(
+            "cannot infer manifest kind: expected a top-level `workflow`, `system`, or `agent` key"
+                .into(),
+        ))
+    }
+}
+
 /// Validate a single workflow manifest YAML string (spec 0.2, RFC 0009).
 pub fn validate_workflow(workflow_yaml: &str) -> CliResult<ValidationReport> {
     let mut report = ValidationReport {
