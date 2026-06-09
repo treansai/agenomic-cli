@@ -8,6 +8,19 @@ All notable changes to `agenomic-cli` are documented here. Format follows
 
 ### Added
 
+- **`entrypoint.kind` accepts `docker` and `wasm`.** `agenomic run` now
+  dispatches via `agenomic_os::launch_for_kind` to a per-kind launcher: the
+  existing `CommandLauncher`, a new `DockerLauncher` (`docker run --rm -i
+  --network=none|bridge -e <NAME> <image>`), and a new `WasmLauncher`
+  (`wasmtime run [--dir …] [-S http] <module>`). All three go through the
+  same fail-closed env filter, working-directory containment, and trace
+  pipeline. Declared env vars are forwarded *by name only* — values come
+  from the filtered child env so secrets stay out of `argv`. Schema and
+  `ExecutionContract` updated; `entrypoint.image` (docker) and
+  `entrypoint.module` (wasm) are validated at parse time.
+
+### Internal
+
 - **`agenomic compile` — genome → runtime adapters.** New `agenomic-compile`
   crate and command that lower a bundle's `genome.yaml` into runnable,
   self-contained source under `runtime/<target>.compiled/`. Targets: `plain`

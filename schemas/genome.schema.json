@@ -97,13 +97,23 @@
           "properties": {
             "kind": {
               "type": "string",
-              "enum": ["command"],
-              "description": "MVP supports `command` only. Future kinds (docker, wasm) are reserved."
+              "enum": ["command", "docker", "wasm"],
+              "description": "`command` spawns a sub-process directly; `docker` runs an OCI image via `docker run`; `wasm` runs a WASI component via `wasmtime run`."
             },
             "command": { "type": "string", "minLength": 1 },
             "args": {
               "type": "array",
               "items": { "type": "string" }
+            },
+            "image": {
+              "type": "string",
+              "minLength": 1,
+              "description": "`docker` only: image reference, e.g. `claims-agent:v1` or `ghcr.io/org/x@sha256:…`."
+            },
+            "module": {
+              "type": "string",
+              "minLength": 1,
+              "description": "`wasm` only: path (relative to the bundle) to the `.wasm` component to run."
             }
           },
           "additionalProperties": true

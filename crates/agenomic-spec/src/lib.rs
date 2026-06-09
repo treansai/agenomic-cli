@@ -242,7 +242,10 @@ mod tests {
     fn genome_execution_requires_entrypoint_and_runtime() {
         let v = validator(SchemaKind::Genome).unwrap();
         let mut value = minimal_genome_v2_with_execution();
-        value["execution"].as_object_mut().unwrap().remove("entrypoint");
+        value["execution"]
+            .as_object_mut()
+            .unwrap()
+            .remove("entrypoint");
         assert!(
             v.validate(&value).is_err(),
             "execution missing entrypoint must be rejected"
@@ -250,14 +253,24 @@ mod tests {
     }
 
     #[test]
-    fn genome_execution_entrypoint_kind_restricted_to_command() {
+    fn genome_execution_entrypoint_kind_accepts_docker_and_wasm() {
+        let v = validator(SchemaKind::Genome).unwrap();
+        for kind in ["docker", "wasm"] {
+            let mut value = minimal_genome_v2_with_execution();
+            value["execution"]["entrypoint"]["kind"] = serde_json::json!(kind);
+            assert!(
+                v.validate(&value).is_ok(),
+                "{kind} must be a valid entrypoint kind"
+            );
+        }
+    }
+
+    #[test]
+    fn genome_execution_entrypoint_kind_rejects_unknown_values() {
         let v = validator(SchemaKind::Genome).unwrap();
         let mut value = minimal_genome_v2_with_execution();
-        value["execution"]["entrypoint"]["kind"] = serde_json::json!("docker");
-        assert!(
-            v.validate(&value).is_err(),
-            "unsupported entrypoint kind must be rejected at MVP"
-        );
+        value["execution"]["entrypoint"]["kind"] = serde_json::json!("haskell");
+        assert!(v.validate(&value).is_err());
     }
 
     #[test]

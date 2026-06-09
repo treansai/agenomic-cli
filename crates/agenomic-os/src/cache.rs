@@ -92,7 +92,10 @@ mod tests {
         let loc = CacheLocation::project_local("/tmp/proj");
         let unq: AgentReference = "agent://org/slug".parse().unwrap();
         let ver: AgentReference = "agent://org/slug@1.2.0".parse().unwrap();
-        assert_ne!(loc.bundle_path(&unq).unwrap(), loc.bundle_path(&ver).unwrap());
+        assert_ne!(
+            loc.bundle_path(&unq).unwrap(),
+            loc.bundle_path(&ver).unwrap()
+        );
     }
 
     #[test]

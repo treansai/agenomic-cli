@@ -615,9 +615,7 @@ fn resolve_reference(
 }
 
 pub fn cmd_run(args: &RunArgs, format: OutputFormat, no_color: bool) -> CliResult<ExitCode> {
-    use agenomic_os::{
-        AgentReference, CommandLauncher, ExecutionContract, LaunchPlan, Launcher, Policy,
-    };
+    use agenomic_os::{launch_for_kind, AgentReference, ExecutionContract, LaunchPlan, Policy};
 
     let reference: AgentReference = args
         .reference
@@ -672,9 +670,7 @@ pub fn cmd_run(args: &RunArgs, format: OutputFormat, no_color: bool) -> CliResul
     };
 
     let rt = tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
-    let handle = rt
-        .block_on(CommandLauncher::new().launch(plan))
-        .map_err(CliError::from)?;
+    let handle = rt.block_on(launch_for_kind(plan)).map_err(CliError::from)?;
 
     if !handle.stdout.is_empty() {
         print!("{}", handle.stdout);

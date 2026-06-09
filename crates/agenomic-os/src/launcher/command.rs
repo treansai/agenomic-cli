@@ -1,31 +1,23 @@
 //! `command` launcher: spawns a sub-process with the declared contract.
 //!
-//! The contract restricts the entrypoint to `kind: command` at MVP, so this
-//! launcher is the only one wired in. Behaviour:
-//!
+//! Behaviour (shared by every launcher via [`super::spawn_planned`]):
 //! - working directory = `bundle_path.join(contract.working_directory)`,
 //!   never the caller's `cwd`.
-//! - environment = exactly what [`Policy::build_child_env`] returns;
-//!   `env_clear()` is called first so undeclared parent vars never leak.
+//! - environment = exactly what [`crate::policy::Policy::build_child_env`]
+//!   returns; `env_clear()` is called first so undeclared parent vars never
+//!   leak.
 //! - stdin is closed; stdout and stderr are captured to memory and split
 //!   into lines for the trace.
 //! - filesystem and network permissions are recorded into the trace but
 //!   not kernel-enforced (see `docs/BACKEND_GAPS.md`).
 
-use std::path::PathBuf;
-use std::process::Stdio;
-use std::time::Instant;
-
 use async_trait::async_trait;
-use chrono::Utc;
-use tokio::process::Command;
 
 use crate::contract::{EntrypointKind, ExecutionContract};
 use crate::error::{OsError, OsResult};
-use crate::launcher::{LaunchPlan, Launcher, RunHandle};
-use crate::trace::{Trace, TraceEvent};
+use crate::launcher::{spawn_planned, LaunchPlan, Launcher, RunHandle};
 
-/// Default launcher: runs the bundle's declared `command` entrypoint.
+/// Runs the bundle's declared `command` entrypoint.
 #[derive(Debug, Default, Clone)]
 pub struct CommandLauncher;
 
@@ -38,123 +30,31 @@ impl CommandLauncher {
 #[async_trait]
 impl Launcher for CommandLauncher {
     async fn launch(&self, plan: LaunchPlan) -> OsResult<RunHandle> {
-        let started_at = Utc::now();
-        let started_instant = Instant::now();
-        let mut trace = Trace::new(started_at);
-
         let (program, args) = resolve_entrypoint(&plan.contract)?;
-        let working_directory = resolve_working_directory(&plan)?;
-
-        let env = plan
-            .policy
-            .build_child_env(&plan.contract, |k| std::env::var(k).ok())?;
-        let optional_env_set: Vec<String> = plan
-            .contract
-            .env
-            .optional
-            .iter()
-            .filter(|n| env.contains_key(n.as_str()))
-            .cloned()
-            .collect();
-
-        trace.push(TraceEvent::PolicyApplied {
-            at: Utc::now(),
-            required_env: plan.contract.env.required.clone(),
-            optional_env_set,
-            allow_network: plan.policy.allow_network.clone(),
-            allow_fs_read: plan.policy.allow_fs_read.clone(),
-            allow_fs_write: plan.policy.allow_fs_write.clone(),
-        });
-
-        let mut cmd = Command::new(&program);
-        cmd.args(&args)
-            .current_dir(&working_directory)
-            .env_clear()
-            .envs(&env)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        trace.push(TraceEvent::ProcessStarted {
-            at: Utc::now(),
-            command: program.clone(),
-            args: args.clone(),
-            working_directory: working_directory.clone(),
-        });
-
-        let output = cmd.output().await.map_err(|e| OsError::LauncherFailed {
-            command: program.clone(),
-            reason: format!("spawn: {e}"),
-        })?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-        let exited_at = Utc::now();
-
-        for line in stdout.lines() {
-            trace.push(TraceEvent::StdoutLine {
-                at: exited_at,
-                line: line.to_string(),
-            });
-        }
-        for line in stderr.lines() {
-            trace.push(TraceEvent::StderrLine {
-                at: exited_at,
-                line: line.to_string(),
-            });
-        }
-
-        let exit_code = output.status.code().unwrap_or(-1);
-        let duration_ms = started_instant.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
-        trace.push(TraceEvent::ProcessExited {
-            at: exited_at,
-            code: exit_code,
-            duration_ms,
-        });
-
-        Ok(RunHandle {
-            exit_code,
-            stdout,
-            stderr,
-            trace,
-        })
+        spawn_planned(&plan, program, args).await
     }
 }
 
 fn resolve_entrypoint(contract: &ExecutionContract) -> OsResult<(String, Vec<String>)> {
     match contract.entrypoint.kind {
         EntrypointKind::Command => {
-            let program = contract
-                .entrypoint
-                .command
-                .clone()
-                .ok_or_else(|| OsError::ContractInvalid {
-                    reason: "entrypoint.command is missing".into(),
-                })?;
+            let program =
+                contract
+                    .entrypoint
+                    .command
+                    .clone()
+                    .ok_or_else(|| OsError::ContractInvalid {
+                        reason: "entrypoint.command is missing".into(),
+                    })?;
             Ok((program, contract.entrypoint.args.clone()))
         }
+        other => Err(OsError::ContractInvalid {
+            reason: format!(
+                "CommandLauncher only handles kind=command (got {})",
+                other.label()
+            ),
+        }),
     }
-}
-
-fn resolve_working_directory(plan: &LaunchPlan) -> OsResult<PathBuf> {
-    let wd = &plan.contract.working_directory;
-    // Refuse absolute paths and any `..` segment: the working directory
-    // must stay inside the bundle.
-    let candidate = std::path::Path::new(wd);
-    if candidate.is_absolute() {
-        return Err(OsError::PolicyViolation {
-            reason: format!("working_directory must be relative to the bundle (got {wd:?})"),
-        });
-    }
-    if candidate
-        .components()
-        .any(|c| matches!(c, std::path::Component::ParentDir))
-    {
-        return Err(OsError::PolicyViolation {
-            reason: format!("working_directory may not contain '..' (got {wd:?})"),
-        });
-    }
-    Ok(plan.bundle_path.join(candidate))
 }
 
 #[cfg(test)]
@@ -165,6 +65,7 @@ mod tests {
         RuntimeKind, RuntimeSpec,
     };
     use crate::policy::Policy;
+    use crate::trace::TraceEvent;
     use std::collections::BTreeMap;
     use tempfile::TempDir;
 
@@ -174,6 +75,8 @@ mod tests {
                 kind: EntrypointKind::Command,
                 command: Some(command.into()),
                 args,
+                image: None,
+                module: None,
             },
             runtime: RuntimeSpec {
                 kind: RuntimeKind::Binary,
@@ -202,7 +105,10 @@ mod tests {
         let td = TempDir::new().unwrap();
         let c = contract("/bin/sh", vec!["-c".into(), "echo hello".into()]);
         let policy = Policy::from_contract(&c);
-        let handle = CommandLauncher::new().launch(plan(&td, c, policy)).await.unwrap();
+        let handle = CommandLauncher::new()
+            .launch(plan(&td, c, policy))
+            .await
+            .unwrap();
         assert_eq!(handle.exit_code, 0);
         assert!(handle.stdout.contains("hello"));
         assert!(handle
@@ -217,7 +123,10 @@ mod tests {
         let td = TempDir::new().unwrap();
         let c = contract("/bin/sh", vec!["-c".into(), "exit 7".into()]);
         let policy = Policy::from_contract(&c);
-        let handle = CommandLauncher::new().launch(plan(&td, c, policy)).await.unwrap();
+        let handle = CommandLauncher::new()
+            .launch(plan(&td, c, policy))
+            .await
+            .unwrap();
         assert_eq!(handle.exit_code, 7);
     }
 
@@ -234,7 +143,10 @@ mod tests {
             ],
         );
         let policy = Policy::from_contract(&c);
-        let handle = CommandLauncher::new().launch(plan(&td, c, policy)).await.unwrap();
+        let handle = CommandLauncher::new()
+            .launch(plan(&td, c, policy))
+            .await
+            .unwrap();
         std::env::remove_var("AGENOMIC_OS_TEST_SECRET");
         assert!(
             handle.stdout.contains("clean"),
@@ -246,15 +158,15 @@ mod tests {
     #[tokio::test]
     async fn declared_env_does_reach_child() {
         let td = TempDir::new().unwrap();
-        let mut c = contract(
-            "/bin/sh",
-            vec!["-c".into(), "echo \"${MY_TOKEN}\"".into()],
-        );
+        let mut c = contract("/bin/sh", vec!["-c".into(), "echo \"${MY_TOKEN}\"".into()]);
         c.env.required = vec!["MY_TOKEN".into()];
         let mut overrides = BTreeMap::new();
         overrides.insert("MY_TOKEN".into(), "ok".into());
         let policy = Policy::from_contract(&c).with_env_overrides(overrides);
-        let handle = CommandLauncher::new().launch(plan(&td, c, policy)).await.unwrap();
+        let handle = CommandLauncher::new()
+            .launch(plan(&td, c, policy))
+            .await
+            .unwrap();
         assert!(handle.stdout.contains("ok"));
     }
 

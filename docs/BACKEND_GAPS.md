@@ -41,12 +41,18 @@ it should fail closed with a diagnostic that references this file.
 
 ### Docker / wasm launchers
 
-- **Status**: not implemented.
+- **Status**: implemented (subprocess wrappers).
 - **Affected**: `agenomic-os::launcher`.
-- **Plan**: MVP supports `command` only. `docker` and `wasm` entrypoint
-  kinds are intentionally rejected at the schema level (`entrypoint.kind`
-  is restricted to `command` in spec 0.2). When demand justifies it, the
-  enum is widened in a follow-up spec revision.
+- **What ships**: `entrypoint.kind` now accepts `command`, `docker`, or
+  `wasm`. `DockerLauncher` invokes `docker run --rm -i --network=none|bridge
+  -e <NAME> <image> [args…]`; `WasmLauncher` invokes `wasmtime run [--dir
+  …] [-S http] <module> [args…]`. Both go through the same fail-closed env
+  filter and trace pipeline as `CommandLauncher`. The `docker` and `wasm`
+  CLIs must be on `PATH` (or overridden in tests); their absence surfaces as
+  `OsError::LauncherFailed` (exit 15).
+- **Still out of scope**: per-host network allow-listing (docker's
+  `--network` is coarse), gVisor/Firecracker isolation, and a native
+  embedded WASM runtime — covered by the sandbox-hardening track.
 
 ### Sandbox hardening (Linux namespaces, seccomp)
 
