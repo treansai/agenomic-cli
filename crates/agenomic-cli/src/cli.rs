@@ -345,22 +345,42 @@ pub struct GovernanceCommand {
     pub command: GovernanceSub,
 }
 
+/// Shared ATEP-emission flags for the governance subcommands. When both are
+/// set, the engine's results are sealed onto the store's signed `governance`
+/// stream as a hash-linked batch.
+#[derive(Debug, Parser, Clone)]
+pub struct AtepEmitArgs {
+    /// Emit the results as signed events on the ATEP `governance` stream at
+    /// this store directory (must already be `agenomic atep init`-ialized).
+    #[arg(long)]
+    pub atep: Option<PathBuf>,
+    /// ed25519 signing key for the emitted events. Required with `--atep`.
+    #[arg(long)]
+    pub signing_key: Option<PathBuf>,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum GovernanceSub {
     /// Cluster a JSONL stream of flagged traces (Mode 1: failure clustering).
     Cluster {
         /// Path to the JSONL traces file, or `-` for stdin.
         traces: PathBuf,
+        #[command(flatten)]
+        emit: AtepEmitArgs,
     },
     /// Generate textual remediation proposals from clusters (Mode 2: hypothesis generation).
     Hypothesize {
         /// Path to a clusters JSON file (output of `governance cluster`), or `-` for stdin.
         clusters: PathBuf,
+        #[command(flatten)]
+        emit: AtepEmitArgs,
     },
     /// Critique a single proposal (Mode 3: adversarial reviewer). Exits 16 on Block.
     Critique {
         /// Path to a proposal JSON file, or `-` for stdin.
         proposal: PathBuf,
+        #[command(flatten)]
+        emit: AtepEmitArgs,
     },
     /// Run the full Diagnostic → Hypothesis → Adversarial chain end-to-end.
     Audit {
@@ -369,6 +389,8 @@ pub enum GovernanceSub {
         /// Exit 16 when at least one proposal lands at `Verdict::Block`.
         #[arg(long)]
         fail_on_block: bool,
+        #[command(flatten)]
+        emit: AtepEmitArgs,
     },
 }
 

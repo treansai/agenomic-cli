@@ -8,6 +8,16 @@ All notable changes to `agenomic-cli` are documented here. Format follows
 
 ### Added
 
+- **Signed `governance` ATEP stream.** The `governance` stream — defined since
+  the ATEP MVP but never written — now carries a tamper-evident audit trail.
+  All four `agenomic governance` subcommands accept `--atep <store>
+  --signing-key <key>`; each engine result is sealed as a `governance.*` event
+  (`cluster_detected` / `proposal_generated` / `critique_recorded` /
+  `audit_completed`), chained onto the stream head (parents = prior causal
+  hash) with continued `stream_seq`, and verifiable via `agenomic atep verify`.
+  Pure descriptor builders live in `agenomic_governance::events`; the CLI does
+  the sealing. Also fixes a latent `AtepStore::append_batch` bug (write-only
+  segment handle failed the read-back CRC) and adds `AtepStore::stream_head`.
 - **Governance agents (Point 4 / BACKEND_GAPS Gap 5).** New `agenomic-governance`
   crate plus `agenomic governance {cluster,hypothesize,critique,audit}`. Three
   pure, deterministic engines over flagged production traces:

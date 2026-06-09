@@ -124,6 +124,21 @@ clusters + proposals + critiques in one document. With `--fail-on-block`, exits
 16 when any proposal lands at `Verdict::Block`. Useful as a single CI step or
 as the input to a downstream human-approval gate (Mode 4).
 
+#### Signed audit trail: `--atep <STORE> --signing-key <KEY>`
+
+All four governance subcommands accept `--atep <STORE>` and `--signing-key
+<KEY>` (used together). When set, the engine's results are sealed onto the
+store's ATEP `governance` stream as a hash-linked batch of signed events:
+`governance.cluster_detected`, `governance.proposal_generated`,
+`governance.critique_recorded`, and — for `audit` — a closing
+`governance.audit_completed` summary. Each batch chains onto the stream's
+existing head (parents = prior event's causal hash) and continues `stream_seq`,
+so repeated runs build one tamper-evident trail. The store must already be
+`agenomic atep init`-ialized for the same agent; verify the trail with
+`agenomic atep verify <STORE> --public-key <KEY>.pub`. The result body gains an
+`atep` object reporting `events_appended`, `stream_seq_start`, `signer_key_id`,
+and the new `store_merkle_root`.
+
 ### `agenomic policy eval [BUNDLE] [--input FILE]`
 
 Evaluate the bundle's `policies/*.rego` (OPA/Rego) against a launch context and

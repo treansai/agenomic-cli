@@ -920,17 +920,23 @@ pub fn cmd_governance(
     _no_color: bool,
 ) -> CliResult<ExitCode> {
     use agenomic_governance::{
-        audit, io::read_traces, AdversarialReviewer, DiagnosticAgent, HypothesisAgent, Verdict,
+        audit, cluster_descriptor, critique_descriptor, io::read_traces, proposal_descriptor,
+        AdversarialReviewer, DiagnosticAgent, HypothesisAgent, Verdict,
     };
 
     match &args.command {
-        GovernanceSub::Cluster { traces } => {
+        GovernanceSub::Cluster { traces, emit } => {
             let loaded = read_traces(traces).map_err(CliError::from)?;
             let clusters = DiagnosticAgent::new().cluster(&loaded);
-            print_value(&serde_json::json!({ "clusters": clusters }), format)?;
+            let descriptors: Vec<_> = clusters.iter().map(cluster_descriptor).collect();
+            let atep = emit_governance_events(emit, &descriptors)?;
+            print_value(
+                &with_atep(serde_json::json!({ "clusters": clusters }), atep),
+                format,
+            )?;
             Ok(ExitCode::Success)
         }
-        GovernanceSub::Hypothesize { clusters } => {
+        GovernanceSub::Hypothesize { clusters, emit } => {
             let raw = read_governance_input(clusters)?;
             // Accept either a `{clusters: [...]}` envelope or a bare `[...]`.
             let parsed: serde_json::Value = serde_json::from_str(&raw)
@@ -939,16 +945,25 @@ pub fn cmd_governance(
             let clusters: Vec<agenomic_governance::Cluster> = serde_json::from_value(inner)
                 .map_err(|e| CliError::Schema(format!("clusters JSON: {e}")))?;
             let proposals = HypothesisAgent::new().hypothesize_many(&clusters);
-            print_value(&serde_json::json!({ "proposals": proposals }), format)?;
+            let descriptors: Vec<_> = proposals.iter().map(proposal_descriptor).collect();
+            let atep = emit_governance_events(emit, &descriptors)?;
+            print_value(
+                &with_atep(serde_json::json!({ "proposals": proposals }), atep),
+                format,
+            )?;
             Ok(ExitCode::Success)
         }
-        GovernanceSub::Critique { proposal } => {
+        GovernanceSub::Critique { proposal, emit } => {
             let raw = read_governance_input(proposal)?;
             let p: agenomic_governance::Proposal = serde_json::from_str(&raw)
                 .map_err(|e| CliError::Schema(format!("proposal JSON: {e}")))?;
             let critique = AdversarialReviewer::new().critique(&p);
             let blocked = matches!(critique.verdict, Verdict::Block);
-            print_value(&serde_json::json!({ "critique": critique }), format)?;
+            let atep = emit_governance_events(emit, &[critique_descriptor(&critique)])?;
+            print_value(
+                &with_atep(serde_json::json!({ "critique": critique }), atep),
+                format,
+            )?;
             if blocked {
                 Ok(ExitCode::OsPolicyViolation)
             } else {
@@ -958,17 +973,23 @@ pub fn cmd_governance(
         GovernanceSub::Audit {
             traces,
             fail_on_block,
+            emit,
         } => {
             let loaded = read_traces(traces).map_err(CliError::from)?;
             let report = audit(&loaded);
             let blocked = report.has_blocking_findings();
+            let descriptors = agenomic_governance::audit_descriptors(&report);
+            let atep = emit_governance_events(emit, &descriptors)?;
             print_value(
-                &serde_json::json!({
-                    "clusters": report.clusters,
-                    "proposals": report.proposals,
-                    "critiques": report.critiques,
-                    "blocked": blocked,
-                }),
+                &with_atep(
+                    serde_json::json!({
+                        "clusters": report.clusters,
+                        "proposals": report.proposals,
+                        "critiques": report.critiques,
+                        "blocked": blocked,
+                    }),
+                    atep,
+                ),
                 format,
             )?;
             if *fail_on_block && blocked {
@@ -978,6 +999,92 @@ pub fn cmd_governance(
             }
         }
     }
+}
+
+/// Merge an optional ATEP-emission summary into a governance result body
+/// under the `atep` key (omitted when no emission happened).
+fn with_atep(mut body: serde_json::Value, atep: Option<serde_json::Value>) -> serde_json::Value {
+    if let (Some(obj), Some(summary)) = (body.as_object_mut(), atep) {
+        obj.insert("atep".into(), summary);
+    }
+    body
+}
+
+/// Seal `descriptors` onto the ATEP `governance` stream of the store named by
+/// `emit`, chaining each event onto the previous one (parents = prior causal
+/// hash) and continuing the stream's `stream_seq`. Returns `None` when no
+/// store was requested, or a JSON summary when events were appended.
+///
+/// This is the bridge that finally gives the (previously empty) `governance`
+/// stream a signed, hash-linked audit trail: every diagnostic / hypothesis /
+/// adversarial result becomes a sealed event.
+fn emit_governance_events(
+    emit: &AtepEmitArgs,
+    descriptors: &[agenomic_governance::GovernanceEventDescriptor],
+) -> CliResult<Option<serde_json::Value>> {
+    use agenomic_atep::{
+        load_signing_key, short_key_id, AtepEvent, AtepManifest, AtepStore, EventHeader,
+        EventPayload, Hlc, StreamId,
+    };
+
+    let (store_dir, key_path) = match (&emit.atep, &emit.signing_key) {
+        (None, None) => return Ok(None),
+        (Some(_), None) | (None, Some(_)) => {
+            return Err(CliError::Internal(
+                "--atep and --signing-key must be provided together".into(),
+            ))
+        }
+        (Some(d), Some(k)) => (d, k),
+    };
+
+    // The store dictates the agent_id; events must carry the same one.
+    let manifest_path = store_dir.join("manifest.json");
+    let manifest_bytes = std::fs::read(&manifest_path).map_err(|e| io_at(&manifest_path, e))?;
+    let manifest: AtepManifest = serde_json::from_slice(&manifest_bytes)
+        .map_err(|e| CliError::Internal(format!("atep manifest: {e}")))?;
+    let mut store = AtepStore::open_or_init(store_dir, &manifest.agent_id)?;
+    let sk = load_signing_key(key_path)?;
+    let key_id = short_key_id(&sk.verifying_key());
+
+    // Chain onto the existing governance head so the trail is tamper-evident.
+    let head = store.stream_head(StreamId::Governance)?;
+    let seq_start = head.as_ref().map(|(s, _)| s + 1).unwrap_or(0);
+    let mut seq = seq_start;
+    let mut parent = head.map(|(_, h)| h);
+    let now = chrono::Utc::now().timestamp_millis() as u64;
+
+    let mut events = Vec::with_capacity(descriptors.len());
+    for (i, d) in descriptors.iter().enumerate() {
+        let header = EventHeader {
+            schema_version: 1,
+            event_id: ulid::Ulid::new().to_bytes(),
+            agent_id: manifest.agent_id.clone(),
+            stream: StreamId::Governance,
+            stream_seq: seq,
+            // Logical counter = batch index keeps intra-batch order stable even
+            // within one millisecond.
+            clock: Hlc::new(now, i as u32, 1),
+            parents: parent.into_iter().collect(),
+            event_type: d.event_type.clone(),
+            payload_schema_uri: d.payload_schema_uri(),
+        };
+        let payload = EventPayload(json_to_cbor(d.payload.clone()));
+        let event = AtepEvent::seal(header, payload, &sk, key_id.clone())?;
+        parent = Some(event.causal_hash);
+        seq += 1;
+        events.push(event);
+    }
+    store.append_batch(StreamId::Governance, &events)?;
+
+    Ok(Some(serde_json::json!({
+        "store": store_dir,
+        "agent_id": manifest.agent_id,
+        "stream": "governance",
+        "events_appended": events.len(),
+        "stream_seq_start": seq_start,
+        "signer_key_id": key_id,
+        "store_merkle_root": hex::encode(store.store_merkle_root()),
+    })))
 }
 
 /// Read a JSON file path, or stdin when path == "-". Used by the governance
