@@ -92,12 +92,17 @@ it should fail closed with a diagnostic that references this file.
   and returns `pass` / `warn` / `block` (block → exit 16). All three engines
   are pure functions — same input → byte-identical output — so they chain
   cleanly into a downstream attestation.
+- **Audit trail (resolved)**: the `governance` ATEP stream — previously
+  defined but never written — now carries a signed, hash-linked trail.
+  `agenomic governance {cluster,hypothesize,critique,audit} --atep <store>
+  --signing-key <key>` seals each engine result as a `governance.*` event,
+  chained onto the stream head and verifiable with `agenomic atep verify`.
 - **Gap**: Mode 4 (human approval gate) and Mode 5 (shadow / canary
   deployment at 0/5/25/100% traffic) belong above this layer; the CLI emits
-  the artifacts a gate / replay-runner consumes but does not yet ship the
-  gate itself. The cloud-side `AdversarialReview` entity from
-  `agenomic-web/BACKEND_GAPS.md` Gap 5 is also still open — these engines
-  are the local computation side of that workflow.
+  the artifacts (and now the signed audit trail) a gate / replay-runner
+  consumes but does not yet ship the gate itself. The cloud-side
+  `AdversarialReview` entity from `agenomic-web/BACKEND_GAPS.md` Gap 5 is also
+  still open — these engines are the local computation side of that workflow.
 
 ### Replay distribution
 

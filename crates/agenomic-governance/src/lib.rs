@@ -35,6 +35,7 @@
 mod adversarial;
 mod diagnostic;
 mod error;
+pub mod events;
 mod hypothesis;
 pub mod io;
 mod types;
@@ -42,6 +43,10 @@ mod types;
 pub use adversarial::AdversarialReviewer;
 pub use diagnostic::DiagnosticAgent;
 pub use error::{GovernanceError, GovernanceResult};
+pub use events::{
+    audit_descriptors, audit_summary_descriptor, cluster_descriptor, critique_descriptor,
+    proposal_descriptor, GovernanceEventDescriptor,
+};
 pub use hypothesis::HypothesisAgent;
 pub use types::{
     Cluster, Critique, FailureSignal, Finding, FlaggedTrace, Proposal, ProposalAction, Severity,
