@@ -52,8 +52,10 @@ pub enum GapSeverity {
 /// still returns a proposal, with the unmapped runtime recorded as a
 /// `Required` gap.
 pub fn propose(path: &Path) -> OsResult<PortProposal> {
-    let detected = detect_run(path, &DetectOptions::default())
-        .map_err(|e| OsError::PortFailed { reason: e.to_string() })?;
+    let detected =
+        detect_run(path, &DetectOptions::default()).map_err(|e| OsError::PortFailed {
+            reason: e.to_string(),
+        })?;
 
     let (runtime_kind, runtime_gap) = map_runtime_kind(&detected);
     let (command, args, entrypoint_gaps) = derive_entrypoint(&detected, runtime_kind);
@@ -137,7 +139,9 @@ fn derive_entrypoint(
         (Some(RuntimeKind::Python), None) => {
             gaps.push(Gap {
                 field: "execution.entrypoint.args".into(),
-                reason: "no Python entrypoint detected; defaulting to `python -m <package>` placeholder".into(),
+                reason:
+                    "no Python entrypoint detected; defaulting to `python -m <package>` placeholder"
+                        .into(),
                 severity: GapSeverity::Required,
             });
             ("python".into(), vec!["-m".into(), "<package>".into()])
@@ -175,11 +179,7 @@ fn python_entrypoint(ep: &str) -> (String, Vec<String>) {
     }
 }
 
-fn render_execution_yaml(
-    runtime: Option<RuntimeKind>,
-    command: &str,
-    args: &[String],
-) -> String {
+fn render_execution_yaml(runtime: Option<RuntimeKind>, command: &str, args: &[String]) -> String {
     let mut s = String::new();
     let _ = writeln!(s, "execution:");
     let _ = writeln!(s, "  entrypoint:");
@@ -298,9 +298,7 @@ edition = "2021"
             .expect("runtime gap recorded");
         assert_eq!(required_gap.severity, GapSeverity::Required);
         assert!(required_gap.reason.contains("go"));
-        assert!(p
-            .proposed_execution_yaml
-            .contains("kind: binary  # REVIEW"));
+        assert!(p.proposed_execution_yaml.contains("kind: binary  # REVIEW"));
     }
 
     #[test]

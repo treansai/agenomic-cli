@@ -242,7 +242,10 @@ mod tests {
     fn genome_execution_requires_entrypoint_and_runtime() {
         let v = validator(SchemaKind::Genome).unwrap();
         let mut value = minimal_genome_v2_with_execution();
-        value["execution"].as_object_mut().unwrap().remove("entrypoint");
+        value["execution"]
+            .as_object_mut()
+            .unwrap()
+            .remove("entrypoint");
         assert!(
             v.validate(&value).is_err(),
             "execution missing entrypoint must be rejected"

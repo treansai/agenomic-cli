@@ -40,6 +40,23 @@ impl SeverityArg {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum RuntimeAdapterArg {
+    Plain,
+    Langgraph,
+    Crewai,
+}
+
+impl RuntimeAdapterArg {
+    pub fn to_runtime_adapter(self) -> agenomic_bundle::RuntimeAdapter {
+        match self {
+            Self::Plain => agenomic_bundle::RuntimeAdapter::Plain,
+            Self::Langgraph => agenomic_bundle::RuntimeAdapter::Langgraph,
+            Self::Crewai => agenomic_bundle::RuntimeAdapter::Crewai,
+        }
+    }
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "agenomic", version, about = "Agenomic CLI", long_about = None)]
 #[command(propagate_version = true)]
@@ -97,7 +114,7 @@ pub enum Commands {
     Cloud(CloudCommand),
     /// Bucket selection for cloud pushes.
     Bucket(BucketCommand),
-    /// Bundle utilities (extract, manifest).
+    /// Bundle utilities (extract, manifest, runtime compilation).
     Bundle(BundleCommand),
     /// Run system diagnostics.
     Doctor,
@@ -482,5 +499,16 @@ pub enum BundleSub {
     },
     Manifest {
         target: PathBuf,
+    },
+    CompileRuntime {
+        /// Bundle directory to compile. Archives are not supported yet.
+        target: PathBuf,
+        /// Adapter(s) to emit. Empty = `plain` plus any framework-specific
+        /// adapter implied by the genome (`langgraph` / `crewai`).
+        #[arg(long = "adapter", value_enum)]
+        adapters: Vec<RuntimeAdapterArg>,
+        /// Override the destination directory. Defaults to `<target>/runtime`.
+        #[arg(long)]
+        output_dir: Option<PathBuf>,
     },
 }

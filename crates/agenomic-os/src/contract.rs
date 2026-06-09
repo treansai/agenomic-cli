@@ -103,20 +103,15 @@ impl ExecutionContract {
     /// Returns [`OsError::ContractMissing`] when no block is present, and
     /// [`OsError::ContractInvalid`] when present but malformed.
     pub fn from_genome_yaml(yaml: &str) -> OsResult<Self> {
-        let v: serde_yaml::Value = serde_yaml::from_str(yaml).map_err(|e| {
-            OsError::ContractInvalid {
+        let v: serde_yaml::Value =
+            serde_yaml::from_str(yaml).map_err(|e| OsError::ContractInvalid {
                 reason: format!("genome.yaml is not valid YAML: {e}"),
-            }
-        })?;
-        let exec = v
-            .get("execution")
-            .ok_or(OsError::ContractMissing)?
-            .clone();
-        let contract: ExecutionContract = serde_yaml::from_value(exec).map_err(|e| {
-            OsError::ContractInvalid {
+            })?;
+        let exec = v.get("execution").ok_or(OsError::ContractMissing)?.clone();
+        let contract: ExecutionContract =
+            serde_yaml::from_value(exec).map_err(|e| OsError::ContractInvalid {
                 reason: format!("execution block: {e}"),
-            }
-        })?;
+            })?;
         contract.validate()?;
         Ok(contract)
     }

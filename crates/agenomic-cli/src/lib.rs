@@ -59,7 +59,7 @@ pub fn run() -> i32 {
         Commands::Atep(args) => commands::cmd_atep(args),
         Commands::Cloud(args) => commands::cmd_cloud(args, cli.profile.as_deref()),
         Commands::Bucket(args) => commands::cmd_bucket(args, cli.profile.as_deref()),
-        Commands::Bundle(args) => commands::cmd_bundle(args),
+        Commands::Bundle(args) => commands::cmd_bundle(args, format, no_color),
         Commands::Doctor => commands::cmd_doctor(),
         Commands::Completions { shell } => commands::cmd_completions(*shell),
     };

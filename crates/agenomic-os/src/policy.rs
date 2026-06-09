@@ -163,7 +163,10 @@ mod tests {
                 }
             })
             .unwrap();
-        assert_eq!(env.get("OPENAI_API_KEY").map(String::as_str), Some("sk-test"));
+        assert_eq!(
+            env.get("OPENAI_API_KEY").map(String::as_str),
+            Some("sk-test")
+        );
     }
 
     #[test]

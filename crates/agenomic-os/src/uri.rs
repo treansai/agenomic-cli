@@ -191,9 +191,7 @@ fn validate_segment(seg: &str, label: &str) -> OsResult<()> {
         return Err(invalid(format!("<{label}> may not contain '/'")));
     }
     if seg.starts_with('-') || seg.ends_with('-') {
-        return Err(invalid(format!(
-            "<{label}> may not start or end with '-'"
-        )));
+        return Err(invalid(format!("<{label}> may not start or end with '-'")));
     }
     if !seg
         .chars()

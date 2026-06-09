@@ -105,7 +105,10 @@ impl Launcher for CommandLauncher {
         }
 
         let exit_code = output.status.code().unwrap_or(-1);
-        let duration_ms = started_instant.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+        let duration_ms = started_instant
+            .elapsed()
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64;
         trace.push(TraceEvent::ProcessExited {
             at: exited_at,
             code: exit_code,
@@ -124,13 +127,14 @@ impl Launcher for CommandLauncher {
 fn resolve_entrypoint(contract: &ExecutionContract) -> OsResult<(String, Vec<String>)> {
     match contract.entrypoint.kind {
         EntrypointKind::Command => {
-            let program = contract
-                .entrypoint
-                .command
-                .clone()
-                .ok_or_else(|| OsError::ContractInvalid {
-                    reason: "entrypoint.command is missing".into(),
-                })?;
+            let program =
+                contract
+                    .entrypoint
+                    .command
+                    .clone()
+                    .ok_or_else(|| OsError::ContractInvalid {
+                        reason: "entrypoint.command is missing".into(),
+                    })?;
             Ok((program, contract.entrypoint.args.clone()))
         }
     }
@@ -202,7 +206,10 @@ mod tests {
         let td = TempDir::new().unwrap();
         let c = contract("/bin/sh", vec!["-c".into(), "echo hello".into()]);
         let policy = Policy::from_contract(&c);
-        let handle = CommandLauncher::new().launch(plan(&td, c, policy)).await.unwrap();
+        let handle = CommandLauncher::new()
+            .launch(plan(&td, c, policy))
+            .await
+            .unwrap();
         assert_eq!(handle.exit_code, 0);
         assert!(handle.stdout.contains("hello"));
         assert!(handle
@@ -217,7 +224,10 @@ mod tests {
         let td = TempDir::new().unwrap();
         let c = contract("/bin/sh", vec!["-c".into(), "exit 7".into()]);
         let policy = Policy::from_contract(&c);
-        let handle = CommandLauncher::new().launch(plan(&td, c, policy)).await.unwrap();
+        let handle = CommandLauncher::new()
+            .launch(plan(&td, c, policy))
+            .await
+            .unwrap();
         assert_eq!(handle.exit_code, 7);
     }
 
@@ -234,7 +244,10 @@ mod tests {
             ],
         );
         let policy = Policy::from_contract(&c);
-        let handle = CommandLauncher::new().launch(plan(&td, c, policy)).await.unwrap();
+        let handle = CommandLauncher::new()
+            .launch(plan(&td, c, policy))
+            .await
+            .unwrap();
         std::env::remove_var("AGENOMIC_OS_TEST_SECRET");
         assert!(
             handle.stdout.contains("clean"),
@@ -246,15 +259,15 @@ mod tests {
     #[tokio::test]
     async fn declared_env_does_reach_child() {
         let td = TempDir::new().unwrap();
-        let mut c = contract(
-            "/bin/sh",
-            vec!["-c".into(), "echo \"${MY_TOKEN}\"".into()],
-        );
+        let mut c = contract("/bin/sh", vec!["-c".into(), "echo \"${MY_TOKEN}\"".into()]);
         c.env.required = vec!["MY_TOKEN".into()];
         let mut overrides = BTreeMap::new();
         overrides.insert("MY_TOKEN".into(), "ok".into());
         let policy = Policy::from_contract(&c).with_env_overrides(overrides);
-        let handle = CommandLauncher::new().launch(plan(&td, c, policy)).await.unwrap();
+        let handle = CommandLauncher::new()
+            .launch(plan(&td, c, policy))
+            .await
+            .unwrap();
         assert!(handle.stdout.contains("ok"));
     }
 
