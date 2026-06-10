@@ -200,9 +200,11 @@ Print the manifest.
 
 Reconstruct an `AgentState` projection.
 
-### `agenomic cloud login --endpoint URL --api-key KEY`
+### `agenomic cloud login [--endpoint URL] --api-key KEY`
 
-Persist a Cloud profile (mode 0600 credentials file).
+Persist a Cloud profile (mode 0600 credentials file). `--endpoint`
+defaults to `https://app.agenomic.io`, so it only needs to be set for
+self-hosted or staging deployments.
 
 ### `agenomic cloud whoami`
 

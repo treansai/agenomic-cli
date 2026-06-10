@@ -14,10 +14,14 @@ Use Agenomic Cloud when you need:
 ## Login
 
 ```bash
-agenomic cloud login --endpoint https://api.agenomic.io --api-key <KEY>
+agenomic cloud login --api-key <KEY>
 agenomic bucket use --name default
 agenomic cloud whoami
 ```
+
+The endpoint defaults to the hosted cloud at `https://app.agenomic.io`;
+pass `--endpoint <URL>` (or set `AGENOMIC_ENDPOINT`) only to target a
+different deployment, e.g. a self-hosted or staging gateway.
 
 Credentials are stored at `~/.config/agenomic/credentials.toml` with mode
 0600 on Unix.

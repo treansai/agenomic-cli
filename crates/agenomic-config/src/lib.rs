@@ -16,6 +16,11 @@ const APP_QUALIFIER: &str = "dev";
 const APP_ORG: &str = "agenomic";
 const APP_NAME: &str = "agenomic";
 
+/// Default Agenomic Cloud endpoint, used when neither `AGENOMIC_ENDPOINT`
+/// nor a profile endpoint is configured. The web origin rewrites `/v1/*`
+/// to the API gateway, so it serves CLI traffic too.
+pub const DEFAULT_ENDPOINT: &str = "https://app.agenomic.io";
+
 /// Operating mode of a profile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

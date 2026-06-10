@@ -137,3 +137,26 @@ policies: []
     assert!(bundle.join("runtime/plain.compiled").is_file());
     assert!(bundle.join("runtime/langgraph.compiled").is_file());
 }
+
+#[test]
+fn cloud_login_defaults_to_hosted_endpoint() {
+    let d = tempdir().unwrap();
+
+    // No --endpoint: the profile should be saved against the hosted cloud.
+    let s = agenomic()
+        .env("HOME", d.path())
+        .env("XDG_CONFIG_HOME", d.path().join("xdg-config"))
+        .args(["cloud", "login", "--api-key", "k"])
+        .output()
+        .unwrap();
+    assert!(
+        s.status.success(),
+        "login failed: {}",
+        String::from_utf8_lossy(&s.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&s.stdout);
+    assert!(
+        predicates::str::contains("logged in to https://app.agenomic.io").eval(&stdout),
+        "unexpected login output: {stdout}"
+    );
+}
