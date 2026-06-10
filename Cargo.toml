@@ -29,32 +29,32 @@ members = [
 edition = "2021"
 license = "Apache-2.0"
 rust-version = "1.85"
-version = "0.1.1-alpha"
+version = "0.1.1-rc.0"
 homepage = "https://agenomic.io"
 repository = "https://github.com/treansai/agenomic-cli"
 
 [workspace.dependencies]
 # Internal
-agenomic-core = { path = "crates/agenomic-core", version = "0.1.1-alpha" }
-agenomic-spec = { path = "crates/agenomic-spec", version = "0.1.1-alpha" }
-agenomic-fs = { path = "crates/agenomic-fs", version = "0.1.1-alpha" }
-agenomic-hash = { path = "crates/agenomic-hash", version = "0.1.1-alpha" }
-agenomic-atep = { path = "crates/agenomic-atep", version = "0.1.1-alpha" }
-agenomic-bundle = { path = "crates/agenomic-bundle", version = "0.1.1-alpha" }
-agenomic-validate = { path = "crates/agenomic-validate", version = "0.1.1-alpha" }
-agenomic-diff = { path = "crates/agenomic-diff", version = "0.1.1-alpha" }
-agenomic-contract = { path = "crates/agenomic-contract", version = "0.1.1-alpha" }
-agenomic-replay-local = { path = "crates/agenomic-replay-local", version = "0.1.1-alpha" }
-agenomic-attestation = { path = "crates/agenomic-attestation", version = "0.1.1-alpha" }
-agenomic-report = { path = "crates/agenomic-report", version = "0.1.1-alpha" }
-agenomic-cloud-client = { path = "crates/agenomic-cloud-client", version = "0.1.1-alpha" }
-agenomic-config = { path = "crates/agenomic-config", version = "0.1.1-alpha" }
-agenomic-diagnostics = { path = "crates/agenomic-diagnostics", version = "0.1.1-alpha" }
-agenomic-detect = { path = "crates/agenomic-detect", version = "0.1.1-alpha" }
-agenomic-os = { path = "crates/agenomic-os", version = "0.1.1-alpha" }
-agenomic-compile = { path = "crates/agenomic-compile", version = "0.1.1-alpha" }
-agenomic-policy = { path = "crates/agenomic-policy", version = "0.1.1-alpha" }
-agenomic-governance = { path = "crates/agenomic-governance", version = "0.1.1-alpha" }
+agenomic-core = { path = "crates/agenomic-core", version = "0.1.1-rc.0" }
+agenomic-spec = { path = "crates/agenomic-spec", version = "0.1.1-rc.0" }
+agenomic-fs = { path = "crates/agenomic-fs", version = "0.1.1-rc.0" }
+agenomic-hash = { path = "crates/agenomic-hash", version = "0.1.1-rc.0" }
+agenomic-atep = { path = "crates/agenomic-atep", version = "0.1.1-rc.0" }
+agenomic-bundle = { path = "crates/agenomic-bundle", version = "0.1.1-rc.0" }
+agenomic-validate = { path = "crates/agenomic-validate", version = "0.1.1-rc.0" }
+agenomic-diff = { path = "crates/agenomic-diff", version = "0.1.1-rc.0" }
+agenomic-contract = { path = "crates/agenomic-contract", version = "0.1.1-rc.0" }
+agenomic-replay-local = { path = "crates/agenomic-replay-local", version = "0.1.1-rc.0" }
+agenomic-attestation = { path = "crates/agenomic-attestation", version = "0.1.1-rc.0" }
+agenomic-report = { path = "crates/agenomic-report", version = "0.1.1-rc.0" }
+agenomic-cloud-client = { path = "crates/agenomic-cloud-client", version = "0.1.1-rc.0" }
+agenomic-config = { path = "crates/agenomic-config", version = "0.1.1-rc.0" }
+agenomic-diagnostics = { path = "crates/agenomic-diagnostics", version = "0.1.1-rc.0" }
+agenomic-detect = { path = "crates/agenomic-detect", version = "0.1.1-rc.0" }
+agenomic-os = { path = "crates/agenomic-os", version = "0.1.1-rc.0" }
+agenomic-compile = { path = "crates/agenomic-compile", version = "0.1.1-rc.0" }
+agenomic-policy = { path = "crates/agenomic-policy", version = "0.1.1-rc.0" }
+agenomic-governance = { path = "crates/agenomic-governance", version = "0.1.1-rc.0" }
 
 # CLI / parsing
 clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
