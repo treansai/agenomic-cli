@@ -50,10 +50,27 @@ pub fn parse_genome(text: &str) -> CliResult<DetectedGenome> {
     g.entrypoint = nested_str(&v, &["runtime", "entrypoint"]).map(str::to_string);
     g.memory = parse_memory(&v);
     g.tools = parse_tools(&v)?;
-    g.skills = str_seq(&v, &["skills"]);
+    g.skills = parse_skills(&v);
     g.knowledge = str_seq(&v, &["knowledge"]);
     g.policies = parse_policies(&v);
     Ok(g)
+}
+
+/// Skills are emitted as `{ name: … }` objects (schema requirement) but the
+/// legacy form was a plain string list; accept both.
+fn parse_skills(value: &serde_yaml::Value) -> Vec<String> {
+    let Some(seq) = value.get("skills").and_then(|x| x.as_sequence()) else {
+        return Vec::new();
+    };
+    seq.iter()
+        .filter_map(|item| {
+            item.as_str().map(str::to_string).or_else(|| {
+                item.get("name")
+                    .and_then(|n| n.as_str())
+                    .map(str::to_string)
+            })
+        })
+        .collect()
 }
 
 fn nested_str<'a>(value: &'a serde_yaml::Value, keys: &[&str]) -> Option<&'a str> {

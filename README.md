@@ -23,6 +23,9 @@ cargo install --path crates/agenomic-cli
 ## Quickstart
 
 ```bash
+agenomic init .                  # detect everything: genome + workflows + system + env vars
+agenomic init . --agent          # …then fill the semantic fields with the agent's own LLM
+agenomic enrich .                # run the LLM pass alone (ANTHROPIC_API_KEY / OPENAI_API_KEY)
 agenomic validate ./my-agent --level strict
 agenomic bundle compile-runtime ./my-agent
 agenomic build ./my-agent --output dist/my-agent.bundle.tar.zst
@@ -37,6 +40,20 @@ agenomic attest dist/my-agent.bundle.tar.zst --output attestation.json
 metadata + execution plans for `plain`, `langgraph`, and `crewai`
 adapters so a bundle can carry portable runtime targets before build /
 registry upload.
+
+`agenomic init` / `update` go beyond the genome (spec 0.2, RFC 0009):
+they recover **workflow topology** from LangGraph builders (`add_node`,
+`add_edge`, `add_conditional_edges`) and Temporal workflows/signals,
+synthesize a **`system.yaml`** when several graphs hand off to each
+other (member roles, conditional edges, signals, engine hint), and
+detect **environment variables** (required vs optional) across
+Python/Node/Rust sources and `.env.example`. Everything is offline,
+deterministic, and never overwrites a hand-edited manifest. The fields
+static analysis cannot know — domain, criticality, description, skills,
+behavior-contract rules — are filled by `agenomic enrich` (or
+`init|update --agent`), which calls the agent's own declared model
+provider and only ever replaces placeholders, schema-validating every
+write.
 
 ## Documentation
 

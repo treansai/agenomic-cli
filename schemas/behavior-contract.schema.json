@@ -3,41 +3,84 @@
   "$id": "https://agenomic.dev/schemas/v0.1/behavior-contract.schema.json",
   "title": "Agenomic Behavior Contract",
   "type": "object",
-  "required": ["spec_version", "contract"],
+  "required": [
+    "spec_version",
+    "contract"
+  ],
   "properties": {
-    "spec_version": { "type": "string", "enum": ["0.1"] },
+    "spec_version": {
+      "type": "string",
+      "enum": [
+        "0.1",
+        "0.2"
+      ]
+    },
     "contract": {
       "type": "object",
-      "required": ["id", "rules"],
+      "required": [
+        "id",
+        "rules"
+      ],
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "description": { "type": "string" },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
         "rules": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["id", "type", "severity"],
+            "required": [
+              "id",
+              "type",
+              "severity"
+            ],
             "properties": {
-              "id": { "type": "string", "minLength": 1 },
-              "type": { "type": "string", "minLength": 1 },
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "type": {
+                "type": "string",
+                "minLength": 1
+              },
               "severity": {
                 "type": "string",
-                "enum": ["info", "low", "medium", "high", "critical"]
+                "enum": [
+                  "info",
+                  "low",
+                  "medium",
+                  "high",
+                  "critical"
+                ]
               },
-              "description": { "type": "string" },
+              "description": {
+                "type": "string"
+              },
               "required_fields": {
                 "type": "array",
-                "items": { "type": "string" }
+                "items": {
+                  "type": "string"
+                }
               },
               "forbidden_tools": {
                 "type": "array",
-                "items": { "type": "string" }
+                "items": {
+                  "type": "string"
+                }
               },
               "sensitive_tools": {
                 "type": "array",
-                "items": { "type": "string" }
+                "items": {
+                  "type": "string"
+                }
               },
-              "output_format": { "type": "string" }
+              "output_format": {
+                "type": "string"
+              }
             },
             "additionalProperties": true
           }

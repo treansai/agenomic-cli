@@ -158,6 +158,16 @@ pub fn validate_bundle(dir: &Path, level: ValidationLevel) -> CliResult<Validati
 
     validate_workflow_files(dir, &mut report)?;
 
+    // An agent bundle may also carry a system manifest (e.g. a monorepo whose
+    // genome describes the platform and whose system.yaml describes the
+    // member topology, RFC 0009).
+    if let Some(t) = read_if_exists(&dir.join("system.yaml"))? {
+        run_schema(SchemaKind::System, &t, "system.yaml", &mut report)?;
+        if let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(&t) {
+            system_semantic_checks(&doc, Some(dir), &mut report);
+        }
+    }
+
     cross_reference(&genome_text, &lock_text, &contract_text, &mut report);
 
     if matches!(level, ValidationLevel::Strict) {
