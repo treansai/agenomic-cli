@@ -1665,14 +1665,7 @@ pub fn cmd_cloud(args: &CloudCommand, profile: Option<&str>) -> CliResult<ExitCo
             Ok(ExitCode::Success)
         }
         CloudSub::Whoami => {
-            let cfg = agenomic_config::load(profile)?;
-            let endpoint = cfg.profile.endpoint.clone().ok_or_else(|| {
-                CliError::Internal(
-                    "no endpoint configured; run `agenomic cloud login` first".into(),
-                )
-            })?;
-            let api_key = cfg.profile.api_key.clone().ok_or(CliError::AuthFailed)?;
-            let client = agenomic_cloud_client::CloudClient::new(endpoint, api_key);
+            let client = cloud_client_from_profile(profile)?;
             let resp = tokio::runtime::Runtime::new()
                 .map_err(|e| CliError::Internal(format!("{e}")))?
                 .block_on(client.whoami())?;
@@ -1834,14 +1827,18 @@ pub fn cmd_cloud(args: &CloudCommand, profile: Option<&str>) -> CliResult<ExitCo
 }
 
 /// Build a `CloudClient` from the active profile, failing with the
-/// canonical error if no endpoint or key is configured.
+/// canonical error if no key is configured. The endpoint falls back to
+/// the hosted cloud (`agenomic_config::DEFAULT_ENDPOINT`) so pushes work
+/// without ever specifying a URL.
 fn cloud_client_from_profile(
     profile: Option<&str>,
 ) -> CliResult<agenomic_cloud_client::CloudClient> {
     let cfg = agenomic_config::load(profile)?;
-    let endpoint = cfg.profile.endpoint.clone().ok_or_else(|| {
-        CliError::Internal("no endpoint configured; run `agenomic cloud login` first".into())
-    })?;
+    let endpoint = cfg
+        .profile
+        .endpoint
+        .clone()
+        .unwrap_or_else(|| agenomic_config::DEFAULT_ENDPOINT.to_string());
     let api_key = cfg.profile.api_key.clone().ok_or(CliError::AuthFailed)?;
     Ok(agenomic_cloud_client::CloudClient::new(endpoint, api_key))
 }

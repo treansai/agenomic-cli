@@ -78,6 +78,13 @@ All notable changes to `agenomic-cli` are documented here. Format follows
 
 ### Changed
 
+- **Cloud endpoint defaults to `https://app.agenomic.io`.** `agenomic cloud
+  login` no longer requires `--endpoint`, and the cloud push commands
+  (`push-agent`, `push-release`, `push-replay`, `push-attestation`), `bucket
+  use`, and `whoami` fall back to the hosted cloud when no endpoint is
+  configured — set `--endpoint` / `AGENOMIC_ENDPOINT` only to target a
+  self-hosted or staging deployment. The "no endpoint configured" error is
+  gone; a missing API key still fails with exit 5.
 - `agm init` in a populated directory that already has a `genome.yaml` now
   refuses with exit 2 and points at `agm update` (use `--force` to overwrite).
   Empty/no-manifest directories are unchanged (byte-identical legacy scaffold).

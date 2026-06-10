@@ -561,7 +561,8 @@ pub enum BucketSub {
 #[derive(Debug, Subcommand)]
 pub enum CloudSub {
     Login {
-        #[arg(long)]
+        /// Cloud endpoint URL. Defaults to the hosted Agenomic Cloud.
+        #[arg(long, default_value = agenomic_config::DEFAULT_ENDPOINT)]
         endpoint: String,
         #[arg(long)]
         api_key: String,
