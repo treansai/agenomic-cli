@@ -96,6 +96,10 @@ pub enum Commands {
     Run(RunArgs),
     /// Propose an `execution:` block for an existing codebase.
     Port(PortArgs),
+    /// LLM-assisted completion of the fields detection cannot know
+    /// (domain, criticality, description, skills, behavior rules,
+    /// orchestration manifest descriptions).
+    Enrich(EnrichArgs),
     /// Compile a genome into per-framework runtime adapters (`runtime/*.compiled`).
     Compile(CompileArgs),
     /// Evaluate the bundle's OPA/Rego policies against a launch context.
@@ -181,6 +185,11 @@ pub struct InitArgs {
     /// Print the genome that would be written; write nothing; exit 0.
     #[arg(long)]
     pub dry_run: bool,
+    /// After detection, run the LLM enrichment pass (`agm enrich`) to fill
+    /// the fields static analysis cannot know (domain, criticality,
+    /// description, skills, behavior rules). Requires a provider API key.
+    #[arg(long)]
+    pub agent: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -214,6 +223,24 @@ pub struct UpdateArgs {
     /// Restrict detection to these sources (repeatable).
     #[arg(long = "from", value_enum)]
     pub from: Vec<SourceArg>,
+    /// After the merge, run the LLM enrichment pass (`agm enrich`).
+    #[arg(long)]
+    pub agent: bool,
+}
+
+#[derive(Debug, Parser)]
+pub struct EnrichArgs {
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    /// Provider to call (defaults to the genome's `runtime.model_provider`).
+    #[arg(long)]
+    pub provider: Option<String>,
+    /// Model to call (defaults to the genome's `runtime.model_id`).
+    #[arg(long)]
+    pub model: Option<String>,
+    /// Print the proposed enrichment as JSON; write nothing; exit 0.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Parser)]

@@ -21,6 +21,7 @@ pub mod detect;
 pub mod emit;
 pub mod merge;
 pub mod model;
+pub mod orchestration;
 pub mod parse;
 pub mod provenance;
 
@@ -34,6 +35,10 @@ pub use emit::{emit, write_bundle, EmittedBundle};
 pub use git::{commit_bundle, repo_state, RepoState, BUNDLE_FILES};
 pub use merge::{merge, Change, MergeResult};
 pub use model::{Dependency, DetectedGenome, Evidence, MemoryInfo, Source, ToolEntry, ToolKind};
+pub use orchestration::{
+    detect_orchestration, emit_system_yaml, emit_workflow_yaml, write_orchestration, DetectedEdge,
+    DetectedEnv, DetectedOrchestration, DetectedSystem, DetectedWorkflow,
+};
 pub use parse::parse_genome;
 pub use provenance::{
     load_provenance, provenance_path, resolved_detected_at, write_provenance, LastUpdate,

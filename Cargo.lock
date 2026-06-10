@@ -112,6 +112,7 @@ dependencies = [
  "insta",
  "miette",
  "predicates",
+ "reqwest",
  "secrecy",
  "serde",
  "serde_json",

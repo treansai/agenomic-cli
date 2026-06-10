@@ -124,7 +124,15 @@ fn emit_genome(g: &DetectedGenome) -> String {
         s.push_str(&format!("    backend: {}\n", yq(&mem.backend)));
     }
     s.push_str(&emit_list("tools", &format_tools(&g.tools)));
-    s.push_str(&emit_str_list("skills", &g.skills));
+    // The genome schema requires skill entries to be objects carrying `name`.
+    if g.skills.is_empty() {
+        s.push_str("skills: []\n");
+    } else {
+        s.push_str("skills:\n");
+        for skill in &g.skills {
+            s.push_str(&format!("  - {{ name: {} }}\n", yq(skill)));
+        }
+    }
     s.push_str(&emit_str_list("knowledge", &g.knowledge));
     s.push_str(&emit_str_list("policies", &g.policies));
     s
@@ -197,8 +205,26 @@ fn emit_lock(g: &DetectedGenome) -> String {
     s.push_str("model:\n");
     s.push_str(&format!("  provider: {}\n", yq(&g.model_provider)));
     s.push_str(&format!("  model_id: {}\n", yq(&g.model_id)));
-    let tool_names: Vec<String> = g.tools.iter().map(|t| t.name.clone()).collect();
-    s.push_str(&emit_str_list("tools", &tool_names));
+    // The agent-lock schema requires tool entries to be objects carrying at
+    // least `name` and `protocol`. Detected tools are local libraries.
+    if g.tools.is_empty() {
+        s.push_str("tools: []\n");
+    } else {
+        s.push_str("tools:\n");
+        for t in &g.tools {
+            match &t.version {
+                Some(v) => s.push_str(&format!(
+                    "  - {{ name: {}, protocol: 'local', version: {} }}\n",
+                    yq(&t.name),
+                    yq(v)
+                )),
+                None => s.push_str(&format!(
+                    "  - {{ name: {}, protocol: 'local' }}\n",
+                    yq(&t.name)
+                )),
+            }
+        }
+    }
     s.push_str("knowledge: []\n");
     s
 }

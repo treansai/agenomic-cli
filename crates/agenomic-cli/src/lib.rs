@@ -2,6 +2,7 @@
 
 mod cli;
 mod commands;
+mod enrich;
 mod render;
 
 use agenomic_core::CliError;
@@ -50,6 +51,7 @@ pub fn run() -> i32 {
         Commands::Inspect(args) => commands::cmd_inspect(args, format, no_color),
         Commands::Run(args) => commands::cmd_run(args, format, no_color),
         Commands::Port(args) => commands::cmd_port(args, format, no_color),
+        Commands::Enrich(args) => commands::cmd_enrich(args, format),
         Commands::Compile(args) => commands::cmd_compile(args, format, no_color),
         Commands::Policy(args) => commands::cmd_policy(args, format, no_color),
         Commands::Governance(args) => commands::cmd_governance(args, format, no_color),

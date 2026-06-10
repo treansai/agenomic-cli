@@ -56,12 +56,23 @@ pub fn cmd_init(args: &InitArgs, format: OutputFormat) -> CliResult<ExitCode> {
     apply_init_config(&mut genome, &project);
     let bundle = agenomic_detect::emit(&genome);
 
+    // Orchestration pass (spec 0.2, RFC 0009): workflow topology, multi-agent
+    // system, env vars — only when manifest-based detection is active.
+    let orch = if detected {
+        agenomic_detect::detect_orchestration(dir)?
+    } else {
+        agenomic_detect::DetectedOrchestration::default()
+    };
+
     if args.dry_run {
         render_init(&genome, &bundle, format, true, dir)?;
+        render_orchestration(&orch, &[], format, true);
         return Ok(ExitCode::Success);
     }
 
     agenomic_detect::write_bundle(dir, &bundle, args.force)?;
+    let orch_written =
+        agenomic_detect::write_orchestration(dir, &orch, &genome.agent_id, args.force)?;
     if detected {
         let provenance = agenomic_detect::Provenance::from_detection(
             &genome,
@@ -70,7 +81,124 @@ pub fn cmd_init(args: &InitArgs, format: OutputFormat) -> CliResult<ExitCode> {
         agenomic_detect::write_provenance(dir, &provenance)?;
     }
     render_init(&genome, &bundle, format, false, dir)?;
+    render_orchestration(&orch, &orch_written, format, false);
+    if args.agent {
+        run_agent_enrichment(dir, format);
+    }
     Ok(ExitCode::Success)
+}
+
+/// `agm enrich` — fill the semantic fields detection cannot know, using the
+/// agent's own declared model provider.
+pub fn cmd_enrich(args: &EnrichArgs, format: OutputFormat) -> CliResult<ExitCode> {
+    let dir = &args.path;
+    let input = crate::enrich::gather(dir)?;
+    let genome = agenomic_detect::parse_genome(&input.genome_text)?;
+    let provider = args
+        .provider
+        .clone()
+        .unwrap_or_else(|| genome.model_provider.clone());
+    let model = args
+        .model
+        .clone()
+        .unwrap_or_else(|| genome.model_id.clone());
+
+    let prompt = crate::enrich::build_prompt(&input);
+    let reply = crate::enrich::call_llm(&provider, &model, &prompt)?;
+    let enrichment = crate::enrich::parse_enrichment(&reply)?;
+
+    if args.dry_run {
+        match format {
+            OutputFormat::Human => {
+                println!("proposed enrichment (dry run, nothing written):");
+                println!("{}", reply.trim());
+            }
+            _ => println!("{}", reply.trim()),
+        }
+        return Ok(ExitCode::Success);
+    }
+
+    let changed = crate::enrich::apply(dir, &enrichment)?;
+    match format {
+        OutputFormat::Human => {
+            if changed.is_empty() {
+                println!("nothing to enrich — every field is already set");
+            } else {
+                for rel in &changed {
+                    println!("enriched {rel}");
+                }
+            }
+        }
+        _ => println!(
+            "{}",
+            serde_json::json!({ "provider": provider, "model": model, "changed": changed })
+        ),
+    }
+    Ok(ExitCode::Success)
+}
+
+/// Best-effort enrichment after `init`/`update --agent`: the bundle is
+/// already written, so a missing API key degrades to a hint, not a failure.
+fn run_agent_enrichment(dir: &Path, format: OutputFormat) {
+    let args = EnrichArgs {
+        path: dir.to_path_buf(),
+        provider: None,
+        model: None,
+        dry_run: false,
+    };
+    if let Err(e) = cmd_enrich(&args, format) {
+        eprintln!("warning: enrichment skipped: {e}");
+        eprintln!(
+            "hint: set the provider API key and run `agm enrich {}`",
+            dir.display()
+        );
+    }
+}
+
+/// Human-format report of the orchestration pass (RFC 0009). Other formats
+/// stay byte-compatible with their pre-0.2 output.
+fn render_orchestration(
+    orch: &agenomic_detect::DetectedOrchestration,
+    written: &[String],
+    format: OutputFormat,
+    dry_run: bool,
+) {
+    if !matches!(format, OutputFormat::Human) || orch.is_empty() {
+        return;
+    }
+    for wf in &orch.workflows {
+        let rel = format!("workflows/{}.yaml", wf.slug);
+        if dry_run {
+            println!(
+                "would write {rel} ({} engine, from {})",
+                wf.engine, wf.origin
+            );
+        } else if written.contains(&rel) {
+            println!("wrote {rel} (from {})", wf.origin);
+        }
+    }
+    if let Some(sys) = &orch.system {
+        if dry_run {
+            println!(
+                "would write system.yaml ({} member agents, engine {})",
+                sys.roles.len(),
+                sys.engine
+            );
+        } else if written.iter().any(|w| w == "system.yaml") {
+            println!(
+                "wrote system.yaml ({} member agents, engine {})",
+                sys.roles.len(),
+                sys.engine
+            );
+        }
+    }
+    if !orch.env.required.is_empty() || !orch.env.optional.is_empty() {
+        println!(
+            "detected env vars — required: [{}] optional: [{}]",
+            orch.env.required.join(", "),
+            orch.env.optional.join(", ")
+        );
+    }
 }
 
 /// True if `dir` contains a recognised project manifest that triggers detection.
@@ -183,6 +311,7 @@ const UPDATE_DIRTY_IGNORE: &[&str] = &[
     "agent.lock.yaml",
     "behavior.contract.yaml",
     "prompts/system.md",
+    "system.yaml",
     "pyproject.toml",
     "package.json",
     "Cargo.toml",
@@ -191,6 +320,13 @@ const UPDATE_DIRTY_IGNORE: &[&str] = &[
     "README.md",
     "Dockerfile",
 ];
+
+/// True when a dirty path belongs to the bundle itself (and so never blocks
+/// `agm update`): an exact [`UPDATE_DIRTY_IGNORE`] entry or an orchestration
+/// manifest under `workflows/`.
+fn update_dirty_ignored(path: &str) -> bool {
+    UPDATE_DIRTY_IGNORE.contains(&path) || path.starts_with("workflows/")
+}
 
 /// What an update run did, for rendering.
 enum UpdateOutcome {
@@ -227,13 +363,25 @@ pub fn cmd_update(args: &UpdateArgs, format: OutputFormat) -> CliResult<ExitCode
     let prior = agenomic_detect::load_provenance(dir)?;
     let result = agenomic_detect::merge(&current, &detected, prior.as_ref(), args.prune);
 
+    // Orchestration pass (spec 0.2, RFC 0009). Files are only created when
+    // missing, so hand edits to generated manifests always survive.
+    let orch = agenomic_detect::detect_orchestration(dir)?;
+
     if args.dry_run {
         render_update(&result, format, &UpdateOutcome::DryRun)?;
+        render_orchestration(&orch, &[], format, true);
         return Ok(ExitCode::Success);
     }
     if result.is_noop() {
+        let orch_written =
+            agenomic_detect::write_orchestration(dir, &orch, &result.merged.agent_id, false)?;
+        if orch_written.is_empty() {
+            render_update(&result, format, &UpdateOutcome::NoChange)?;
+            return Ok(ExitCode::ValidationFailed); // exit 1 (§3.7)
+        }
         render_update(&result, format, &UpdateOutcome::NoChange)?;
-        return Ok(ExitCode::ValidationFailed); // exit 1 (§3.7)
+        render_orchestration(&orch, &orch_written, format, false);
+        return Ok(ExitCode::Success);
     }
 
     // Resolve `[update]` config (with §3/§4 defaults).
@@ -280,7 +428,7 @@ pub fn cmd_update(args: &UpdateArgs, format: OutputFormat) -> CliResult<ExitCode
                 .changed
                 .iter()
                 .map(String::as_str)
-                .filter(|p| !UPDATE_DIRTY_IGNORE.contains(p))
+                .filter(|p| !update_dirty_ignored(p))
                 .collect();
             if !dirty_outside.is_empty() {
                 return Err(CliError::UpdateRefused {
@@ -296,6 +444,8 @@ pub fn cmd_update(args: &UpdateArgs, format: OutputFormat) -> CliResult<ExitCode
     // Write the merged bundle (overwrite the four files).
     let bundle = agenomic_detect::emit(&result.merged);
     agenomic_detect::write_bundle(dir, &bundle, true)?;
+    let orch_written =
+        agenomic_detect::write_orchestration(dir, &orch, &result.merged.agent_id, false)?;
 
     // Logical bundle hash (matches `agenomic hash`); the sidecar is excluded.
     let manifest = agenomic_hash::compute_manifest(dir)?;
@@ -330,6 +480,8 @@ pub fn cmd_update(args: &UpdateArgs, format: OutputFormat) -> CliResult<ExitCode
         // next merge needs); the sidecar is still excluded from the logical hash.
         let mut commit_files: Vec<&str> = agenomic_detect::BUNDLE_FILES.to_vec();
         commit_files.push(".agenomic/provenance.yaml");
+        // Orchestration manifests created by this run are part of the bundle.
+        commit_files.extend(orch_written.iter().map(String::as_str));
         let oid = agenomic_detect::commit_bundle(dir, &commit_files, &message)?;
         UpdateOutcome::Committed {
             oid,
@@ -341,6 +493,10 @@ pub fn cmd_update(args: &UpdateArgs, format: OutputFormat) -> CliResult<ExitCode
         }
     };
     render_update(&result, format, &outcome)?;
+    render_orchestration(&orch, &orch_written, format, false);
+    if args.agent {
+        run_agent_enrichment(dir, format);
+    }
     Ok(ExitCode::Success)
 }
 
