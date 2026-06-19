@@ -1724,9 +1724,7 @@ pub fn cmd_cloud(args: &CloudCommand, profile: Option<&str>) -> CliResult<ExitCo
                     // message when the agent was never pushed; rewrite that one
                     // case into actionable guidance.
                     let agent = rt
-                        .block_on(
-                            client.move_agent_to_bucket(&id, Some(target_bucket.id.as_str())),
-                        )
+                        .block_on(client.move_agent_to_bucket(&id, Some(target_bucket.id.as_str())))
                         .map_err(|e| reuse_agent_not_found_hint(&id, e))?;
                     agent.id
                 }
@@ -1951,8 +1949,7 @@ mod tests {
         // The opaque error push-agent gets back when `--agent-id` names an
         // agent that was never pushed.
         let err = CliError::Network("move_agent_to_bucket: HTTP 404 Not Found — ".into());
-        let mapped =
-            super::reuse_agent_not_found_hint("agent://treansai/dater-agent", err);
+        let mapped = super::reuse_agent_not_found_hint("agent://treansai/dater-agent", err);
         let msg = format!("{mapped}");
         assert!(msg.contains("was not found"), "got: {msg}");
         assert!(msg.contains("Omit `--agent-id`"), "got: {msg}");
