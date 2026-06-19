@@ -78,19 +78,35 @@ All notable changes to `agenomic-cli` are documented here. Format follows
 
 ### Changed
 
-- **Cloud endpoint defaults to `https://app.agenomic.io`.** `agenomic cloud
+- **Cloud endpoint defaults to `https://api.agenomic.io`.** `agenomic cloud
   login` no longer requires `--endpoint`, and the cloud push commands
   (`push-agent`, `push-release`, `push-replay`, `push-attestation`), `bucket
   use`, and `whoami` fall back to the hosted cloud when no endpoint is
   configured — set `--endpoint` / `AGENOMIC_ENDPOINT` only to target a
-  self-hosted or staging deployment. The "no endpoint configured" error is
-  gone; a missing API key still fails with exit 5.
+  self-hosted or staging deployment. The default is the **API gateway**
+  (`api.agenomic.io`), not the dashboard (`app.agenomic.io`): the dashboard
+  does not serve the `/v1/*` routes the CLI calls and 404s on them. The "no
+  endpoint configured" error is gone; a missing API key still fails with exit 5.
 - `agm init` in a populated directory that already has a `genome.yaml` now
   refuses with exit 2 and points at `agm update` (use `--force` to overwrite).
   Empty/no-manifest directories are unchanged (byte-identical legacy scaffold).
 
 ### Fixed
 
+- **Default cloud endpoint no longer points at the dashboard.** It was
+  `https://app.agenomic.io` (the web UI), so a fresh `agm cloud login --api-key
+  …` followed by `whoami`/any push hit the dashboard and 404'd on `/v1/*`. The
+  default is now the API gateway `https://api.agenomic.io`.
+- **`agm cloud push-agent --agent-id <id>` gives an actionable error when the
+  agent doesn't exist.** `--agent-id` reuses an existing agent; if it was never
+  pushed, the move-to-bucket step returned an opaque `move_agent_to_bucket: HTTP
+  404`. The CLI now explains the id wasn't found and that omitting `--agent-id`
+  creates the agent from `--name`. Other errors (auth, 5xx) are unchanged.
+- **`agm build` no longer packs build artifacts and scratch files into the
+  bundle.** The directory walk now excludes `*.bundle.tar.zst` (so re-building in
+  place can't fold a prior archive into itself), `.agenomic-*` scratch/cache
+  files (e.g. `.agenomic-detect.json`, `.agenomic-validate.json`), and `.claude/`
+  tooling config.
 - `agm cloud whoami` now surfaces the "wrong endpoint?" hint on HTTP status
   errors too (previously only on parse errors), and its HTML detector
   recognises Next.js error pages by their `_next/static` marker. Pointing

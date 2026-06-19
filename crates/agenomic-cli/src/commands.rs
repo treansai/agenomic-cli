@@ -1719,9 +1719,13 @@ pub fn cmd_cloud(args: &CloudCommand, profile: Option<&str>) -> CliResult<ExitCo
             // 1) resolve / create the agent
             let agent_id = match agent_id.clone() {
                 Some(id) => {
-                    let agent = rt.block_on(
-                        client.move_agent_to_bucket(&id, Some(target_bucket.id.as_str())),
-                    )?;
+                    // `--agent-id` reuses an *existing* cloud agent. The first
+                    // call against that id (move-to-bucket) 404s with an opaque
+                    // message when the agent was never pushed; rewrite that one
+                    // case into actionable guidance.
+                    let agent = rt
+                        .block_on(client.move_agent_to_bucket(&id, Some(target_bucket.id.as_str())))
+                        .map_err(|e| reuse_agent_not_found_hint(&id, e))?;
                     agent.id
                 }
                 None => {
@@ -1893,6 +1897,25 @@ fn should_move_agent_to_bucket(current_bucket_id: Option<&str>, target_bucket_id
     current_bucket_id != Some(target_bucket_id)
 }
 
+/// `push-agent --agent-id <id>` reuses an *existing* cloud agent. When that id
+/// doesn't exist, the first call against it (`move_agent_to_bucket`) comes back
+/// as an opaque `HTTP 404`, which reads like a server/bucket fault. Rewrite that
+/// one case into guidance that names the real cause; pass every other error
+/// (auth, 5xx, transport) through unchanged.
+fn reuse_agent_not_found_hint(agent_id: &str, err: CliError) -> CliError {
+    if let CliError::Network(msg) = &err {
+        if msg.contains("HTTP 404") {
+            return CliError::Network(format!(
+                "agent id '{agent_id}' was not found in your org. `--agent-id` \
+                 reuses an agent that already exists, but this one has never been \
+                 pushed. Omit `--agent-id` to create it from `--name`, then pass \
+                 `--agent-id` on subsequent pushes."
+            ));
+        }
+    }
+    err
+}
+
 // Severity is referenced via SeverityArg::to_severity; silence unused-import
 fn _unused_severity(_s: Severity) {}
 
@@ -1918,5 +1941,28 @@ mod tests {
     #[test]
     fn agent_already_in_target_bucket_is_not_moved() {
         assert!(!should_move_agent_to_bucket(Some("bucket-1"), "bucket-1"));
+    }
+
+    #[test]
+    fn reuse_agent_404_becomes_actionable() {
+        use agenomic_core::CliError;
+        // The opaque error push-agent gets back when `--agent-id` names an
+        // agent that was never pushed.
+        let err = CliError::Network("move_agent_to_bucket: HTTP 404 Not Found — ".into());
+        let mapped = super::reuse_agent_not_found_hint("agent://treansai/dater-agent", err);
+        let msg = format!("{mapped}");
+        assert!(msg.contains("was not found"), "got: {msg}");
+        assert!(msg.contains("Omit `--agent-id`"), "got: {msg}");
+        assert!(msg.contains("agent://treansai/dater-agent"), "got: {msg}");
+    }
+
+    #[test]
+    fn reuse_agent_non_404_passes_through() {
+        use agenomic_core::CliError;
+        // A 5xx or auth failure is unrelated to a missing agent id and must
+        // not be masked by the "not found" guidance.
+        let err = CliError::Network("move_agent_to_bucket: HTTP 500 Internal".into());
+        let mapped = super::reuse_agent_not_found_hint("a", err);
+        assert!(format!("{mapped}").contains("HTTP 500"));
     }
 }

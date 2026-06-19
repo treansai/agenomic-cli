@@ -56,6 +56,8 @@ permitted only when `allow == true` and `deny` is empty. Non-`.rego` files in
 ## Always excluded
 
 `.git/`, `target/`, `node_modules/`, `__pycache__/`, `dist/`, `.agenomic/`,
+`.claude/`, build artifacts (`*.bundle.tar.zst`) and CLI scratch files
+(`.agenomic-*`, e.g. `.agenomic-detect.json` / `.agenomic-validate.json`),
 plus credential files: `.env`, `.env.*`, `*.pem`, `*.key`, `id_rsa`,
 `id_ed25519`, `*.p12`, `*.pfx`. Use `--allow-symlinks` to permit symlinks
 (off by default).

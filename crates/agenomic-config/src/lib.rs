@@ -17,9 +17,12 @@ const APP_ORG: &str = "agenomic";
 const APP_NAME: &str = "agenomic";
 
 /// Default Agenomic Cloud endpoint, used when neither `AGENOMIC_ENDPOINT`
-/// nor a profile endpoint is configured. The web origin rewrites `/v1/*`
-/// to the API gateway, so it serves CLI traffic too.
-pub const DEFAULT_ENDPOINT: &str = "https://app.agenomic.io";
+/// nor a profile endpoint is configured. This points at the API gateway,
+/// which serves the `/v1/*` routes the CLI calls. The dashboard origin
+/// (`app.agenomic.io`) is a separate service that 404s on `/v1/*`, so it
+/// must not be the default — pointing the CLI there makes `whoami` and
+/// every push return an HTML 404 from the web UI.
+pub const DEFAULT_ENDPOINT: &str = "https://api.agenomic.io";
 
 /// Operating mode of a profile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

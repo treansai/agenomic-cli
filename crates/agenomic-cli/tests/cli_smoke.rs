@@ -142,7 +142,9 @@ policies: []
 fn cloud_login_defaults_to_hosted_endpoint() {
     let d = tempdir().unwrap();
 
-    // No --endpoint: the profile should be saved against the hosted cloud.
+    // No --endpoint: the profile should be saved against the hosted cloud
+    // API gateway (api.agenomic.io), not the dashboard origin (app.agenomic.io),
+    // which 404s on the `/v1/*` routes the CLI calls.
     let s = agenomic()
         .env("HOME", d.path())
         .env("XDG_CONFIG_HOME", d.path().join("xdg-config"))
@@ -156,7 +158,7 @@ fn cloud_login_defaults_to_hosted_endpoint() {
     );
     let stdout = String::from_utf8_lossy(&s.stdout);
     assert!(
-        predicates::str::contains("logged in to https://app.agenomic.io").eval(&stdout),
+        predicates::str::contains("logged in to https://api.agenomic.io").eval(&stdout),
         "unexpected login output: {stdout}"
     );
 }
