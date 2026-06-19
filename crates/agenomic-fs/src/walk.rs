@@ -23,6 +23,17 @@ pub const DEFAULT_EXCLUDES: &[&str] = &[
     ".tox/",
     "dist/",
     ".agenomic/",
+    // Build output: a bundle archive must never be packed into the next
+    // bundle. Re-running `agm build .` in place would otherwise fold the
+    // prior `*.bundle.tar.zst` into itself, bloating the result.
+    "*.bundle.tar.zst",
+    // Scratch/cache files written next to a bundle by the CLI and its
+    // tooling (e.g. `.agenomic-detect.json`, `.agenomic-validate.json`).
+    // The `.agenomic/` sidecar directory above is already excluded; this
+    // covers the `.agenomic-*` file variants in the same namespace.
+    ".agenomic-*",
+    // Editor/agent tooling config, not agent-definition content.
+    ".claude/",
 ];
 
 /// Always-on security excludes — credentials, keys, dotenvs.
@@ -322,6 +333,25 @@ mod tests {
         let entries = walk_bundle(d.path(), &WalkOptions::default()).unwrap();
         let names: Vec<_> = entries.iter().map(|e| e.relative_path.clone()).collect();
         assert_eq!(names, vec!["keep.txt"]);
+    }
+
+    #[test]
+    fn excludes_build_artifacts_and_scratch() {
+        let d = tempdir().unwrap();
+        // A prior build archive sitting in the source tree…
+        fs::write(d.path().join("dater-agent.bundle.tar.zst"), b"zst").unwrap();
+        // …CLI scratch/cache files…
+        fs::write(d.path().join(".agenomic-detect.json"), b"{}").unwrap();
+        fs::write(d.path().join(".agenomic-validate.json"), b"{}").unwrap();
+        // …and editor/agent tooling config.
+        fs::create_dir_all(d.path().join(".claude")).unwrap();
+        fs::write(d.path().join(".claude/settings.json"), b"{}").unwrap();
+        // Actual bundle content survives.
+        fs::write(d.path().join("genome.yaml"), b"agent_id: x").unwrap();
+
+        let entries = walk_bundle(d.path(), &WalkOptions::default()).unwrap();
+        let names: Vec<_> = entries.iter().map(|e| e.relative_path.clone()).collect();
+        assert_eq!(names, vec!["genome.yaml"]);
     }
 
     #[test]

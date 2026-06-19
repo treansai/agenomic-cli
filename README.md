@@ -29,7 +29,7 @@ agenomic enrich .                # run the LLM pass alone (ANTHROPIC_API_KEY / O
 agenomic validate ./my-agent --level strict
 agenomic bundle compile-runtime ./my-agent
 agenomic build ./my-agent --output dist/my-agent.bundle.tar.zst
-agenomic cloud login --api-key <KEY>   # endpoint defaults to https://app.agenomic.io
+agenomic cloud login --api-key <KEY>   # endpoint defaults to https://api.agenomic.io
 agenomic bucket use --name default
 agenomic cloud push-agent dist/my-agent.bundle.tar.zst --name "My Agent"
 agenomic attest dist/my-agent.bundle.tar.zst --output attestation.json
