@@ -90,7 +90,11 @@ pub fn cmd_init(args: &InitArgs, format: OutputFormat) -> CliResult<ExitCode> {
 
 /// `agm enrich` — fill the semantic fields detection cannot know, using the
 /// agent's own declared model provider.
-pub fn cmd_enrich(args: &EnrichArgs, format: OutputFormat) -> CliResult<ExitCode> {
+pub fn cmd_enrich(
+    args: &EnrichArgs,
+    format: OutputFormat,
+    profile: Option<&str>,
+) -> CliResult<ExitCode> {
     let dir = &args.path;
     let input = crate::enrich::gather(dir)?;
     let genome = agenomic_detect::parse_genome(&input.genome_text)?;
@@ -100,6 +104,7 @@ pub fn cmd_enrich(args: &EnrichArgs, format: OutputFormat) -> CliResult<ExitCode
         args.model.as_deref(),
         &genome.model_provider,
         &genome.model_id,
+        || cloud_client_from_profile(profile),
     )?;
 
     let prompt = crate::enrich::build_prompt(&input);
@@ -146,7 +151,7 @@ fn run_agent_enrichment(dir: &Path, format: OutputFormat) {
         model: None,
         dry_run: false,
     };
-    if let Err(e) = cmd_enrich(&args, format) {
+    if let Err(e) = cmd_enrich(&args, format, None) {
         eprintln!("warning: enrichment skipped: {e}");
         eprintln!(
             "hint: set the provider API key and run `agm enrich {}`",

@@ -2,16 +2,14 @@
 //! (`gather` / `build_prompt` / `parse_enrichment` / `apply` in
 //! [`crate::enrich`]) is provider-agnostic; this module is the only place that
 //! knows how to reach a model. `direct` keeps the pre-existing Anthropic /
-//! OpenAI behaviour unchanged; `cloud` targets an internal OpenAI-compatible
-//! deployment (Scaleway), configured entirely through the environment.
+//! OpenAI behaviour unchanged; `cloud` routes through Agenomic Cloud, which
+//! authenticates the caller with their Agenomic API key and proxies to the
+//! internal model server-side — the CLI never holds the model credentials.
 
 use agenomic_core::{CliError, CliResult};
 
-const CLOUD_DEFAULT_BASE_URL: &str = "https://api.scaleway.ai/v1";
-const CLOUD_DEFAULT_MODEL: &str = "llama-3.3-70b-instruct";
-
 /// Which transport a run uses. `direct` calls the model vendor's public API;
-/// `cloud` calls our internal OpenAI-compatible endpoint.
+/// `cloud` calls Agenomic Cloud (which gates access and proxies internally).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderKind {
     Direct,
@@ -40,70 +38,38 @@ fn direct_vendor(provider_flag: Option<&str>, genome_provider: &str) -> String {
     }
 }
 
-/// Endpoint, key, and model for the cloud provider.
-pub struct CloudConfig {
-    pub base_url: String,
-    pub api_key: String,
-    pub model: String,
-}
-
-/// Apply cloud defaults over the (optional) raw values. The API key is
-/// mandatory; base URL and model fall back to the Scaleway defaults.
-fn cloud_config(
-    api_key: Option<String>,
-    base_url: Option<String>,
-    model: Option<String>,
-) -> CliResult<CloudConfig> {
-    let api_key = api_key.filter(|k| !k.is_empty()).ok_or_else(|| {
-        CliError::Schema(
-            "AGENOMIC_CLOUD_API_KEY is not set (required by `agm enrich --cloud`); the cloud \
-             provider never falls back to ANTHROPIC_API_KEY/OPENAI_API_KEY"
-                .into(),
-        )
-    })?;
-    Ok(CloudConfig {
-        base_url: present(base_url).unwrap_or_else(|| CLOUD_DEFAULT_BASE_URL.to_string()),
-        api_key,
-        model: present(model).unwrap_or_else(|| CLOUD_DEFAULT_MODEL.to_string()),
-    })
-}
-
-fn present(value: Option<String>) -> Option<String> {
-    value.filter(|s| !s.is_empty())
-}
-
-fn env_opt(key: &str) -> Option<String> {
-    std::env::var(key).ok()
-}
-
-/// Read the cloud provider config from `AGENOMIC_CLOUD_*` (base URL and model
-/// default; the API key is required).
-pub fn cloud_config_from_env() -> CliResult<CloudConfig> {
-    cloud_config(
-        env_opt("AGENOMIC_CLOUD_API_KEY"),
-        env_opt("AGENOMIC_CLOUD_BASE_URL"),
-        env_opt("AGENOMIC_CLOUD_MODEL"),
-    )
-}
-
 /// A ready-to-call enrichment provider.
 pub enum Provider {
-    Direct { vendor: String, model: String },
-    Cloud(CloudConfig),
+    Direct {
+        vendor: String,
+        model: String,
+    },
+    Cloud {
+        client: agenomic_cloud_client::CloudClient,
+        model: Option<String>,
+    },
 }
 
 /// Build the provider for this run. `--cloud` / an explicit `cloud` value pick
-/// the cloud adapter; otherwise direct, with vendor/model from the flags
-/// (back-compat) or the genome.
-pub fn select(
+/// the cloud adapter (building the client lazily, so direct never needs a
+/// login); otherwise direct, with vendor/model from the flags (back-compat) or
+/// the genome.
+pub fn select<F>(
     provider_flag: Option<&str>,
     cloud_flag: bool,
     model_flag: Option<&str>,
     genome_provider: &str,
     genome_model: &str,
-) -> CliResult<Provider> {
+    cloud_client: F,
+) -> CliResult<Provider>
+where
+    F: FnOnce() -> CliResult<agenomic_cloud_client::CloudClient>,
+{
     match resolve_kind(provider_flag, cloud_flag) {
-        ProviderKind::Cloud => Ok(Provider::Cloud(cloud_config_from_env()?)),
+        ProviderKind::Cloud => Ok(Provider::Cloud {
+            client: cloud_client()?,
+            model: model_flag.map(str::to_string),
+        }),
         ProviderKind::Direct => Ok(Provider::Direct {
             vendor: direct_vendor(provider_flag, genome_provider),
             model: model_flag
@@ -118,35 +84,49 @@ impl Provider {
     pub fn label(&self) -> &str {
         match self {
             Provider::Direct { vendor, .. } => vendor,
-            Provider::Cloud(_) => "cloud",
+            Provider::Cloud { .. } => "cloud",
         }
     }
 
-    /// The model the run will call.
+    /// The model the run will call (the requested hint for cloud, where the
+    /// server makes the final choice).
     pub fn model(&self) -> &str {
         match self {
             Provider::Direct { model, .. } => model,
-            Provider::Cloud(c) => &c.model,
+            Provider::Cloud { model, .. } => model.as_deref().unwrap_or("cloud"),
         }
     }
 
-    /// Call the provider's chat API and return the raw text reply.
+    /// Call the provider and return the raw text reply.
     pub fn complete(&self, prompt: &str) -> CliResult<String> {
         let rt = tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
         rt.block_on(self.complete_async(prompt))
     }
 
     async fn complete_async(&self, prompt: &str) -> CliResult<String> {
-        let client = http_client()?;
         match self {
             Provider::Direct { vendor, model } => {
-                direct_complete(&client, vendor, model, prompt).await
+                direct_complete(&http_client()?, vendor, model, prompt).await
             }
-            Provider::Cloud(c) => {
-                openai_chat(&client, &c.base_url, &c.api_key, &c.model, "cloud", prompt).await
+            Provider::Cloud { client, model } => {
+                cloud_complete(client, model.clone(), prompt).await
             }
         }
     }
+}
+
+async fn cloud_complete(
+    client: &agenomic_cloud_client::CloudClient,
+    model: Option<String>,
+    prompt: &str,
+) -> CliResult<String> {
+    let resp = client
+        .enrich(agenomic_cloud_client::EnrichRequest {
+            prompt: prompt.to_string(),
+            model,
+        })
+        .await?;
+    Ok(resp.content)
 }
 
 fn http_client() -> CliResult<reqwest::Client> {
@@ -164,23 +144,7 @@ async fn direct_complete(
 ) -> CliResult<String> {
     match vendor {
         "anthropic" => anthropic_chat(client, model, prompt).await,
-        "openai" => {
-            let key = std::env::var("OPENAI_API_KEY").map_err(|_| {
-                CliError::Schema(
-                    "OPENAI_API_KEY is not set (required by `agm enrich` for provider openai)"
-                        .into(),
-                )
-            })?;
-            openai_chat(
-                client,
-                "https://api.openai.com/v1",
-                &key,
-                model,
-                "openai",
-                prompt,
-            )
-            .await
-        }
+        "openai" => openai_chat(client, model, prompt).await,
         other => Err(CliError::Schema(format!(
             "provider '{other}' is not supported by `agm enrich` (anthropic, openai, cloud); \
              pass --provider/--cloud explicitly"
@@ -224,35 +188,32 @@ async fn anthropic_chat(client: &reqwest::Client, model: &str, prompt: &str) -> 
         .to_string())
 }
 
-async fn openai_chat(
-    client: &reqwest::Client,
-    base_url: &str,
-    api_key: &str,
-    model: &str,
-    label: &str,
-    prompt: &str,
-) -> CliResult<String> {
-    let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+async fn openai_chat(client: &reqwest::Client, model: &str, prompt: &str) -> CliResult<String> {
+    let key = std::env::var("OPENAI_API_KEY").map_err(|_| {
+        CliError::Schema(
+            "OPENAI_API_KEY is not set (required by `agm enrich` for provider openai)".into(),
+        )
+    })?;
     let body = serde_json::json!({
         "model": model,
         "response_format": {"type": "json_object"},
         "messages": [{"role": "user", "content": prompt}],
     });
     let resp = client
-        .post(&url)
-        .bearer_auth(api_key)
+        .post("https://api.openai.com/v1/chat/completions")
+        .bearer_auth(key)
         .json(&body)
         .send()
         .await
-        .map_err(|e| CliError::Internal(format!("{label} request: {e}")))?;
+        .map_err(|e| CliError::Internal(format!("openai request: {e}")))?;
     let status = resp.status();
     let v: serde_json::Value = resp
         .json()
         .await
-        .map_err(|e| CliError::Internal(format!("{label} response: {e}")))?;
+        .map_err(|e| CliError::Internal(format!("openai response: {e}")))?;
     if !status.is_success() {
         return Err(CliError::Internal(format!(
-            "{label} API error ({status}): {}",
+            "openai API error ({status}): {}",
             v["error"]["message"].as_str().unwrap_or("unknown")
         )));
     }
@@ -265,6 +226,17 @@ async fn openai_chat(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn no_cloud() -> CliResult<agenomic_cloud_client::CloudClient> {
+        Err(CliError::AuthFailed)
+    }
+
+    fn dummy_cloud() -> CliResult<agenomic_cloud_client::CloudClient> {
+        Ok(agenomic_cloud_client::CloudClient::new(
+            "http://localhost".into(),
+            secrecy::SecretString::new("k".into()),
+        ))
+    }
 
     #[test]
     fn defaults_to_direct() {
@@ -290,68 +262,43 @@ mod tests {
 
     #[test]
     fn direct_default_uses_genome() {
-        let p = select(None, false, None, "anthropic", "claude-sonnet-4-6").unwrap();
+        let p = select(
+            None,
+            false,
+            None,
+            "anthropic",
+            "claude-sonnet-4-6",
+            no_cloud,
+        )
+        .unwrap();
         assert_eq!(p.label(), "anthropic");
         assert_eq!(p.model(), "claude-sonnet-4-6");
     }
 
     #[test]
     fn direct_flags_override_genome() {
-        let p = select(Some("openai"), false, Some("gpt-4o"), "anthropic", "claude").unwrap();
+        let p = select(
+            Some("openai"),
+            false,
+            Some("gpt-4o"),
+            "anthropic",
+            "claude",
+            no_cloud,
+        )
+        .unwrap();
         assert_eq!(p.label(), "openai");
         assert_eq!(p.model(), "gpt-4o");
     }
 
     #[test]
-    fn cloud_config_requires_api_key() {
-        match cloud_config(None, None, None) {
-            Err(e) => assert!(format!("{e}").contains("AGENOMIC_CLOUD_API_KEY")),
-            Ok(_) => panic!("expected a missing-key error"),
-        }
+    fn cloud_selection_builds_cloud_provider() {
+        let p = select(None, true, None, "anthropic", "claude", dummy_cloud).unwrap();
+        assert_eq!(p.label(), "cloud");
     }
 
     #[test]
-    fn cloud_config_applies_defaults() {
-        let c = cloud_config(Some("scw-secret".into()), None, None).unwrap();
-        assert_eq!(c.base_url, CLOUD_DEFAULT_BASE_URL);
-        assert_eq!(c.model, CLOUD_DEFAULT_MODEL);
-    }
-
-    #[test]
-    fn cloud_config_honours_overrides() {
-        let c = cloud_config(
-            Some("scw-secret".into()),
-            Some("https://abc.ifr.fr-par.scaleway.com/v1".into()),
-            Some("mistral-nemo-instruct-2407".into()),
-        )
-        .unwrap();
-        assert_eq!(c.base_url, "https://abc.ifr.fr-par.scaleway.com/v1");
-        assert_eq!(c.model, "mistral-nemo-instruct-2407");
-    }
-
-    #[tokio::test]
-    #[ignore = "requires binding a local TCP port for the mock LLM endpoint"]
-    async fn cloud_provider_posts_openai_chat_completions() {
-        use wiremock::matchers::{header, method, path};
-        use wiremock::{Mock, MockServer, ResponseTemplate};
-
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/v1/chat/completions"))
-            .and(header("authorization", "Bearer scw-secret"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "choices": [{"message": {"content": "{\"domain\": \"claims\"}"}}]
-            })))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let cfg = CloudConfig {
-            base_url: format!("{}/v1", server.uri()),
-            api_key: "scw-secret".into(),
-            model: "llama-3.3-70b-instruct".into(),
-        };
-        let reply = Provider::Cloud(cfg).complete_async("prompt").await.unwrap();
-        assert_eq!(reply, "{\"domain\": \"claims\"}");
+    fn cloud_selection_propagates_login_error() {
+        let result = select(None, true, None, "anthropic", "claude", no_cloud);
+        assert!(matches!(result, Err(CliError::AuthFailed)));
     }
 }

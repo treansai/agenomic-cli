@@ -61,14 +61,14 @@ write.
 
 - `--provider direct` (default): the genome's vendor via `ANTHROPIC_API_KEY`
   / `OPENAI_API_KEY`. Behaviour is unchanged.
-- `--provider cloud` (or the `--cloud` shortcut): our internal,
-  OpenAI-compatible LLM, configured entirely by environment — `AGENOMIC_CLOUD_BASE_URL`
-  (default `https://api.scaleway.ai/v1`, also accepts a dedicated Managed
-  Inference endpoint `https://<UUID>.ifr.fr-par.scaleway.com/v1`),
-  `AGENOMIC_CLOUD_API_KEY` (Scaleway secret key, sent as a Bearer token), and
-  `AGENOMIC_CLOUD_MODEL` (default `llama-3.3-70b-instruct`). The cloud provider
-  never falls back to the direct keys; a missing `AGENOMIC_CLOUD_API_KEY` is a
-  clear error. See [`.env.example`](.env.example).
+- `--provider cloud` (or the `--cloud` shortcut): routes through **Agenomic
+  Cloud**. It authenticates you with your Agenomic API key (run `agm cloud
+  login` first) and reaches our internal model **server-side** — the Scaleway
+  credentials never leave the server, so a non-subscriber only ever holds their
+  own Agenomic API key. Without a login the command fails with a clear
+  authentication error and never falls back to the direct keys. The internal
+  model/endpoint is configured on the server (see the cloud deployment's
+  `AGENOMIC_INFERENCE_*` settings).
 
 ## Documentation
 

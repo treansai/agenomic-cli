@@ -310,6 +310,23 @@ struct MoveAgentToBucketRequest<'a> {
     pub bucket_id: Option<&'a str>,
 }
 
+/// `POST /v1/enrich` request: the enrichment prompt and an optional model hint
+/// (the cloud picks the model otherwise).
+#[derive(Debug, Clone, Serialize)]
+pub struct EnrichRequest {
+    pub prompt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+/// `POST /v1/enrich` response: the model's raw text reply and the model used.
+#[derive(Debug, Clone, Deserialize)]
+pub struct EnrichResponse {
+    pub content: String,
+    #[serde(default)]
+    pub model: String,
+}
+
 impl CloudClient {
     /// Construct a new client.
     ///
@@ -915,6 +932,41 @@ impl CloudClient {
             .map_err(|e| CliError::Network(format!("rollback parse: {e}")))?;
         Ok(env.release)
     }
+
+    /// `POST /v1/enrich` — run the enrichment LLM pass against the cloud's
+    /// internal model. The cloud authenticates the caller with their Agenomic
+    /// API key and gates access server-side; the model credentials never reach
+    /// the CLI.
+    pub async fn enrich(&self, request: EnrichRequest) -> CliResult<EnrichResponse> {
+        let url = self.url("/v1/enrich");
+        let idemp = Self::idempotency_key();
+        let resp = self
+            .send_with_retry(|| {
+                let idemp = idemp.clone();
+                let url = url.clone();
+                let request = request.clone();
+                async move {
+                    self.http
+                        .post(&url)
+                        .header("x-api-key", self.api_key_header())
+                        .header("idempotency-key", idemp)
+                        .json(&request)
+                }
+            })
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            let hint = endpoint_hint(status, &body);
+            return Err(CliError::Network(format!(
+                "enrich: HTTP {status} — {}{hint}",
+                truncate_for_error(&body)
+            )));
+        }
+        resp.json::<EnrichResponse>()
+            .await
+            .map_err(|e| CliError::Network(format!("enrich parse: {e}")))
+    }
 }
 
 /// Trim long bodies for inclusion in error strings. We keep enough to
@@ -960,6 +1012,30 @@ mod tests {
     use super::*;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn enrich_posts_prompt_and_returns_content() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/enrich"))
+            .and(header("x-api-key", "secret"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "content": "{\"domain\": \"claims\"}",
+                "model": "llama-3.3-70b-instruct"
+            })))
+            .mount(&server)
+            .await;
+        let c = CloudClient::new(server.uri(), SecretString::new("secret".into()));
+        let r = c
+            .enrich(EnrichRequest {
+                prompt: "p".into(),
+                model: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(r.content, "{\"domain\": \"claims\"}");
+        assert_eq!(r.model, "llama-3.3-70b-instruct");
+    }
 
     #[tokio::test]
     async fn whoami_returns_envelope() {
