@@ -26,6 +26,7 @@ cargo install --path crates/agenomic-cli
 agenomic init .                  # detect everything: genome + workflows + system + env vars
 agenomic init . --agent          # …then fill the semantic fields with the agent's own LLM
 agenomic enrich .                # run the LLM pass alone (ANTHROPIC_API_KEY / OPENAI_API_KEY)
+agenomic enrich . --cloud        # …or against our internal cloud LLM (AGENOMIC_CLOUD_*)
 agenomic validate ./my-agent --level strict
 agenomic bundle compile-runtime ./my-agent
 agenomic build ./my-agent --output dist/my-agent.bundle.tar.zst
@@ -54,6 +55,20 @@ behavior-contract rules — are filled by `agenomic enrich` (or
 `init|update --agent`), which calls the agent's own declared model
 provider and only ever replaces placeholders, schema-validating every
 write.
+
+`agenomic enrich` runs against one of two providers, selected at runtime
+(flag wins over the `AGENOMIC_ENRICH_PROVIDER` fallback):
+
+- `--provider direct` (default): the genome's vendor via `ANTHROPIC_API_KEY`
+  / `OPENAI_API_KEY`. Behaviour is unchanged.
+- `--provider cloud` (or the `--cloud` shortcut): routes through **Agenomic
+  Cloud**. It authenticates you with your Agenomic API key (run `agm cloud
+  login` first) and reaches our internal model **server-side** — the Scaleway
+  credentials never leave the server, so a non-subscriber only ever holds their
+  own Agenomic API key. Without a login the command fails with a clear
+  authentication error and never falls back to the direct keys. The internal
+  model/endpoint is configured on the server (see the cloud deployment's
+  `AGENOMIC_INFERENCE_*` settings).
 
 ## Documentation
 
