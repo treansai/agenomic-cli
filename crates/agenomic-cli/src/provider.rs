@@ -139,7 +139,9 @@ impl Provider {
     async fn complete_async(&self, prompt: &str) -> CliResult<String> {
         let client = http_client()?;
         match self {
-            Provider::Direct { vendor, model } => direct_complete(&client, vendor, model, prompt).await,
+            Provider::Direct { vendor, model } => {
+                direct_complete(&client, vendor, model, prompt).await
+            }
             Provider::Cloud(c) => {
                 openai_chat(&client, &c.base_url, &c.api_key, &c.model, "cloud", prompt).await
             }
@@ -169,7 +171,15 @@ async fn direct_complete(
                         .into(),
                 )
             })?;
-            openai_chat(client, "https://api.openai.com/v1", &key, model, "openai", prompt).await
+            openai_chat(
+                client,
+                "https://api.openai.com/v1",
+                &key,
+                model,
+                "openai",
+                prompt,
+            )
+            .await
         }
         other => Err(CliError::Schema(format!(
             "provider '{other}' is not supported by `agm enrich` (anthropic, openai, cloud); \
@@ -208,7 +218,10 @@ async fn anthropic_chat(client: &reqwest::Client, model: &str, prompt: &str) -> 
             v["error"]["message"].as_str().unwrap_or("unknown")
         )));
     }
-    Ok(v["content"][0]["text"].as_str().unwrap_or_default().to_string())
+    Ok(v["content"][0]["text"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string())
 }
 
 async fn openai_chat(
