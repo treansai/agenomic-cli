@@ -3,6 +3,7 @@
 mod cli;
 mod commands;
 mod enrich;
+mod provider;
 mod render;
 
 use agenomic_core::CliError;

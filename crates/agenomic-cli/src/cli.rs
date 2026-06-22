@@ -232,10 +232,17 @@ pub struct UpdateArgs {
 pub struct EnrichArgs {
     #[arg(default_value = ".")]
     pub path: PathBuf,
-    /// Provider to call (defaults to the genome's `runtime.model_provider`).
-    #[arg(long)]
+    /// Provider: `direct` (default — the genome's vendor via ANTHROPIC_API_KEY /
+    /// OPENAI_API_KEY) or `cloud` (internal OpenAI-compatible endpoint configured
+    /// by AGENOMIC_CLOUD_*). A vendor name (`anthropic`/`openai`) forces that vendor
+    /// in direct mode. Falls back to AGENOMIC_ENRICH_PROVIDER when unset.
+    #[arg(long, env = "AGENOMIC_ENRICH_PROVIDER")]
     pub provider: Option<String>,
-    /// Model to call (defaults to the genome's `runtime.model_id`).
+    /// Shortcut for `--provider cloud`.
+    #[arg(long)]
+    pub cloud: bool,
+    /// Model to call in direct mode (defaults to the genome's `runtime.model_id`).
+    /// The cloud provider uses AGENOMIC_CLOUD_MODEL instead.
     #[arg(long)]
     pub model: Option<String>,
     /// Print the proposed enrichment as JSON; write nothing; exit 0.

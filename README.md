@@ -26,6 +26,7 @@ cargo install --path crates/agenomic-cli
 agenomic init .                  # detect everything: genome + workflows + system + env vars
 agenomic init . --agent          # …then fill the semantic fields with the agent's own LLM
 agenomic enrich .                # run the LLM pass alone (ANTHROPIC_API_KEY / OPENAI_API_KEY)
+agenomic enrich . --cloud        # …or against our internal cloud LLM (AGENOMIC_CLOUD_*)
 agenomic validate ./my-agent --level strict
 agenomic bundle compile-runtime ./my-agent
 agenomic build ./my-agent --output dist/my-agent.bundle.tar.zst
@@ -54,6 +55,20 @@ behavior-contract rules — are filled by `agenomic enrich` (or
 `init|update --agent`), which calls the agent's own declared model
 provider and only ever replaces placeholders, schema-validating every
 write.
+
+`agenomic enrich` runs against one of two providers, selected at runtime
+(flag wins over the `AGENOMIC_ENRICH_PROVIDER` fallback):
+
+- `--provider direct` (default): the genome's vendor via `ANTHROPIC_API_KEY`
+  / `OPENAI_API_KEY`. Behaviour is unchanged.
+- `--provider cloud` (or the `--cloud` shortcut): our internal,
+  OpenAI-compatible LLM, configured entirely by environment — `AGENOMIC_CLOUD_BASE_URL`
+  (default `https://api.scaleway.ai/v1`, also accepts a dedicated Managed
+  Inference endpoint `https://<UUID>.ifr.fr-par.scaleway.com/v1`),
+  `AGENOMIC_CLOUD_API_KEY` (Scaleway secret key, sent as a Bearer token), and
+  `AGENOMIC_CLOUD_MODEL` (default `llama-3.3-70b-instruct`). The cloud provider
+  never falls back to the direct keys; a missing `AGENOMIC_CLOUD_API_KEY` is a
+  clear error. See [`.env.example`](.env.example).
 
 ## Documentation
 
