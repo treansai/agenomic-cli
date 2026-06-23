@@ -27,6 +27,10 @@ pub enum ExitCode {
     OsLauncherFailed = 15,
     OsPolicyViolation = 16,
     OsPortFailed = 17,
+    /// The Tool Boundary Gate held a tool call for human review
+    /// (`RequireHumanApproval`). Distinct from a hard block (16): the effect is
+    /// not denied, only paused pending a signed human decision.
+    ToolBoundaryReviewRequired = 18,
 }
 
 impl ExitCode {
@@ -68,5 +72,6 @@ mod tests {
         assert_eq!(ExitCode::OsLauncherFailed.as_i32(), 15);
         assert_eq!(ExitCode::OsPolicyViolation.as_i32(), 16);
         assert_eq!(ExitCode::OsPortFailed.as_i32(), 17);
+        assert_eq!(ExitCode::ToolBoundaryReviewRequired.as_i32(), 18);
     }
 }

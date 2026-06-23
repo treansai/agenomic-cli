@@ -1,0 +1,10 @@
+---
+source: crates/agenomic-gate/tests/snapshots.rs
+expression: "render(serde_json::json!({\n    \"tool\": \"delete_record\", \"provenance\": \"trusted\", \"arguments\": { \"id\": 7 }\n}))"
+---
+Tool Boundary Gate — REVIEW
+  tool:       delete_record
+  provenance: trusted
+  reasons:
+    [REVIEW] irreversible_effect: irreversible tool 'delete_record' requires human approval before execution
+  rego:       (no policies)

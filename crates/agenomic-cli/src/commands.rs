@@ -1270,6 +1270,208 @@ fn read_governance_input(path: &Path) -> CliResult<String> {
     }
 }
 
+/// `agenomic gate check` — run a proposed tool call through the deterministic
+/// Tool Boundary Gate. Reuses the fail-closed Rego gate, never an LLM. Exits 0
+/// (allow), 16 (block), or 18 (human review required).
+pub fn cmd_gate(args: &GateCommand, format: OutputFormat) -> CliResult<ExitCode> {
+    use agenomic_gate::{GateDecision, ToolBoundaryGate, ToolCall};
+
+    match &args.command {
+        GateSub::Check {
+            tool_call,
+            policy,
+            rules,
+            approval,
+            executed,
+            emit,
+        } => {
+            // 1. The proposed tool call (file or stdin).
+            let raw = read_governance_input(tool_call)?;
+            let mut call: ToolCall = serde_json::from_str(&raw)
+                .map_err(|e| CliError::Schema(format!("tool-call json: {e}")))?;
+
+            // 2. Rule set: explicit --rules, else <policy>/gate.json, else built-ins.
+            let ruleset = load_gate_rules(rules.as_deref(), policy)?;
+            let gate = ToolBoundaryGate::new(ruleset);
+
+            // 3. The existing fail-closed Rego gate — reused, not bypassed.
+            let bundle = agenomic_policy::PolicyBundle::load(policy).map_err(CliError::from)?;
+
+            // 4. A reviewer's signed decision, if we are resuming a held call.
+            let approval_record = match approval {
+                Some(p) => {
+                    let text = std::fs::read_to_string(p).map_err(|e| io_at(p, e))?;
+                    let a: agenomic_gate::HumanApproval = serde_json::from_str(&text)
+                        .map_err(|e| CliError::Schema(format!("approval json: {e}")))?;
+                    Some(a)
+                }
+                None => None,
+            };
+            if let Some(a) = &approval_record {
+                call.human_approval = Some(a.clone());
+            }
+
+            // 5. Decide.
+            let outcome = gate.evaluate(&call, &bundle)?;
+
+            // 6. Seal the passage onto signed ATEP streams (if requested).
+            let descriptors = match &approval_record {
+                Some(a) => agenomic_gate::events::resolution_descriptors(&call, a, *executed),
+                None => agenomic_gate::events::gate_descriptors(&call, &outcome),
+            };
+            let atep = emit_gate_events(emit, &descriptors)?;
+
+            // 7. Report.
+            match format {
+                OutputFormat::Human => {
+                    print!("{}", outcome.render_human());
+                    if let Some(summary) = &atep {
+                        println!(
+                            "  atep:       {} event(s) sealed → {}",
+                            summary["events_appended"],
+                            summary["store"].as_str().unwrap_or_default()
+                        );
+                    }
+                }
+                _ => {
+                    let body = with_atep(
+                        serde_json::json!({
+                            "tool": outcome.tool,
+                            "provenance": outcome.provenance,
+                            "decision": outcome.decision,
+                            "reasons": outcome.reasons,
+                            "rego": {
+                                "allowed": outcome.policy.allowed,
+                                "denies": outcome.policy.denies,
+                                "policies": outcome.policy.policies,
+                            },
+                        }),
+                        atep,
+                    );
+                    print_value(&body, format)?;
+                }
+            }
+
+            // 8. Exit code. On an approved resume the effect proceeds; a
+            // rejection is a block. Otherwise map the gate's verdict.
+            if let Some(a) = &approval_record {
+                return Ok(if a.is_approved() {
+                    ExitCode::Success
+                } else {
+                    ExitCode::OsPolicyViolation
+                });
+            }
+            Ok(match outcome.decision {
+                GateDecision::Allow => ExitCode::Success,
+                GateDecision::Block => ExitCode::OsPolicyViolation,
+                GateDecision::RequireHumanApproval => ExitCode::ToolBoundaryReviewRequired,
+            })
+        }
+    }
+}
+
+/// Resolve the gate rule set: an explicit `--rules` file, else a `gate.json`
+/// sitting next to the Rego `policies/`, else the safe built-in defaults.
+fn load_gate_rules(
+    rules: Option<&Path>,
+    policy_dir: &Path,
+) -> CliResult<agenomic_gate::GateRuleSet> {
+    let path = match rules {
+        Some(p) => Some(p.to_path_buf()),
+        None => {
+            let candidate = policy_dir.join("gate.json");
+            candidate.is_file().then_some(candidate)
+        }
+    };
+    match path {
+        Some(p) => {
+            let text = std::fs::read_to_string(&p).map_err(|e| io_at(&p, e))?;
+            agenomic_gate::GateRuleSet::from_json(&text)
+                .map_err(|e| CliError::Schema(format!("gate rules {}: {e}", p.display())))
+        }
+        None => Ok(agenomic_gate::GateRuleSet::default()),
+    }
+}
+
+/// Seal a gate event-descriptor batch onto the store named by `emit`. The
+/// gate-decision events land on the `policy` stream and human interruptions on
+/// the signed `governance` stream; each event is chained onto its stream's
+/// head (parents = prior causal hash). Returns `None` when no store was
+/// requested. Mirrors [`emit_governance_events`].
+fn emit_gate_events(
+    emit: &AtepEmitArgs,
+    descriptors: &[agenomic_gate::events::GateEventDescriptor],
+) -> CliResult<Option<serde_json::Value>> {
+    use agenomic_atep::{
+        load_signing_key, short_key_id, AtepEvent, AtepManifest, AtepStore, EventHeader,
+        EventPayload, Hlc, StreamId,
+    };
+    use agenomic_gate::events::GateStream;
+
+    let (store_dir, key_path) = match (&emit.atep, &emit.signing_key) {
+        (None, None) => return Ok(None),
+        (Some(_), None) | (None, Some(_)) => {
+            return Err(CliError::Internal(
+                "--atep and --signing-key must be provided together".into(),
+            ))
+        }
+        (Some(d), Some(k)) => (d, k),
+    };
+
+    let manifest_path = store_dir.join("manifest.json");
+    let manifest_bytes = std::fs::read(&manifest_path).map_err(|e| io_at(&manifest_path, e))?;
+    let manifest: AtepManifest = serde_json::from_slice(&manifest_bytes)
+        .map_err(|e| CliError::Internal(format!("atep manifest: {e}")))?;
+    let mut store = AtepStore::open_or_init(store_dir, &manifest.agent_id)?;
+    let sk = load_signing_key(key_path)?;
+    let key_id = short_key_id(&sk.verifying_key());
+    let now = chrono::Utc::now().timestamp_millis() as u64;
+
+    let mut total = 0usize;
+    for kind in [GateStream::Policy, GateStream::Governance] {
+        let stream = match kind {
+            GateStream::Policy => StreamId::Policy,
+            GateStream::Governance => StreamId::Governance,
+        };
+        let descs: Vec<&agenomic_gate::events::GateEventDescriptor> =
+            descriptors.iter().filter(|d| d.stream == kind).collect();
+        if descs.is_empty() {
+            continue;
+        }
+        let head = store.stream_head(stream)?;
+        let seq_start = head.as_ref().map(|(s, _)| s + 1).unwrap_or(0);
+        let mut parent = head.map(|(_, h)| h);
+        let mut events = Vec::with_capacity(descs.len());
+        for (seq, (i, d)) in (seq_start..).zip(descs.iter().enumerate()) {
+            let header = EventHeader {
+                schema_version: 1,
+                event_id: ulid::Ulid::new().to_bytes(),
+                agent_id: manifest.agent_id.clone(),
+                stream,
+                stream_seq: seq,
+                clock: Hlc::new(now, i as u32, 1),
+                parents: parent.into_iter().collect(),
+                event_type: d.event_type.clone(),
+                payload_schema_uri: d.payload_schema_uri(),
+            };
+            let payload = EventPayload(json_to_cbor(d.payload.clone()));
+            let event = AtepEvent::seal(header, payload, &sk, key_id.clone())?;
+            parent = Some(event.causal_hash);
+            events.push(event);
+        }
+        total += events.len();
+        store.append_batch(stream, &events)?;
+    }
+
+    Ok(Some(serde_json::json!({
+        "store": store_dir,
+        "agent_id": manifest.agent_id,
+        "events_appended": total,
+        "signer_key_id": key_id,
+        "store_merkle_root": hex::encode(store.store_merkle_root()),
+    })))
+}
+
 pub fn cmd_hash(args: &HashArgs, _format: OutputFormat, _no_color: bool) -> CliResult<ExitCode> {
     let manifest = if args.target.is_dir() {
         agenomic_hash::compute_manifest(&args.target)?

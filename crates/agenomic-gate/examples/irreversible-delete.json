@@ -1,0 +1,9 @@
+{
+  "tool": "delete_record",
+  "provenance": "trusted",
+  "scopes": ["db.write"],
+  "arguments": {
+    "table": "customers",
+    "id": 4042
+  }
+}

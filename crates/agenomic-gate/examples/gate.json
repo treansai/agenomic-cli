@@ -1,0 +1,6 @@
+{
+  "allowed_tools": [],
+  "approved_recipients": ["@corp.example"],
+  "irreversible_tools": ["delete_record", "deploy", "send_payment", "transfer_funds"],
+  "external_sink_tools": ["send_email", "http_post", "webhook", "upload"]
+}

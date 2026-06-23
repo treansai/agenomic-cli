@@ -91,6 +91,7 @@ dependencies = [
  "agenomic-diagnostics",
  "agenomic-diff",
  "agenomic-fs",
+ "agenomic-gate",
  "agenomic-governance",
  "agenomic-hash",
  "agenomic-os",
@@ -252,6 +253,26 @@ dependencies = [
  "serde",
  "tempfile",
  "walkdir",
+]
+
+[[package]]
+name = "agenomic-gate"
+version = "0.1.1-rc.0"
+dependencies = [
+ "agenomic-atep",
+ "agenomic-core",
+ "agenomic-policy",
+ "blake3",
+ "chrono",
+ "ciborium",
+ "ed25519-dalek",
+ "hex",
+ "insta",
+ "proptest",
+ "rand_core 0.6.4",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

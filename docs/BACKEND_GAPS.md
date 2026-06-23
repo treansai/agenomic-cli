@@ -97,10 +97,26 @@ it should fail closed with a diagnostic that references this file.
   `agenomic governance {cluster,hypothesize,critique,audit} --atep <store>
   --signing-key <key>` seals each engine result as a `governance.*` event,
   chained onto the stream head and verifiable with `agenomic atep verify`.
-- **Gap**: Mode 4 (human approval gate) and Mode 5 (shadow / canary
-  deployment at 0/5/25/100% traffic) belong above this layer; the CLI emits
-  the artifacts (and now the signed audit trail) a gate / replay-runner
-  consumes but does not yet ship the gate itself. The cloud-side
+- **Tool Boundary Gate (resolved)**: the human-approval gate (Mode 4) now
+  ships as `agenomic gate check <tool-call.json> --policy <dir>` (crate
+  `agenomic-gate`). It is a deterministic, **at-the-effect** enforcement
+  point — never an LLM call — that confirms a non-negotiable rule set at every
+  tool-call boundary: tool allowlist & scopes, self-modification, path
+  traversal / sensitive files, PII / exfiltration to unapproved external
+  recipients, and irreversible effects. Arguments derived from
+  model / tool / MCP / skill content are marked `untrusted` and held to
+  stricter rules. The verdict is `Allow | Block | RequireHumanApproval`
+  (exits 0 / 16 / 18). It **reuses the fail-closed Rego gate** above, never
+  bypasses it. Every passage seals signed ATEP events — `tool.call.proposed`,
+  `policy.check.performed`, `tool.call.approved|blocked|executed` on the
+  `policy` stream and `human.review.requested|approved|rejected|modified` on
+  the `governance` stream — all verifiable with `agenomic atep verify`. See
+  `docs/tool-boundary-gate.md`.
+- **Gap**: Mode 5 (shadow / canary deployment at 0/5/25/100% traffic) belongs
+  above this layer and is still open. Wiring the gate to intercept *individual*
+  tool calls inside a running agent belongs in the runtime adapter (the
+  subprocess launcher does not surface per-call effects); the CLI ships the
+  gate and the standalone `gate check` surface. The cloud-side
   `AdversarialReview` entity from `agenomic-web/BACKEND_GAPS.md` Gap 5 is also
   still open — these engines are the local computation side of that workflow.
 

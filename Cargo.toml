@@ -21,6 +21,7 @@ members = [
     "crates/agenomic-compile",
     "crates/agenomic-policy",
     "crates/agenomic-governance",
+    "crates/agenomic-gate",
     "crates/agenomic-cli",
     "xtask",
 ]
@@ -55,6 +56,7 @@ agenomic-os = { path = "crates/agenomic-os", version = "0.1.1-rc.0" }
 agenomic-compile = { path = "crates/agenomic-compile", version = "0.1.1-rc.0" }
 agenomic-policy = { path = "crates/agenomic-policy", version = "0.1.1-rc.0" }
 agenomic-governance = { path = "crates/agenomic-governance", version = "0.1.1-rc.0" }
+agenomic-gate = { path = "crates/agenomic-gate", version = "0.1.1-rc.0" }
 
 # CLI / parsing
 clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
