@@ -1314,9 +1314,13 @@ pub fn cmd_gate(args: &GateCommand, format: OutputFormat) -> CliResult<ExitCode>
             // 5. Decide.
             let outcome = gate.evaluate(&call, &bundle)?;
 
-            // 6. Seal the passage onto signed ATEP streams (if requested).
+            // 6. Seal the passage onto signed ATEP streams (if requested). On a
+            //    resume the re-evaluated outcome governs the terminal event — a
+            //    signed approval clears a review hold, never a hard block.
             let descriptors = match &approval_record {
-                Some(a) => agenomic_gate::events::resolution_descriptors(&call, a, *executed),
+                Some(a) => {
+                    agenomic_gate::events::resolution_descriptors(&call, a, &outcome, *executed)
+                }
                 None => agenomic_gate::events::gate_descriptors(&call, &outcome),
             };
             let atep = emit_gate_events(emit, &descriptors)?;
@@ -1352,10 +1356,12 @@ pub fn cmd_gate(args: &GateCommand, format: OutputFormat) -> CliResult<ExitCode>
                 }
             }
 
-            // 8. Exit code. On an approved resume the effect proceeds; a
-            // rejection is a block. Otherwise map the gate's verdict.
-            if let Some(a) = &approval_record {
-                return Ok(if a.is_approved() {
+            // 8. Exit code. On a resume the call proceeds only if the
+            //    re-evaluated decision is Allow — a signed approval clears a
+            //    review hold, never a hard block (Rego deny, self-modification,
+            //    exfiltration, untrusted irreversible). A rejection blocks too.
+            if approval_record.is_some() {
+                return Ok(if outcome.is_allowed() {
                     ExitCode::Success
                 } else {
                     ExitCode::OsPolicyViolation

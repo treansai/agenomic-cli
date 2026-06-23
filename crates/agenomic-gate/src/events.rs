@@ -130,13 +130,18 @@ pub fn gate_descriptors(call: &ToolCall, outcome: &GateOutcome) -> Vec<GateEvent
 }
 
 /// The descriptor sequence for a human resolving a held call. The
-/// `human.review.*` event carries the reviewer's role / justification /
-/// timestamp and is sealed (signed) by the embedder. On approval the call's
-/// `tool.call.approved` (and, when `executed`, `tool.call.executed`) follow;
-/// otherwise `tool.call.blocked`.
+/// `human.review.*` event always records the reviewer's decision (role /
+/// justification / timestamp) and is sealed by the embedder.
+///
+/// Execution follows **only** when the reviewer approved *and* the call's
+/// re-evaluated `outcome` is [`GateDecision::Allow`]: a signed approval clears
+/// a review hold, but it can never override a hard block (a Rego deny,
+/// self-modification, exfiltration, or an untrusted irreversible effect). In
+/// every other case the terminal event is `tool.call.blocked`.
 pub fn resolution_descriptors(
     call: &ToolCall,
     approval: &HumanApproval,
+    outcome: &GateOutcome,
     executed: bool,
 ) -> Vec<GateEventDescriptor> {
     let event_type = match approval.disposition {
@@ -156,8 +161,10 @@ pub fn resolution_descriptors(
         }),
     );
 
+    // The human approval only clears a review hold; a hard block survives it.
+    let proceed = approval.is_approved() && outcome.is_allowed();
     let mut out = vec![review];
-    if approval.is_approved() {
+    if proceed {
         out.push(GateEventDescriptor::new(
             GateStream::Policy,
             EVENT_TOOL_CALL_APPROVED,
@@ -174,7 +181,11 @@ pub fn resolution_descriptors(
         out.push(GateEventDescriptor::new(
             GateStream::Policy,
             EVENT_TOOL_CALL_BLOCKED,
-            serde_json::json!({ "tool": call.tool, "via": "human_review" }),
+            serde_json::json!({
+                "tool": call.tool,
+                "via": "human_review",
+                "decision": outcome.decision,
+            }),
         ));
     }
     out
@@ -234,5 +245,45 @@ mod tests {
             d.payload_schema_uri(),
             "atep://schemas/v1/tool/call/proposed"
         );
+    }
+
+    #[test]
+    fn approval_never_overrides_a_hard_block() {
+        // A self-modifying write is a hard block; attaching an approval must not
+        // turn it into an executed call.
+        let (call, out) = outcome(serde_json::json!({
+            "tool": "fs.write", "provenance": "untrusted",
+            "arguments": { "path": "bundle/genome.yaml", "content": "x" },
+            "human_approval": {
+                "disposition": "approved", "role": "sre",
+                "justification": "j", "timestamp": "2026-06-23T10:00:00Z"
+            }
+        }));
+        assert_eq!(out.decision, GateDecision::Block);
+        let approval = call.human_approval.clone().unwrap();
+        let d = resolution_descriptors(&call, &approval, &out, true);
+        // The human decision is still recorded…
+        assert_eq!(d[0].event_type, EVENT_HUMAN_REVIEW_APPROVED);
+        // …but the terminal is BLOCKED, and nothing is marked executed.
+        assert_eq!(d.last().unwrap().event_type, EVENT_TOOL_CALL_BLOCKED);
+        assert!(!d.iter().any(|e| e.event_type == EVENT_TOOL_CALL_EXECUTED));
+    }
+
+    #[test]
+    fn approved_and_allowed_resume_executes() {
+        // Approval clears the irreversible review hold → Allow → executes.
+        let (call, out) = outcome(serde_json::json!({
+            "tool": "delete_record", "provenance": "trusted",
+            "arguments": { "id": 42 },
+            "human_approval": {
+                "disposition": "approved", "role": "sre",
+                "justification": "j", "timestamp": "2026-06-23T10:00:00Z"
+            }
+        }));
+        assert_eq!(out.decision, GateDecision::Allow);
+        let approval = call.human_approval.clone().unwrap();
+        let d = resolution_descriptors(&call, &approval, &out, true);
+        assert_eq!(d[0].event_type, EVENT_HUMAN_REVIEW_APPROVED);
+        assert!(d.iter().any(|e| e.event_type == EVENT_TOOL_CALL_EXECUTED));
     }
 }

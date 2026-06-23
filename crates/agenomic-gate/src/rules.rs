@@ -64,9 +64,31 @@ impl Default for GateRuleSet {
 }
 
 impl GateRuleSet {
-    /// Parse a rule set from JSON, inheriting defaults for any omitted field.
+    /// Parse a rule set from JSON. Omitted fields inherit the built-in
+    /// defaults, and the **security-floor** lists (`irreversible_tools`,
+    /// `external_sink_tools`, `self_mutation_tools`, `effectful_write_tools`,
+    /// `protected_paths`) are *unioned* with the built-in floor — a custom
+    /// `gate.json` can only extend them, never shrink them below the
+    /// non-negotiable baseline. The operator-controlled grants (`allowed_tools`,
+    /// `allowed_scopes`, `approved_recipients`) are taken as given.
     pub fn from_json(text: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(text)
+        let mut rules: Self = serde_json::from_str(text)?;
+        rules.enforce_floor();
+        Ok(rules)
+    }
+
+    /// Union the security-floor lists with the built-in defaults so untrusted
+    /// config can never weaken the non-negotiable invariants. Idempotent.
+    pub fn enforce_floor(&mut self) {
+        self.irreversible_tools.extend(default_irreversible());
+        self.external_sink_tools.extend(default_external_sinks());
+        self.self_mutation_tools.extend(default_self_mutation());
+        self.effectful_write_tools.extend(default_effectful_write());
+        for p in default_protected_paths() {
+            if !self.protected_paths.contains(&p) {
+                self.protected_paths.push(p);
+            }
+        }
     }
 
     /// `true` when an allowlist is in force.
@@ -197,5 +219,18 @@ mod tests {
         assert!(r.has_allowlist());
         assert!(r.allowed_tools.contains("read_file"));
         assert!(r.irreversible_tools.contains("delete_record"));
+    }
+
+    #[test]
+    fn floor_lists_cannot_be_weakened_by_config() {
+        // A custom list *extends* the floor, never replaces it.
+        let r = GateRuleSet::from_json(r#"{ "irreversible_tools": ["new_tool"] }"#).unwrap();
+        assert!(r.irreversible_tools.contains("new_tool"));
+        assert!(r.irreversible_tools.contains("delete_record"));
+
+        // An empty protected_paths cannot disable self-modification protection.
+        let r = GateRuleSet::from_json(r#"{ "protected_paths": [] }"#).unwrap();
+        assert!(r.protected_paths.iter().any(|p| p == "genome.yaml"));
+        assert!(r.protected_paths.iter().any(|p| p.contains(".rego")));
     }
 }

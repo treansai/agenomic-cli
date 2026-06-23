@@ -301,16 +301,34 @@ impl ToolBoundaryGate {
     }
 }
 
-/// `true` if `dest` is in the approved set, either exactly or by domain suffix
-/// (an approved `corp.com` or `@corp.com` matches `alice@corp.com`).
+/// `true` if `dest` is an approved recipient: an exact match, or its **host**
+/// is the approved domain or a subdomain of it. Matching is on a label
+/// boundary, not a raw byte suffix, so an approved `corp.com` (or `@corp.com`)
+/// matches `alice@corp.com` and `mail.corp.com` but **not** the lookalike
+/// `attacker@evilcorp.com` or `https://evilcorp.com`.
 fn is_approved(dest: &str, rules: &GateRuleSet) -> bool {
     if rules.approved_recipients.contains(dest) {
         return true;
     }
-    rules.approved_recipients.iter().any(|a| {
-        let a = a.trim_start_matches('@');
-        !a.is_empty() && dest.ends_with(a)
+    let host = recipient_host(dest);
+    rules.approved_recipients.iter().any(|entry| {
+        let domain = entry.trim_start_matches('@');
+        !domain.is_empty() && (host == domain || host.ends_with(&format!(".{domain}")))
     })
+}
+
+/// Extract the host from a destination: the part after `://` (if a URL), then
+/// after the last `@` (if an email), with any port / path / query stripped.
+fn recipient_host(dest: &str) -> &str {
+    let after_scheme = dest.split_once("://").map(|(_, r)| r).unwrap_or(dest);
+    let host_part = after_scheme
+        .rsplit_once('@')
+        .map(|(_, h)| h)
+        .unwrap_or(after_scheme);
+    let end = host_part
+        .find(['/', '?', '#', ':'])
+        .unwrap_or(host_part.len());
+    &host_part[..end]
 }
 
 fn fmt_dests(dests: &[String]) -> String {
@@ -395,5 +413,35 @@ mod tests {
         }));
         let out = gate.evaluate(&c, &PolicyBundle::default()).unwrap();
         assert_eq!(out.decision, GateDecision::Allow);
+    }
+
+    #[test]
+    fn recipient_host_extraction() {
+        assert_eq!(recipient_host("alice@corp.com"), "corp.com");
+        assert_eq!(recipient_host("https://corp.com/collect"), "corp.com");
+        assert_eq!(recipient_host("https://corp.com:8443/x?y=1"), "corp.com");
+        assert_eq!(recipient_host("mail.corp.com"), "mail.corp.com");
+    }
+
+    #[test]
+    fn lookalike_domain_is_not_approved() {
+        let mut rules = GateRuleSet::default();
+        rules.approved_recipients.insert("corp.com".into());
+        // Boundary match: real domain + subdomain are approved.
+        assert!(is_approved("ops@corp.com", &rules));
+        assert!(is_approved("https://mail.corp.com/x", &rules));
+        // Lookalike suffixes are NOT approved.
+        assert!(!is_approved("attacker@evilcorp.com", &rules));
+        assert!(!is_approved("https://evilcorp.com/collect", &rules));
+
+        // And the gate blocks PII egress to the lookalike domain.
+        let gate = ToolBoundaryGate::new(rules);
+        let c = call(serde_json::json!({
+            "tool": "send_email", "provenance": "trusted",
+            "arguments": { "to": "victim@evilcorp.com", "body": "ssn 123-45-6789" }
+        }));
+        let out = gate.evaluate(&c, &PolicyBundle::default()).unwrap();
+        assert_eq!(out.decision, GateDecision::Block);
+        assert!(out.reasons.iter().any(|r| r.rule == "pii_external_egress"));
     }
 }

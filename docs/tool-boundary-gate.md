@@ -112,8 +112,12 @@ A signed human approval (`role` / `justification` / `timestamp` are mandatory):
 ## Customising the rule set
 
 Drop a `gate.json` next to the Rego `policies/` directory (or pass `--rules`).
-It is merged over the safe built-in defaults — a partial file only overrides
-the fields it names:
+It is merged over the safe built-in defaults. The **security-floor** lists
+(`irreversible_tools`, `external_sink_tools`, `self_mutation_tools`,
+`effectful_write_tools`, `protected_paths`) are *extend-only* — config can add
+to them but never shrink them below the non-negotiable baseline. The
+operator-controlled grants (`allowed_tools`, `allowed_scopes`,
+`approved_recipients`) are taken as given:
 
 ```json
 {

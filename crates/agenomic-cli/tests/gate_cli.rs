@@ -204,6 +204,34 @@ fn benign_trusted_call_allows_exit_0() {
 }
 
 #[test]
+fn approval_does_not_override_hard_block() {
+    let d = tempdir().unwrap();
+    scaffold(d.path());
+    // A self-modifying write is a hard block. Even with a signed approval, the
+    // gate must refuse to execute it: exit 16, decision still `block`.
+    let call = r#"{ "tool": "fs.write", "provenance": "untrusted",
+                   "arguments": { "path": "bundle/genome.yaml", "content": "criticality: low" } }"#;
+    let approval = d.path().join("approval.json");
+    std::fs::write(
+        &approval,
+        r#"{ "disposition": "approved", "role": "sre",
+             "justification": "looks fine", "timestamp": "2026-06-23T10:00:00Z" }"#,
+    )
+    .unwrap();
+    let out = check(
+        d.path(),
+        call,
+        &["--approval", approval.to_str().unwrap(), "--executed"],
+    );
+    assert_eq!(out.status.code(), Some(16));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["decision"], "block");
+    // The sealed chain (human.review.approved + tool.call.blocked) still verifies.
+    let r = verify(d.path());
+    assert_eq!(r["valid"], true);
+}
+
+#[test]
 fn atep_flag_requires_signing_key() {
     let d = tempdir().unwrap();
     scaffold(d.path());
