@@ -125,7 +125,9 @@ const DEST_KEYS: &[&str] = &[
 impl ToolCall {
     /// `true` when the call carries an approved [`HumanApproval`].
     pub fn is_approved(&self) -> bool {
-        self.human_approval.as_ref().is_some_and(HumanApproval::is_approved)
+        self.human_approval
+            .as_ref()
+            .is_some_and(HumanApproval::is_approved)
     }
 
     /// Every egress destination this call would reach: the explicit

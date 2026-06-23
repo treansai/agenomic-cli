@@ -30,7 +30,11 @@ fn scaffold(root: &Path) {
         ])
         .output()
         .unwrap();
-    assert!(init.status.success(), "init: {}", String::from_utf8_lossy(&init.stderr));
+    assert!(
+        init.status.success(),
+        "init: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
 
     std::fs::create_dir_all(root.join("pol/policies")).unwrap();
     std::fs::write(
@@ -74,7 +78,11 @@ fn verify(root: &Path) -> serde_json::Value {
         ])
         .output()
         .unwrap();
-    assert!(out.status.success(), "verify: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "verify: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     serde_json::from_slice(&out.stdout).unwrap()
 }
 
@@ -168,11 +176,7 @@ fn irreversible_holds_then_signed_approval_executes() {
     let approved = check(
         d.path(),
         call,
-        &[
-            "--approval",
-            approval.to_str().unwrap(),
-            "--executed",
-        ],
+        &["--approval", approval.to_str().unwrap(), "--executed"],
     );
     assert_eq!(approved.status.code(), Some(0));
 
@@ -204,7 +208,11 @@ fn atep_flag_requires_signing_key() {
     let d = tempdir().unwrap();
     scaffold(d.path());
     let call = d.path().join("c.json");
-    std::fs::write(&call, r#"{ "tool": "get_weather", "provenance": "trusted" }"#).unwrap();
+    std::fs::write(
+        &call,
+        r#"{ "tool": "get_weather", "provenance": "trusted" }"#,
+    )
+    .unwrap();
     let out = agenomic()
         .args([
             "gate",

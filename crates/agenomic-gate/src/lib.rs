@@ -221,7 +221,10 @@ impl ToolBoundaryGate {
             } else {
                 reasons.push(GateReason::info(
                     "irreversible_effect",
-                    format!("irreversible tool '{}' proceeding under recorded approval", call.tool),
+                    format!(
+                        "irreversible tool '{}' proceeding under recorded approval",
+                        call.tool
+                    ),
                 ));
             }
         }

@@ -103,7 +103,9 @@ fn token_is_email(token: &str) -> bool {
     }
     let ok = |c: u8| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'%' | b'+' | b'-');
     bytes.iter().take(at).all(|&c| ok(c))
-        && domain.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-'))
+        && domain
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-'))
 }
 
 /// `true` if any token matches the US SSN shape `ddd-dd-dddd`.
@@ -166,8 +168,23 @@ fn luhn_ok(ascii_digits: &[u8]) -> bool {
 /// Known credential prefixes / markers. Kept explicit (no entropy heuristics)
 /// so detection is predictable.
 const SECRET_PREFIXES: &[&str] = &[
-    "sk-", "sk_live_", "sk_test_", "rk_live_", "AKIA", "ASIA", "ghp_", "gho_", "ghs_", "github_pat_",
-    "xoxb-", "xoxp-", "xoxa-", "AIza", "ya29.", "glpat-", "AGENOMIC_SECRET",
+    "sk-",
+    "sk_live_",
+    "sk_test_",
+    "rk_live_",
+    "AKIA",
+    "ASIA",
+    "ghp_",
+    "gho_",
+    "ghs_",
+    "github_pat_",
+    "xoxb-",
+    "xoxp-",
+    "xoxa-",
+    "AIza",
+    "ya29.",
+    "glpat-",
+    "AGENOMIC_SECRET",
 ];
 
 fn has_secret(s: &str) -> bool {
@@ -175,7 +192,11 @@ fn has_secret(s: &str) -> bool {
         return true;
     }
     s.split(|c: char| c.is_whitespace() || c == '"' || c == '\'')
-        .any(|t| SECRET_PREFIXES.iter().any(|p| t.starts_with(p) && t.len() > p.len() + 8))
+        .any(|t| {
+            SECRET_PREFIXES
+                .iter()
+                .any(|p| t.starts_with(p) && t.len() > p.len() + 8)
+        })
 }
 
 // ---- path checks -------------------------------------------------------------
@@ -199,29 +220,44 @@ mod tests {
 
     #[test]
     fn detects_email() {
-        assert_eq!(scan_pii(&serde_json::json!("reach me at a@b.com ok")), Some(PiiKind::Email));
+        assert_eq!(
+            scan_pii(&serde_json::json!("reach me at a@b.com ok")),
+            Some(PiiKind::Email)
+        );
         assert_eq!(scan_pii(&serde_json::json!("no address here")), None);
         assert_eq!(scan_pii(&serde_json::json!("a@b")), None); // no TLD
     }
 
     #[test]
     fn detects_ssn() {
-        assert_eq!(scan_pii(&serde_json::json!("ssn 123-45-6789")), Some(PiiKind::Ssn));
+        assert_eq!(
+            scan_pii(&serde_json::json!("ssn 123-45-6789")),
+            Some(PiiKind::Ssn)
+        );
     }
 
     #[test]
     fn detects_credit_card_luhn() {
         // 4111 1111 1111 1111 is the classic Luhn-valid test PAN.
-        assert_eq!(scan_pii(&serde_json::json!("4111 1111 1111 1111")), Some(PiiKind::CreditCard));
+        assert_eq!(
+            scan_pii(&serde_json::json!("4111 1111 1111 1111")),
+            Some(PiiKind::CreditCard)
+        );
         // Embedded in prose is still detected.
-        assert_eq!(scan_pii(&serde_json::json!("card 4111 1111 1111 1111")), Some(PiiKind::CreditCard));
+        assert_eq!(
+            scan_pii(&serde_json::json!("card 4111 1111 1111 1111")),
+            Some(PiiKind::CreditCard)
+        );
         assert_eq!(scan_pii(&serde_json::json!("4111111111111112")), None); // bad checksum
         assert_eq!(scan_pii(&serde_json::json!("call 555 0100 today")), None); // short run
     }
 
     #[test]
     fn detects_secret_prefix() {
-        assert_eq!(scan_pii(&serde_json::json!("token sk-ABCDEFGHIJKLMNOP")), Some(PiiKind::Secret));
+        assert_eq!(
+            scan_pii(&serde_json::json!("token sk-ABCDEFGHIJKLMNOP")),
+            Some(PiiKind::Secret)
+        );
         assert_eq!(
             scan_pii(&serde_json::json!("-----BEGIN OPENSSH PRIVATE KEY-----")),
             Some(PiiKind::Secret)

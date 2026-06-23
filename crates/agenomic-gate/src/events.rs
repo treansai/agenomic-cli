@@ -48,7 +48,11 @@ pub struct GateEventDescriptor {
 
 impl GateEventDescriptor {
     fn new(stream: GateStream, event_type: &str, payload: serde_json::Value) -> Self {
-        Self { stream, event_type: event_type.to_string(), payload }
+        Self {
+            stream,
+            event_type: event_type.to_string(),
+            payload,
+        }
     }
 
     /// `atep://schemas/v1/<event_type-with-slashes>` — mirrors the convention
@@ -221,7 +225,14 @@ mod tests {
 
     #[test]
     fn schema_uri_uses_slash_form() {
-        let d = GateEventDescriptor::new(GateStream::Policy, EVENT_TOOL_CALL_PROPOSED, serde_json::Value::Null);
-        assert_eq!(d.payload_schema_uri(), "atep://schemas/v1/tool/call/proposed");
+        let d = GateEventDescriptor::new(
+            GateStream::Policy,
+            EVENT_TOOL_CALL_PROPOSED,
+            serde_json::Value::Null,
+        );
+        assert_eq!(
+            d.payload_schema_uri(),
+            "atep://schemas/v1/tool/call/proposed"
+        );
     }
 }

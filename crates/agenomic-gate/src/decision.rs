@@ -29,13 +29,25 @@ pub struct GateReason {
 
 impl GateReason {
     pub fn block(rule: &str, message: impl Into<String>) -> Self {
-        Self { kind: ReasonKind::Block, rule: rule.into(), message: message.into() }
+        Self {
+            kind: ReasonKind::Block,
+            rule: rule.into(),
+            message: message.into(),
+        }
     }
     pub fn require_approval(rule: &str, message: impl Into<String>) -> Self {
-        Self { kind: ReasonKind::RequireApproval, rule: rule.into(), message: message.into() }
+        Self {
+            kind: ReasonKind::RequireApproval,
+            rule: rule.into(),
+            message: message.into(),
+        }
     }
     pub fn info(rule: &str, message: impl Into<String>) -> Self {
-        Self { kind: ReasonKind::Info, rule: rule.into(), message: message.into() }
+        Self {
+            kind: ReasonKind::Info,
+            rule: rule.into(),
+            message: message.into(),
+        }
     }
 }
 
@@ -64,7 +76,10 @@ impl GateDecision {
 pub fn decide(reasons: &[GateReason]) -> GateDecision {
     if reasons.iter().any(|r| r.kind == ReasonKind::Block) {
         GateDecision::Block
-    } else if reasons.iter().any(|r| r.kind == ReasonKind::RequireApproval) {
+    } else if reasons
+        .iter()
+        .any(|r| r.kind == ReasonKind::RequireApproval)
+    {
         GateDecision::RequireHumanApproval
     } else {
         GateDecision::Allow
