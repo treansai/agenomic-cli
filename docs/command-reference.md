@@ -26,7 +26,8 @@ Every `agenomic` command, their flags, and exit codes.
 | 9 | AttestationVerificationFailed | `agenomic verify` failed a check |
 | 10 | AtepIntegrityFailed | ATEP signature, merkle root, or CRC failed |
 | 14 | OsContractInvalid | `execution:` block missing or malformed |
-| 16 | OsPolicyViolation | A Rego policy gate denied `run`/`policy eval`, or env/permission policy failed |
+| 16 | OsPolicyViolation | A Rego policy gate denied `run`/`policy eval`, or the Tool Boundary Gate blocked a tool call |
+| 18 | ToolBoundaryReviewRequired | `agenomic gate check` held a tool call for human review |
 
 ## Commands
 
@@ -138,6 +139,26 @@ so repeated runs build one tamper-evident trail. The store must already be
 `agenomic atep verify <STORE> --public-key <KEY>.pub`. The result body gains an
 `atep` object reporting `events_appended`, `stream_seq_start`, `signer_key_id`,
 and the new `store_merkle_root`.
+
+### `agenomic gate check <TOOL-CALL.json> [--policy DIR] [--rules FILE] [--approval FILE] [--executed]`
+
+Run a proposed tool call through the **Tool Boundary Gate** — deterministic,
+at-the-effect enforcement that never calls an LLM. Layers a non-negotiable rule
+set (tool allowlist & scopes, self-modification, path traversal / sensitive
+files, PII / exfiltration to unapproved external recipients, irreversible
+effects) over the reused fail-closed Rego gate. Arguments are `untrusted` by
+default — provenance from model / tool / MCP / skill content is held to stricter
+rules. Exits `0` (allow), `16` (block), or `18` (human review required).
+
+`--policy DIR` (default `.`) holds a `policies/` folder (Rego) and an optional
+`gate.json` rule override (also selectable via `--rules FILE`). With
+`--atep <STORE> --signing-key <KEY>` the passage is sealed as signed events:
+`tool.call.proposed`, `policy.check.performed`, `tool.call.approved|blocked` on
+the `policy` stream, and `human.review.requested` on the `governance` stream.
+`--approval <FILE>` resumes a held call with a signed reviewer decision
+(`role` / `justification` / `timestamp`), emitting
+`human.review.approved|rejected|modified` and, with `--executed`,
+`tool.call.executed`. See `docs/tool-boundary-gate.md`.
 
 ### `agenomic policy eval [BUNDLE] [--input FILE]`
 

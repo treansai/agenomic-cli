@@ -1,0 +1,27 @@
+[package]
+name = "agenomic-gate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Tool Boundary Gate — deterministic, at-the-effect enforcement of tool calls (ClawGuard-style)."
+
+[dependencies]
+agenomic-core = { workspace = true }
+agenomic-policy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+blake3 = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+agenomic-atep = { workspace = true }
+ed25519-dalek = { workspace = true }
+rand_core = { workspace = true }
+tempfile = { workspace = true }
+proptest = { workspace = true }
+insta = { workspace = true }
+chrono = { workspace = true }
+ciborium = { workspace = true }

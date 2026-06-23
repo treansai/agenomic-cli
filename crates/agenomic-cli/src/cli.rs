@@ -106,6 +106,8 @@ pub enum Commands {
     Policy(PolicyCommand),
     /// Governance agents over flagged production traces (diagnostic / hypothesis / adversarial).
     Governance(GovernanceCommand),
+    /// Tool Boundary Gate — deterministic, at-the-effect enforcement of tool calls.
+    Gate(GateCommand),
     /// Print the canonical hash of a bundle.
     Hash(HashArgs),
     /// Diff two bundles.
@@ -424,6 +426,37 @@ pub enum GovernanceSub {
         /// Exit 16 when at least one proposal lands at `Verdict::Block`.
         #[arg(long)]
         fail_on_block: bool,
+        #[command(flatten)]
+        emit: AtepEmitArgs,
+    },
+}
+
+#[derive(Debug, Parser)]
+pub struct GateCommand {
+    #[command(subcommand)]
+    pub command: GateSub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum GateSub {
+    /// Evaluate a proposed tool call at the boundary. Deterministic and
+    /// LLM-free: exits 0 (allow), 16 (block), or 18 (human review required).
+    Check {
+        /// Tool-call JSON file, or `-` for stdin.
+        tool_call: PathBuf,
+        /// Directory with a `policies/` folder (Rego) and an optional `gate.json`.
+        #[arg(long, default_value = ".")]
+        policy: PathBuf,
+        /// Override the gate rule set (defaults to `<policy>/gate.json`, then built-ins).
+        #[arg(long)]
+        rules: Option<PathBuf>,
+        /// A signed human-approval JSON to resume a held call
+        /// (role / justification / timestamp).
+        #[arg(long)]
+        approval: Option<PathBuf>,
+        /// On an approved resume, also record `tool.call.executed`.
+        #[arg(long)]
+        executed: bool,
         #[command(flatten)]
         emit: AtepEmitArgs,
     },

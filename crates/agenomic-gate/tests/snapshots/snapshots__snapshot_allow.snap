@@ -1,0 +1,9 @@
+---
+source: crates/agenomic-gate/tests/snapshots.rs
+expression: "render(serde_json::json!({\n    \"tool\": \"get_weather\", \"provenance\": \"trusted\", \"arguments\":\n    { \"city\": \"Paris\" }\n}))"
+---
+Tool Boundary Gate — ALLOW
+  tool:       get_weather
+  provenance: trusted
+  reasons:    (none — no invariant tripped)
+  rego:       (no policies)
