@@ -26,8 +26,18 @@ jobs:
             os: windows-latest
             cross: false
     runs-on: ${{ matrix.os }}
+    env:
+      # Embed the release tag in the binaries so `agenomic --version` /
+      # `agm --version` report it (see crates/agenomic-cli/src/cli.rs). Read at
+      # compile time by both the host (`cargo`) and container (`cross`) builds;
+      # `cross` forwards it via Cross.toml's `passthrough`.
+      AGENOMIC_VERSION: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history + tags so `git describe --tags` works as the fallback
+          # version source when AGENOMIC_VERSION is unset.
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}

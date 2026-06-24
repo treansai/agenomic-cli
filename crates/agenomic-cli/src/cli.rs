@@ -57,8 +57,29 @@ impl RuntimeAdapterArg {
     }
 }
 
+/// Version string reported by `--version`, resolved at build time.
+///
+/// Priority:
+/// 1. `AGENOMIC_VERSION` (build env) — the release workflow sets this to the
+///    pushed git tag (e.g. `v0.2.0-rc.0`) so every published target, including
+///    the cross-compiled ones built in a git-less container, reports the tag.
+/// 2. `git describe` against the worktree — a working build reports the nearest
+///    `v*` tag plus commit/dirty info (e.g. `v0.2.0-rc.0-3-gabc1234-modified`).
+/// 3. `v` + the crate version — when built outside a git checkout (source
+///    tarball) with no override.
+///
+/// The invariant the release relies on: tag `vX` ⇒ the binary reports `vX`.
+pub const VERSION: &str = match option_env!("AGENOMIC_VERSION") {
+    Some(v) => v,
+    None => git_version::git_version!(
+        args = ["--tags", "--always", "--dirty=-modified", "--match=v*"],
+        cargo_prefix = "v",
+        fallback = "unknown",
+    ),
+};
+
 #[derive(Debug, Parser)]
-#[command(name = "agenomic", version, about = "Agenomic CLI", long_about = None)]
+#[command(name = "agenomic", version = VERSION, about = "Agenomic CLI", long_about = None)]
 #[command(propagate_version = true)]
 pub struct Cli {
     #[arg(global = true, long, env = "AGENOMIC_PROFILE")]
