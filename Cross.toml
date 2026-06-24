@@ -1,0 +1,6 @@
+# Forward the release version into the `cross` build container so cross-compiled
+# targets (e.g. aarch64-unknown-linux-gnu) embed the same version as host builds.
+# `AGENOMIC_VERSION` is set to the pushed tag by .github/workflows/release.yml and
+# read at compile time in crates/agenomic-cli/src/cli.rs.
+[build.env]
+passthrough = ["AGENOMIC_VERSION"]
