@@ -6,6 +6,8 @@ All notable changes to `agenomic-cli` are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.2.0-rc.0] - 2026-06-24
+
 ### Added
 
 - **Signed `governance` ATEP stream.** The `governance` stream — defined since
@@ -78,6 +80,14 @@ All notable changes to `agenomic-cli` are documented here. Format follows
 
 ### Changed
 
+- **`--version` now reports the git tag (git-based versioning).** `agenomic
+  --version` / `agm --version` resolve the version at build time: the release
+  workflow injects the pushed tag (e.g. `v0.2.0-rc.0`) via `AGENOMIC_VERSION`, so
+  every published target — including the cross-compiled ones built in a git-less
+  container — reports the tag. Local builds derive it from `git describe --tags
+  --match=v*` (nearest version tag plus commit/dirty info), falling back to the
+  crate version when built outside a git checkout. Tagging `vX` therefore yields
+  a binary whose `--version` is `vX`.
 - **Cloud endpoint defaults to `https://api.agenomic.io`.** `agenomic cloud
   login` no longer requires `--endpoint`, and the cloud push commands
   (`push-agent`, `push-release`, `push-replay`, `push-attestation`), `bucket
