@@ -571,18 +571,25 @@ impl Renderable for TrackingReport {
         )
         .map_err(io)?;
 
-        let section = |w: &mut dyn Write, title: &str, alerts: &[agenomic_track::Alert]| -> CliResult<()> {
-            writeln!(w, "## {title} ({})\n", alerts.len()).map_err(io)?;
-            if alerts.is_empty() {
-                writeln!(w, "_None._\n").map_err(io)?;
-            }
-            for a in alerts {
-                writeln!(w, "- **{}** — {} {}", a.severity.label(), a.title, a.message)
+        let section =
+            |w: &mut dyn Write, title: &str, alerts: &[agenomic_track::Alert]| -> CliResult<()> {
+                writeln!(w, "## {title} ({})\n", alerts.len()).map_err(io)?;
+                if alerts.is_empty() {
+                    writeln!(w, "_None._\n").map_err(io)?;
+                }
+                for a in alerts {
+                    writeln!(
+                        w,
+                        "- **{}** — {} {}",
+                        a.severity.label(),
+                        a.title,
+                        a.message
+                    )
                     .map_err(io)?;
-            }
-            writeln!(w).map_err(io)?;
-            Ok(())
-        };
+                }
+                writeln!(w).map_err(io)?;
+                Ok(())
+            };
         section(w, "Drift findings", &self.drift_findings)?;
         section(w, "Loop findings", &self.loop_findings)?;
         section(w, "Intent findings", &self.intent_findings)?;
@@ -621,7 +628,10 @@ impl Renderable for TrackingSession {
         let status = if opts.no_color {
             self.status.label().to_string()
         } else {
-            console::style(self.status.label()).cyan().bold().to_string()
+            console::style(self.status.label())
+                .cyan()
+                .bold()
+                .to_string()
         };
         writeln!(w, "Tracking Session {}  [{}]", self.session_id, status).map_err(io)?;
         writeln!(w, "{} · {}", self.agent_id, self.environment).map_err(io)?;

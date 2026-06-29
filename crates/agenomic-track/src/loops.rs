@@ -145,10 +145,7 @@ impl LoopDetector {
     }
 
     fn allowed_step(&self, step: &str) -> bool {
-        self.config
-            .allowed_loop_step_ids
-            .iter()
-            .any(|s| s == step)
+        self.config.allowed_loop_step_ids.iter().any(|s| s == step)
     }
 
     /// Build an alert once per stable `key`; returns `None` on repeats.
@@ -302,7 +299,9 @@ impl LoopDetector {
                         if let Some(a) = self.raise(
                             format!("model:{key}"),
                             LoopType::RepeatedModelCall,
-                            format!("Model called {n_now} times with identical input (no progress)."),
+                            format!(
+                                "Model called {n_now} times with identical input (no progress)."
+                            ),
                             vec![eid.clone()],
                             serde_json::json!({ "input_hash": ih, "count": n_now }),
                         ) {
@@ -399,8 +398,12 @@ mod tests {
     }
 
     fn tool_event(seq: u64, name: &str, input_hash: &str, ts: i64) -> TrackingEvent {
-        let mut e =
-            TrackingEvent::new("s1", "agent://a/b", TrackingEventType::ToolCallCompleted, seq);
+        let mut e = TrackingEvent::new(
+            "s1",
+            "agent://a/b",
+            TrackingEventType::ToolCallCompleted,
+            seq,
+        );
         e.timestamp = at(ts);
         e.tool = Some(crate::event::ToolMeta {
             name: name.into(),
@@ -422,7 +425,10 @@ mod tests {
             .filter(|a| a.kind == AlertKind::Loop)
             .collect();
         assert_eq!(loop_alerts.len(), 1, "exactly one loop alert per pattern");
-        assert_eq!(loop_alerts[0].details.as_ref().unwrap()["loop_type"], "repeated_tool_call");
+        assert_eq!(
+            loop_alerts[0].details.as_ref().unwrap()["loop_type"],
+            "repeated_tool_call"
+        );
     }
 
     #[test]
@@ -461,8 +467,12 @@ mod tests {
             ..LoopConfig::default()
         };
         let mut d = LoopDetector::new("s1", cfg, at(0));
-        let mut e =
-            TrackingEvent::new("s1", "agent://a/b", TrackingEventType::ModelCallCompleted, 0);
+        let mut e = TrackingEvent::new(
+            "s1",
+            "agent://a/b",
+            TrackingEventType::ModelCallCompleted,
+            0,
+        );
         e.timestamp = at(30);
         let alerts = d.observe(&e);
         assert!(alerts
@@ -479,8 +489,12 @@ mod tests {
         let mut d = LoopDetector::new("s1", cfg, at(0));
         let mut alerts = Vec::new();
         for i in 0..6 {
-            let mut e =
-                TrackingEvent::new("s1", "agent://a/b", TrackingEventType::AgentStepCompleted, i);
+            let mut e = TrackingEvent::new(
+                "s1",
+                "agent://a/b",
+                TrackingEventType::AgentStepCompleted,
+                i,
+            );
             e.timestamp = at(i as i64);
             e.output_hash = Some("blake3:same".into());
             alerts.extend(d.observe(&e));

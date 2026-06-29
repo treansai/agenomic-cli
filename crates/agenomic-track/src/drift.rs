@@ -141,7 +141,11 @@ impl DriftBaseline {
                     let perms: HashSet<String> = t
                         .get("permissions")
                         .and_then(|p| p.as_array())
-                        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|x| x.as_str().map(String::from))
+                                .collect()
+                        })
                         .unwrap_or_default();
                     if !perms.is_empty() {
                         b.tool_permissions.insert(name.clone(), perms);
@@ -319,7 +323,11 @@ impl DriftDetector {
                             AlertSeverity::Critical,
                             format!("Tool '{name}' is not in the baseline's permitted tool set."),
                             serde_json::json!(name),
-                            serde_json::json!(self.baseline.allowed_tools.iter().collect::<Vec<_>>()),
+                            serde_json::json!(self
+                                .baseline
+                                .allowed_tools
+                                .iter()
+                                .collect::<Vec<_>>()),
                             vec![eid.clone()],
                             true,
                             true,
@@ -455,7 +463,11 @@ impl DriftDetector {
                                 AlertSeverity::Warning,
                                 format!("Policy '{pid}' is not part of the tracked baseline."),
                                 serde_json::json!(pid),
-                                serde_json::json!(self.baseline.policy_ids.iter().collect::<Vec<_>>()),
+                                serde_json::json!(self
+                                    .baseline
+                                    .policy_ids
+                                    .iter()
+                                    .collect::<Vec<_>>()),
                                 vec![eid.clone()],
                                 false,
                                 true,
@@ -505,7 +517,11 @@ impl DriftDetector {
                             AlertSeverity::Warning,
                             format!("Workflow step '{step}' is not in the baseline topology."),
                             serde_json::json!(step),
-                            serde_json::json!(self.baseline.workflow_steps.iter().collect::<Vec<_>>()),
+                            serde_json::json!(self
+                                .baseline
+                                .workflow_steps
+                                .iter()
+                                .collect::<Vec<_>>()),
                             vec![eid.clone()],
                             false,
                             false,
@@ -565,7 +581,10 @@ mod tests {
         let alerts = d.observe(&e);
         assert_eq!(alerts.len(), 1);
         assert_eq!(alerts[0].severity, AlertSeverity::Critical);
-        assert_eq!(alerts[0].details.as_ref().unwrap()["drift_type"], "tool_permission");
+        assert_eq!(
+            alerts[0].details.as_ref().unwrap()["drift_type"],
+            "tool_permission"
+        );
         assert!(alerts[0].blocks_release);
     }
 
@@ -584,7 +603,12 @@ mod tests {
     #[test]
     fn model_swap_is_model_config_drift() {
         let mut d = detector();
-        let mut e = TrackingEvent::new("s1", "agent://a/b", TrackingEventType::ModelCallCompleted, 0);
+        let mut e = TrackingEvent::new(
+            "s1",
+            "agent://a/b",
+            TrackingEventType::ModelCallCompleted,
+            0,
+        );
         e.model = Some(ModelMeta {
             provider: "anthropic".into(),
             model: "claude-3".into(),

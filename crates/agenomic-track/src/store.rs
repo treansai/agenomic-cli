@@ -194,9 +194,19 @@ mod tests {
         store.save_session(&session).unwrap();
         assert!(store.exists(&id));
 
-        let mut e1 = TrackingEvent::new(&id, "agent://acme/claims", TrackingEventType::AgentStarted, 0);
+        let mut e1 = TrackingEvent::new(
+            &id,
+            "agent://acme/claims",
+            TrackingEventType::AgentStarted,
+            0,
+        );
         e1.link_after(None);
-        let mut e2 = TrackingEvent::new(&id, "agent://acme/claims", TrackingEventType::AgentCompleted, 1);
+        let mut e2 = TrackingEvent::new(
+            &id,
+            "agent://acme/claims",
+            TrackingEventType::AgentCompleted,
+            1,
+        );
         e2.link_after(e1.event_hash.clone());
         store.append_events(&id, &[e1.clone()]).unwrap();
         store.append_events(&id, &[e2.clone()]).unwrap();

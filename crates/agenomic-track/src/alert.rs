@@ -185,7 +185,11 @@ mod tests {
 
     #[test]
     fn severity_round_trips_through_platform() {
-        for s in [AlertSeverity::Info, AlertSeverity::Warning, AlertSeverity::Critical] {
+        for s in [
+            AlertSeverity::Info,
+            AlertSeverity::Warning,
+            AlertSeverity::Critical,
+        ] {
             let platform = s.to_platform();
             let back = AlertSeverity::from_platform(platform);
             assert_eq!(s, back);

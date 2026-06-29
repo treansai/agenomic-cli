@@ -148,7 +148,9 @@ impl RuntimeHarness {
                                 format!("Contract violation: {}", v.check_id),
                                 v.message.clone(),
                             )
-                            .with_action("Review the behavior contract rule and the offending output."),
+                            .with_action(
+                                "Review the behavior contract rule and the offending output.",
+                            ),
                         );
                     }
                 }
@@ -329,7 +331,9 @@ impl RuntimeHarness {
             })
             .all(|c| c.passed);
         let passed = hard_checks_pass
-            && !all_alerts.iter().any(|a| a.severity == AlertSeverity::Critical);
+            && !all_alerts
+                .iter()
+                .any(|a| a.severity == AlertSeverity::Critical);
 
         HarnessResult {
             passed,
@@ -389,16 +393,21 @@ mod tests {
     #[test]
     fn missing_human_approval_is_flagged() {
         let h = RuntimeHarness::new("s1");
-        let mut tool = TrackingEvent::new("s1", "agent://a/b", TrackingEventType::ToolCallCompleted, 1);
+        let mut tool =
+            TrackingEvent::new("s1", "agent://a/b", TrackingEventType::ToolCallCompleted, 1);
         tool.tool = Some(ToolMeta {
             name: "wire_transfer".into(),
             ..Default::default()
         });
-        tool.metadata = Some(serde_json::json!({ "requires_human_approval": true, "approval_present": false }));
+        tool.metadata =
+            Some(serde_json::json!({ "requires_human_approval": true, "approval_present": false }));
         let events = vec![agent_started(0, serde_json::json!({})), tool];
         let r = h.evaluate("agent://a/b", &events, &[], &HarnessInputs::default());
         assert!(!r.passed);
-        assert!(r.checks.iter().any(|c| c.id == "human_approval_gates" && !c.passed));
+        assert!(r
+            .checks
+            .iter()
+            .any(|c| c.id == "human_approval_gates" && !c.passed));
     }
 
     #[test]
@@ -435,7 +444,11 @@ mod tests {
             std::slice::from_ref(&drift),
             &HarnessInputs::default(),
         );
-        let c = r.checks.iter().find(|c| c.id == "drift_violations").unwrap();
+        let c = r
+            .checks
+            .iter()
+            .find(|c| c.id == "drift_violations")
+            .unwrap();
         assert!(!c.passed);
         // a single warning does not fail the whole harness
         assert!(r.passed);

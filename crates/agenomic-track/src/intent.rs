@@ -192,36 +192,34 @@ impl IntentTracker {
         }
 
         // Resolve the observed intent: explicit first, then inferred.
-        let (intent, confidence, explicit) = if matches!(
-            ev.event_type,
-            TrackingEventType::IntentDetected
-        ) {
-            match &ev.intent {
-                Some(i) if !i.trim().is_empty() => (i.clone(), 1.0, true),
-                _ => {
-                    if let Some(a) = self.raise(
-                        format!("unclear:{}", ev.event_id),
-                        IntentIssue::UnclearIntent,
-                        AlertSeverity::Warning,
-                        "An intent.detected event carried no resolvable intent.".into(),
-                        serde_json::json!(self.config.allowed_intents),
-                        serde_json::Value::Null,
-                        0.0,
-                        vec![ev.event_id.clone()],
-                        false,
-                        false,
-                    ) {
-                        out.push(a);
+        let (intent, confidence, explicit) =
+            if matches!(ev.event_type, TrackingEventType::IntentDetected) {
+                match &ev.intent {
+                    Some(i) if !i.trim().is_empty() => (i.clone(), 1.0, true),
+                    _ => {
+                        if let Some(a) = self.raise(
+                            format!("unclear:{}", ev.event_id),
+                            IntentIssue::UnclearIntent,
+                            AlertSeverity::Warning,
+                            "An intent.detected event carried no resolvable intent.".into(),
+                            serde_json::json!(self.config.allowed_intents),
+                            serde_json::Value::Null,
+                            0.0,
+                            vec![ev.event_id.clone()],
+                            false,
+                            false,
+                        ) {
+                            out.push(a);
+                        }
+                        return out;
                     }
-                    return out;
                 }
-            }
-        } else {
-            match self.provider.classify(ev) {
-                Some(c) => (c.intent, c.confidence, false),
-                None => return out, // nothing to evaluate
-            }
-        };
+            } else {
+                match self.provider.classify(ev) {
+                    Some(c) => (c.intent, c.confidence, false),
+                    None => return out, // nothing to evaluate
+                }
+            };
 
         let eid = ev.event_id.clone();
 
@@ -394,7 +392,9 @@ mod tests {
     #[test]
     fn allowed_intent_is_clean() {
         let mut t = IntentTracker::new("s1", cfg());
-        assert!(t.observe(&intent_event("verify_claim_validity", 0)).is_empty());
+        assert!(t
+            .observe(&intent_event("verify_claim_validity", 0))
+            .is_empty());
     }
 
     #[test]
@@ -421,8 +421,7 @@ mod tests {
     fn deterministic_inference_from_step() {
         // No explicit intent event; inference from a step that is out-of-set.
         let mut t = IntentTracker::new("s1", cfg());
-        let mut e =
-            TrackingEvent::new("s1", "agent://a/b", TrackingEventType::AgentStepStarted, 0);
+        let mut e = TrackingEvent::new("s1", "agent://a/b", TrackingEventType::AgentStepStarted, 0);
         e.workflow_step_id = Some("delete_everything".into());
         let alerts = t.observe(&e);
         assert!(alerts

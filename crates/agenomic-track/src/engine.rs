@@ -171,8 +171,12 @@ mod tests {
     use crate::session::TrackingSession;
 
     fn tool_event(name: &str, ih: &str) -> TrackingEvent {
-        let mut e =
-            TrackingEvent::new("", "agent://acme/claims", TrackingEventType::ToolCallCompleted, 0);
+        let mut e = TrackingEvent::new(
+            "",
+            "agent://acme/claims",
+            TrackingEventType::ToolCallCompleted,
+            0,
+        );
         e.tool = Some(ToolMeta {
             name: name.into(),
             ..Default::default()

@@ -141,9 +141,7 @@ pub fn build_report(
     let mut recommendations: Vec<String> = Vec::new();
     for a in &all_alerts {
         if let Some(action) = &a.recommended_action {
-            if (a.blocks_release || a.requires_human_review)
-                && !recommendations.contains(action)
-            {
+            if (a.blocks_release || a.requires_human_review) && !recommendations.contains(action) {
                 recommendations.push(action.clone());
             }
         }

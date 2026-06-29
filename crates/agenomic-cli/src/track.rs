@@ -57,8 +57,8 @@ fn store_for(store: &Option<PathBuf>) -> CliResult<SessionStore> {
     let root = match store {
         Some(p) => p.clone(),
         None => {
-            let cwd = std::env::current_dir()
-                .map_err(|e| CliError::Internal(format!("cwd: {e}")))?;
+            let cwd =
+                std::env::current_dir().map_err(|e| CliError::Internal(format!("cwd: {e}")))?;
             SessionStore::default_root(&cwd)
         }
     };
@@ -129,9 +129,8 @@ fn load_bundle_baseline(
             let text = std::fs::read_to_string(&lock_path).map_err(|e| io_at(&lock_path, e))?;
             baseline = union_baseline(baseline, baseline_from_genome_text(&text)?);
             if let Ok(v) = serde_yaml::from_str::<serde_json::Value>(&text) {
-                agent_id = agent_id.or_else(|| {
-                    v.get("agent_id").and_then(|s| s.as_str()).map(String::from)
-                });
+                agent_id = agent_id
+                    .or_else(|| v.get("agent_id").and_then(|s| s.as_str()).map(String::from));
             }
         }
     }
@@ -369,10 +368,19 @@ fn tail(
                     .tool
                     .as_ref()
                     .map(|t| format!(" {}", t.name))
-                    .or_else(|| ev.model.as_ref().map(|m| format!(" {}/{}", m.provider, m.model)))
+                    .or_else(|| {
+                        ev.model
+                            .as_ref()
+                            .map(|m| format!(" {}/{}", m.provider, m.model))
+                    })
                     .or_else(|| ev.workflow_step_id.as_ref().map(|s| format!(" step={s}")))
                     .unwrap_or_default();
-                println!("  #{:<4} {}{}", ev.sequence_number, ev.event_type.as_str(), detail);
+                println!(
+                    "  #{:<4} {}{}",
+                    ev.sequence_number,
+                    ev.event_type.as_str(),
+                    detail
+                );
             }
             if !session.alerts.is_empty() {
                 println!("alerts:");
@@ -415,8 +423,8 @@ fn report(
     let report = build_report(&engine.session, &engine.events, &harness);
 
     if let Some(out) = output {
-        let bytes = serde_json::to_vec_pretty(&report)
-            .map_err(|e| CliError::Internal(format!("{e}")))?;
+        let bytes =
+            serde_json::to_vec_pretty(&report).map_err(|e| CliError::Internal(format!("{e}")))?;
         std::fs::write(out, &bytes).map_err(|e| io_at(out, e))?;
     }
     store.save_report(&report)?;
