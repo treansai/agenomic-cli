@@ -14,6 +14,7 @@ agenomic-bundle = { workspace = true }
 agenomic-diff = { workspace = true }
 agenomic-replay-local = { workspace = true }
 agenomic-attestation = { workspace = true }
+agenomic-track = { workspace = true }
 console = { workspace = true }
 pulldown-cmark = { workspace = true }
 serde = { workspace = true }

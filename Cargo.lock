@@ -99,6 +99,7 @@ dependencies = [
  "agenomic-replay-local",
  "agenomic-report",
  "agenomic-spec",
+ "agenomic-track",
  "agenomic-validate",
  "assert_cmd",
  "base64",
@@ -367,6 +368,7 @@ dependencies = [
  "agenomic-core",
  "agenomic-diff",
  "agenomic-replay-local",
+ "agenomic-track",
  "console 0.15.11",
  "insta",
  "pulldown-cmark",
@@ -384,6 +386,24 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+]
+
+[[package]]
+name = "agenomic-track"
+version = "0.2.0-rc.0"
+dependencies = [
+ "agenomic-contract",
+ "agenomic-core",
+ "agenomic-hash",
+ "agenomic-policy",
+ "blake3",
+ "chrono",
+ "hex",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "ulid",
 ]
 
 [[package]]

@@ -436,6 +436,241 @@ impl Renderable for VerificationResult {
     }
 }
 
+// ---- Online Tracking (agenomic-track) ----
+
+use agenomic_track::{AlertSeverity, FinalStatus, TrackingReport, TrackingSession};
+
+fn alert_sev_label(s: AlertSeverity) -> &'static str {
+    match s {
+        AlertSeverity::Info => "INFO",
+        AlertSeverity::Warning => "WARN",
+        AlertSeverity::Critical => "CRIT",
+    }
+}
+
+fn alert_sev_styled(s: AlertSeverity, opts: &RenderOptions) -> String {
+    let label = alert_sev_label(s);
+    if opts.no_color {
+        return label.to_string();
+    }
+    match s {
+        AlertSeverity::Info => console::style(label).dim().to_string(),
+        AlertSeverity::Warning => console::style(label).yellow().to_string(),
+        AlertSeverity::Critical => console::style(label).red().bold().to_string(),
+    }
+}
+
+fn final_status_styled(s: FinalStatus, opts: &RenderOptions) -> String {
+    let label = s.label().to_uppercase();
+    if opts.no_color {
+        return label;
+    }
+    match s {
+        FinalStatus::Pass => console::style(label).green().bold().to_string(),
+        FinalStatus::Warn => console::style(label).yellow().bold().to_string(),
+        FinalStatus::Fail => console::style(label).red().bold().to_string(),
+    }
+}
+
+fn render_alert_lines(
+    w: &mut dyn Write,
+    alerts: &[agenomic_track::Alert],
+    opts: &RenderOptions,
+) -> CliResult<()> {
+    for a in alerts {
+        writeln!(
+            w,
+            "  {} {} — {}",
+            alert_sev_styled(a.severity, opts),
+            a.title,
+            a.message
+        )
+        .map_err(io)?;
+    }
+    Ok(())
+}
+
+impl Renderable for TrackingReport {
+    fn render_human(&self, w: &mut dyn Write, opts: &RenderOptions) -> CliResult<()> {
+        writeln!(
+            w,
+            "Online Tracking Report  [{}]",
+            final_status_styled(self.final_status, opts)
+        )
+        .map_err(io)?;
+        writeln!(
+            w,
+            "{} · {} · session {}",
+            self.agent_id, self.environment, self.session_id
+        )
+        .map_err(io)?;
+        writeln!(
+            w,
+            "status: {}   events: {}   generated: {}",
+            self.status.label(),
+            self.event_count,
+            self.generated_at.to_rfc3339()
+        )
+        .map_err(io)?;
+        writeln!(
+            w,
+            "\nAlerts: {} critical · {} warning · {} info",
+            self.alert_counts.critical, self.alert_counts.warning, self.alert_counts.info
+        )
+        .map_err(io)?;
+
+        writeln!(w, "\nDrift ({})", self.drift_findings.len()).map_err(io)?;
+        render_alert_lines(w, &self.drift_findings, opts)?;
+        writeln!(w, "Loops ({})", self.loop_findings.len()).map_err(io)?;
+        render_alert_lines(w, &self.loop_findings, opts)?;
+        writeln!(w, "Intent ({})", self.intent_findings.len()).map_err(io)?;
+        render_alert_lines(w, &self.intent_findings, opts)?;
+        if !self.policy_violations.is_empty() {
+            writeln!(w, "Policy ({})", self.policy_violations.len()).map_err(io)?;
+            render_alert_lines(w, &self.policy_violations, opts)?;
+        }
+
+        let harness_label = if self.harness.passed { "PASS" } else { "FAIL" };
+        writeln!(w, "\nHarness: {harness_label}").map_err(io)?;
+        for c in &self.harness.checks {
+            let mark = if c.passed { "[x]" } else { "[!]" };
+            writeln!(w, "  {mark} {} — {}", c.id, c.message).map_err(io)?;
+        }
+
+        if !self.recommendations.is_empty() {
+            writeln!(w, "\nRecommendations:").map_err(io)?;
+            for r in &self.recommendations {
+                writeln!(w, "  - {r}").map_err(io)?;
+            }
+        }
+        if let Some(h) = &self.report_hash {
+            writeln!(w, "\nreport_hash: {h}").map_err(io)?;
+        }
+        Ok(())
+    }
+
+    fn render_json(&self, w: &mut dyn Write, pretty: bool) -> CliResult<()> {
+        write_json(w, self, pretty)
+    }
+
+    fn render_markdown(&self, w: &mut dyn Write) -> CliResult<()> {
+        writeln!(w, "# Online Tracking Report\n").map_err(io)?;
+        writeln!(w, "- **Final status:** {}", self.final_status.label()).map_err(io)?;
+        writeln!(w, "- **Agent:** `{}`", self.agent_id).map_err(io)?;
+        writeln!(w, "- **Environment:** {}", self.environment).map_err(io)?;
+        writeln!(w, "- **Session:** `{}`", self.session_id).map_err(io)?;
+        if let Some(r) = &self.release_id {
+            writeln!(w, "- **Release:** `{r}`").map_err(io)?;
+        }
+        writeln!(w, "- **Status:** {}", self.status.label()).map_err(io)?;
+        writeln!(w, "- **Events:** {}", self.event_count).map_err(io)?;
+        writeln!(
+            w,
+            "- **Alerts:** {} critical / {} warning / {} info\n",
+            self.alert_counts.critical, self.alert_counts.warning, self.alert_counts.info
+        )
+        .map_err(io)?;
+
+        let section = |w: &mut dyn Write, title: &str, alerts: &[agenomic_track::Alert]| -> CliResult<()> {
+            writeln!(w, "## {title} ({})\n", alerts.len()).map_err(io)?;
+            if alerts.is_empty() {
+                writeln!(w, "_None._\n").map_err(io)?;
+            }
+            for a in alerts {
+                writeln!(w, "- **{}** — {} {}", a.severity.label(), a.title, a.message)
+                    .map_err(io)?;
+            }
+            writeln!(w).map_err(io)?;
+            Ok(())
+        };
+        section(w, "Drift findings", &self.drift_findings)?;
+        section(w, "Loop findings", &self.loop_findings)?;
+        section(w, "Intent findings", &self.intent_findings)?;
+        if !self.policy_violations.is_empty() {
+            section(w, "Policy violations", &self.policy_violations)?;
+        }
+
+        writeln!(
+            w,
+            "## Harness — {}\n",
+            if self.harness.passed { "PASS" } else { "FAIL" }
+        )
+        .map_err(io)?;
+        for c in &self.harness.checks {
+            writeln!(
+                w,
+                "- {} **{}** — {}",
+                if c.passed { "✅" } else { "❌" },
+                c.id,
+                c.message
+            )
+            .map_err(io)?;
+        }
+        if !self.recommendations.is_empty() {
+            writeln!(w, "\n## Recommendations\n").map_err(io)?;
+            for r in &self.recommendations {
+                writeln!(w, "- {r}").map_err(io)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Renderable for TrackingSession {
+    fn render_human(&self, w: &mut dyn Write, opts: &RenderOptions) -> CliResult<()> {
+        let status = if opts.no_color {
+            self.status.label().to_string()
+        } else {
+            console::style(self.status.label()).cyan().bold().to_string()
+        };
+        writeln!(w, "Tracking Session {}  [{}]", self.session_id, status).map_err(io)?;
+        writeln!(w, "{} · {}", self.agent_id, self.environment).map_err(io)?;
+        if let Some(r) = &self.release_id {
+            writeln!(w, "release: {r}").map_err(io)?;
+        }
+        if let Some(g) = &self.genome_hash {
+            writeln!(w, "genome:  {g}").map_err(io)?;
+        }
+        writeln!(
+            w,
+            "started: {}   ended: {}",
+            self.started_at.to_rfc3339(),
+            self.ended_at
+                .map(|e| e.to_rfc3339())
+                .unwrap_or_else(|| "-".into())
+        )
+        .map_err(io)?;
+        let s = &self.summary;
+        writeln!(
+            w,
+            "summary: {} events · {} alerts ({} crit / {} warn / {} info)",
+            s.event_count, s.alert_count, s.critical, s.warning, s.info
+        )
+        .map_err(io)?;
+        writeln!(
+            w,
+            "         drift {} · loops {} · intent {} · harness {}",
+            s.drift_count, s.loop_count, s.intent_count, s.harness_failures
+        )
+        .map_err(io)?;
+        Ok(())
+    }
+
+    fn render_json(&self, w: &mut dyn Write, pretty: bool) -> CliResult<()> {
+        write_json(w, self, pretty)
+    }
+
+    fn render_markdown(&self, w: &mut dyn Write) -> CliResult<()> {
+        writeln!(w, "# Tracking Session `{}`\n", self.session_id).map_err(io)?;
+        writeln!(w, "- **Agent:** `{}`", self.agent_id).map_err(io)?;
+        writeln!(w, "- **Environment:** {}", self.environment).map_err(io)?;
+        writeln!(w, "- **Status:** {}", self.status.label()).map_err(io)?;
+        writeln!(w, "- **Events:** {}", self.summary.event_count).map_err(io)?;
+        writeln!(w, "- **Alerts:** {}", self.summary.alert_count).map_err(io)?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

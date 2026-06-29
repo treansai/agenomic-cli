@@ -5,6 +5,7 @@ mod commands;
 mod enrich;
 mod provider;
 mod render;
+mod track;
 
 use agenomic_core::CliError;
 use clap::{CommandFactory, FromArgMatches};
@@ -64,6 +65,7 @@ pub fn run() -> i32 {
         Commands::Verify(args) => commands::cmd_verify(args, format, no_color),
         Commands::Trace(args) => commands::cmd_trace(args),
         Commands::Atep(args) => commands::cmd_atep(args),
+        Commands::Track(args) => track::cmd_track(args, format, no_color),
         Commands::Cloud(args) => commands::cmd_cloud(args, cli.profile.as_deref()),
         Commands::Bucket(args) => commands::cmd_bucket(args, cli.profile.as_deref()),
         Commands::Bundle(args) => commands::cmd_bundle(args, format, no_color),

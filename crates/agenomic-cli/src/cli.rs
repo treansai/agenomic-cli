@@ -143,6 +143,8 @@ pub enum Commands {
     Trace(TraceCommand),
     /// ATEP store and event utilities.
     Atep(AtepCommand),
+    /// Online tracking of production agents (drift / loops / intent / harness).
+    Track(TrackCommand),
     /// Cloud authentication.
     Cloud(CloudCommand),
     /// Bucket selection for cloud pushes.
@@ -724,5 +726,94 @@ pub enum BundleSub {
         /// Override the destination directory. Defaults to `<target>/runtime`.
         #[arg(long)]
         output_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Parser)]
+pub struct TrackCommand {
+    #[command(subcommand)]
+    pub command: TrackSub,
+}
+
+/// Terminal status to apply when stopping a session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum SessionStatusArg {
+    Completed,
+    Cancelled,
+    Failed,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TrackSub {
+    /// Start an online tracking session for a bundle/release. The bundle's
+    /// genome + lockfile seed the drift baseline; the behavior contract and
+    /// policies feed the runtime harness at `stop`/`report` time.
+    Start {
+        /// Bundle directory (defaults to the current directory).
+        #[arg(default_value = ".")]
+        bundle: PathBuf,
+        /// Release id to bind the session to.
+        #[arg(long)]
+        release: Option<String>,
+        /// Deployment environment.
+        #[arg(long, default_value = "production")]
+        env: String,
+        /// Tracking config (YAML/JSON). Defaults to built-in thresholds.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Override the agent id (default: read from the genome/lockfile).
+        #[arg(long)]
+        agent: Option<String>,
+        /// Store root directory (default: `<cwd>/.agenomic/tracking`).
+        #[arg(long)]
+        store: Option<PathBuf>,
+    },
+    /// Ingest a runtime event into a session (idempotent; safe to retry).
+    Event {
+        /// Target session id.
+        #[arg(long)]
+        session: String,
+        /// Event JSON file, or `-` for stdin.
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long)]
+        store: Option<PathBuf>,
+    },
+    /// Print a session's recorded events and alerts.
+    Tail {
+        #[arg(long)]
+        session: String,
+        /// Show at most this many trailing events.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        #[arg(long)]
+        store: Option<PathBuf>,
+    },
+    /// Show a session's status and summary metrics.
+    Status {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        store: Option<PathBuf>,
+    },
+    /// Build and export the online tracking report.
+    Report {
+        #[arg(long)]
+        session: String,
+        /// Write the JSON report to this path (in addition to rendering it).
+        #[arg(long)]
+        output: Option<PathBuf>,
+        #[arg(long)]
+        store: Option<PathBuf>,
+    },
+    /// Stop a session: run the harness, finalize, and persist the report.
+    Stop {
+        #[arg(long)]
+        session: String,
+        /// Terminal status to record.
+        #[arg(long, value_enum, default_value = "completed")]
+        status: SessionStatusArg,
+        #[arg(long)]
+        store: Option<PathBuf>,
     },
 }
