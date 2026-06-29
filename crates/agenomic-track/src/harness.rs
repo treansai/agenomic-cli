@@ -16,10 +16,22 @@ use crate::alert::{Alert, AlertKind, AlertSeverity};
 use crate::event::{TrackingEvent, TrackingEventType};
 
 /// Optional baseline artifacts the harness evaluates against.
-#[derive(Default)]
 pub struct HarnessInputs {
     pub contract: Option<BehaviorContract>,
     pub policy: Option<PolicyBundle>,
+    /// Severity at or above which any alert fails the harness. Defaults to
+    /// `critical`; set from the session's `tracking_config.fail_on`.
+    pub fail_on: AlertSeverity,
+}
+
+impl Default for HarnessInputs {
+    fn default() -> Self {
+        Self {
+            contract: None,
+            policy: None,
+            fail_on: AlertSeverity::Critical,
+        }
+    }
 }
 
 /// One harness check outcome.
@@ -330,10 +342,7 @@ impl RuntimeHarness {
                 )
             })
             .all(|c| c.passed);
-        let passed = hard_checks_pass
-            && !all_alerts
-                .iter()
-                .any(|a| a.severity == AlertSeverity::Critical);
+        let passed = hard_checks_pass && !all_alerts.iter().any(|a| a.severity >= inputs.fail_on);
 
         HarnessResult {
             passed,
@@ -384,6 +393,7 @@ mod tests {
         let inputs = HarnessInputs {
             contract: Some(contract),
             policy: None,
+            ..Default::default()
         };
         let r = h.evaluate("agent://a/b", &events, &[], &inputs);
         assert!(!r.passed);
@@ -432,6 +442,23 @@ mod tests {
         let events = vec![agent_started(0, serde_json::json!({}))];
         let r = h.evaluate("agent://a/b", &events, &[], &HarnessInputs::default());
         assert!(!r.checks.iter().any(|c| c.id == "policy"));
+    }
+
+    #[test]
+    fn fail_on_warning_fails_the_harness_on_a_warning() {
+        let h = RuntimeHarness::new("s1");
+        let warn = Alert::new("s1", AlertKind::Loop, AlertSeverity::Warning, "t", "m");
+        let inputs = HarnessInputs {
+            fail_on: AlertSeverity::Warning,
+            ..Default::default()
+        };
+        let r = h.evaluate(
+            "agent://a/b",
+            &[agent_started(0, serde_json::json!({}))],
+            std::slice::from_ref(&warn),
+            &inputs,
+        );
+        assert!(!r.passed, "fail_on=warning must fail on a warning alert");
     }
 
     #[test]

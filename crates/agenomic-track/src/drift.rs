@@ -108,6 +108,18 @@ fn str_field(v: &Value, keys: &[&str]) -> Option<String> {
     None
 }
 
+/// Deterministically ordered view of a string set.
+///
+/// `HashSet` iteration order is randomized, so any set serialized into an
+/// alert's `expected`/`observed` (which is persisted and folded into the
+/// content-addressed report hash) must be sorted first to keep reports
+/// reproducible.
+fn sorted_strs(set: &HashSet<String>) -> Vec<&String> {
+    let mut v: Vec<&String> = set.iter().collect();
+    v.sort();
+    v
+}
+
 impl DriftBaseline {
     /// Build a tolerant baseline from a genome or lockfile document.
     ///
@@ -323,11 +335,7 @@ impl DriftDetector {
                             AlertSeverity::Critical,
                             format!("Tool '{name}' is not in the baseline's permitted tool set."),
                             serde_json::json!(name),
-                            serde_json::json!(self
-                                .baseline
-                                .allowed_tools
-                                .iter()
-                                .collect::<Vec<_>>()),
+                            serde_json::json!(sorted_strs(&self.baseline.allowed_tools)),
                             vec![eid.clone()],
                             true,
                             true,
@@ -352,7 +360,7 @@ impl DriftDetector {
                                     "Tool '{name}' requested permissions outside its baseline grant: {extra:?}."
                                 ),
                                 serde_json::json!(extra),
-                                serde_json::json!(expected.iter().collect::<Vec<_>>()),
+                                serde_json::json!(sorted_strs(expected)),
                                 vec![eid.clone()],
                                 true,
                                 true,
@@ -463,11 +471,7 @@ impl DriftDetector {
                                 AlertSeverity::Warning,
                                 format!("Policy '{pid}' is not part of the tracked baseline."),
                                 serde_json::json!(pid),
-                                serde_json::json!(self
-                                    .baseline
-                                    .policy_ids
-                                    .iter()
-                                    .collect::<Vec<_>>()),
+                                serde_json::json!(sorted_strs(&self.baseline.policy_ids)),
                                 vec![eid.clone()],
                                 false,
                                 true,
@@ -517,11 +521,7 @@ impl DriftDetector {
                             AlertSeverity::Warning,
                             format!("Workflow step '{step}' is not in the baseline topology."),
                             serde_json::json!(step),
-                            serde_json::json!(self
-                                .baseline
-                                .workflow_steps
-                                .iter()
-                                .collect::<Vec<_>>()),
+                            serde_json::json!(sorted_strs(&self.baseline.workflow_steps)),
                             vec![eid.clone()],
                             false,
                             false,

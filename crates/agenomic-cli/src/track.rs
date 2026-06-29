@@ -152,22 +152,25 @@ fn load_bundle_baseline(
 
 /// Load the optional harness inputs (behavior contract + policies) from the
 /// bundle the session was started against.
-fn load_harness_inputs(session: &TrackingSession) -> HarnessInputs {
-    let mut inputs = HarnessInputs::default();
+fn load_harness_inputs(session: &TrackingSession) -> CliResult<HarnessInputs> {
+    let mut inputs = HarnessInputs {
+        fail_on: session.tracking_config.fail_on,
+        ..Default::default()
+    };
     let Some(reference) = &session.baseline.reference else {
-        return inputs;
+        return Ok(inputs);
     };
     let bundle = Path::new(reference);
     if !bundle.is_dir() {
-        return inputs;
+        return Ok(inputs);
     }
     let contract_path = bundle.join("behavior.contract.yaml");
     if contract_path.is_file() {
-        if let Ok(text) = std::fs::read_to_string(&contract_path) {
-            if let Ok(contract) = agenomic_contract::parse_contract_yaml(&text) {
-                inputs.contract = Some(contract);
-            }
-        }
+        // Fail closed: a declared but unreadable/invalid behavior contract must
+        // not be silently skipped, or a release could report as passing without
+        // its safety contract ever being evaluated.
+        let text = std::fs::read_to_string(&contract_path).map_err(|e| io_at(&contract_path, e))?;
+        inputs.contract = Some(agenomic_contract::parse_contract_yaml(&text)?);
     }
     if bundle.join("policies").is_dir() {
         if let Ok(policy) = agenomic_policy::PolicyBundle::load(bundle) {
@@ -176,7 +179,7 @@ fn load_harness_inputs(session: &TrackingSession) -> HarnessInputs {
             }
         }
     }
-    inputs
+    Ok(inputs)
 }
 
 /// Build a full [`TrackingEvent`] from possibly-partial JSON input, filling the
@@ -416,7 +419,7 @@ fn report(
     let session = require_session(&store, session_id)?;
     let events = store.load_events(session_id)?;
     let baseline = store.load_baseline(session_id)?;
-    let inputs = load_harness_inputs(&session);
+    let inputs = load_harness_inputs(&session)?;
 
     let engine = TrackingEngine::resume(session, events, baseline);
     let harness = engine.run_harness(&inputs);
@@ -447,7 +450,7 @@ fn stop(
     let session = require_session(&store, session_id)?;
     let events = store.load_events(session_id)?;
     let baseline = store.load_baseline(session_id)?;
-    let inputs = load_harness_inputs(&session);
+    let inputs = load_harness_inputs(&session)?;
 
     let mut engine = TrackingEngine::resume(session, events, baseline);
     let harness = engine.run_harness(&inputs);
