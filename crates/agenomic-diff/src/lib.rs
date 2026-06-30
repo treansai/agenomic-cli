@@ -717,8 +717,18 @@ mod tests {
     fn hf_revision_change_is_high_and_replay_required() {
         let b = tempdir().unwrap();
         let c = tempdir().unwrap();
-        write_hf_bundle(b.path(), "mistralai/Mistral-7B-Instruct-v0.3", "main", "0.2");
-        write_hf_bundle(c.path(), "mistralai/Mistral-7B-Instruct-v0.3", "v0.3", "0.2");
+        write_hf_bundle(
+            b.path(),
+            "mistralai/Mistral-7B-Instruct-v0.3",
+            "main",
+            "0.2",
+        );
+        write_hf_bundle(
+            c.path(),
+            "mistralai/Mistral-7B-Instruct-v0.3",
+            "v0.3",
+            "0.2",
+        );
         let r = diff_bundles(b.path(), c.path(), &DiffOptions::default()).unwrap();
         assert!(r.replay_required, "revision move must require replay");
         assert!(r
@@ -731,8 +741,18 @@ mod tests {
     fn hf_parameter_change_is_reported() {
         let b = tempdir().unwrap();
         let c = tempdir().unwrap();
-        write_hf_bundle(b.path(), "mistralai/Mistral-7B-Instruct-v0.3", "main", "0.2");
-        write_hf_bundle(c.path(), "mistralai/Mistral-7B-Instruct-v0.3", "main", "0.7");
+        write_hf_bundle(
+            b.path(),
+            "mistralai/Mistral-7B-Instruct-v0.3",
+            "main",
+            "0.2",
+        );
+        write_hf_bundle(
+            c.path(),
+            "mistralai/Mistral-7B-Instruct-v0.3",
+            "main",
+            "0.7",
+        );
         let r = diff_bundles(b.path(), c.path(), &DiffOptions::default()).unwrap();
         assert!(r
             .changes
@@ -745,7 +765,12 @@ mod tests {
         let b = tempdir().unwrap();
         let c = tempdir().unwrap();
         write_bundle(b.path(), "fp1", &["a"]);
-        write_hf_bundle(c.path(), "mistralai/Mistral-7B-Instruct-v0.3", "main", "0.2");
+        write_hf_bundle(
+            c.path(),
+            "mistralai/Mistral-7B-Instruct-v0.3",
+            "main",
+            "0.2",
+        );
         let r = diff_bundles(b.path(), c.path(), &DiffOptions::default()).unwrap();
         assert!(r
             .changes

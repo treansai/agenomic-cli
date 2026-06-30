@@ -345,7 +345,10 @@ impl HuggingFaceAdapter {
     }
 
     fn bearer(&self) -> CliResult<String> {
-        Ok(format!("Bearer {}", self.config.require_token()?.expose_secret()))
+        Ok(format!(
+            "Bearer {}",
+            self.config.require_token()?.expose_secret()
+        ))
     }
 
     /// Validate the configured token against the Hub `whoami` endpoint.
@@ -357,16 +360,19 @@ impl HuggingFaceAdapter {
             .header("authorization", self.bearer()?)
             .send()
             .await
-            .map_err(|e| CliError::Network(self.config.redact(format!("huggingface whoami: {e}"))))?;
+            .map_err(|e| {
+                CliError::Network(self.config.redact(format!("huggingface whoami: {e}")))
+            })?;
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(CliError::AuthFailed);
         }
         if !status.is_success() {
-            return Err(CliError::Network(self.config.redact(format!(
-                "huggingface whoami failed ({status}): {body}"
-            ))));
+            return Err(CliError::Network(
+                self.config
+                    .redact(format!("huggingface whoami failed ({status}): {body}")),
+            ));
         }
         let v: serde_json::Value = serde_json::from_str(&body)
             .map_err(|e| CliError::Network(self.config.redact(format!("whoami parse: {e}"))))?;
@@ -402,7 +408,10 @@ impl HuggingFaceAdapter {
             req = req.header("authorization", self.bearer()?);
         }
         let resp = req.send().await.map_err(|e| {
-            CliError::Network(self.config.redact(format!("huggingface model metadata: {e}")))
+            CliError::Network(
+                self.config
+                    .redact(format!("huggingface model metadata: {e}")),
+            )
         })?;
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
@@ -458,11 +467,7 @@ impl HuggingFaceAdapter {
     }
 
     /// Compute embeddings (feature extraction) for `inputs`.
-    pub async fn embeddings(
-        &self,
-        model: &str,
-        inputs: &[String],
-    ) -> CliResult<Vec<Vec<f64>>> {
+    pub async fn embeddings(&self, model: &str, inputs: &[String]) -> CliResult<Vec<Vec<f64>>> {
         let url = format!("{}/models/{model}", self.config.inference_base());
         let body = serde_json::json!({ "inputs": inputs });
         let v = self.post_inference(&url, &body).await?;
@@ -538,9 +543,7 @@ fn canonical_json(v: &serde_json::Value) -> String {
                 }
                 serde_json::Value::Object(out)
             }
-            serde_json::Value::Array(a) => {
-                serde_json::Value::Array(a.iter().map(sort).collect())
-            }
+            serde_json::Value::Array(a) => serde_json::Value::Array(a.iter().map(sort).collect()),
             other => other.clone(),
         }
     }
@@ -553,7 +556,14 @@ mod tests {
 
     #[test]
     fn normalizes_all_aliases() {
-        for alias in ["huggingface", "HF", "hf", "Hugging_Face", "hugging-face", " HuggingFace "] {
+        for alias in [
+            "huggingface",
+            "HF",
+            "hf",
+            "Hugging_Face",
+            "hugging-face",
+            " HuggingFace ",
+        ] {
             assert_eq!(normalize(alias), Some(CANONICAL), "alias: {alias}");
             assert!(is_huggingface(alias));
         }
@@ -603,9 +613,16 @@ mod tests {
             Some(&params),
         );
         assert_eq!(lock.provider, "huggingface");
-        assert_eq!(lock.resolved_commit.as_deref(), Some(meta.resolved_commit.as_deref().unwrap()));
+        assert_eq!(
+            lock.resolved_commit.as_deref(),
+            Some(meta.resolved_commit.as_deref().unwrap())
+        );
         assert_eq!(lock.task.as_deref(), Some("text-generation"));
-        assert!(lock.endpoint_ref.as_deref().unwrap().starts_with("https://my-endpoint.hf.space"));
+        assert!(lock
+            .endpoint_ref
+            .as_deref()
+            .unwrap()
+            .starts_with("https://my-endpoint.hf.space"));
         assert!(lock.endpoint_hash.is_some());
         assert!(lock.metadata_hash.is_some());
         assert!(lock.parameter_hash.is_some());
@@ -632,10 +649,14 @@ mod tests {
         let server = wiremock::MockServer::start().await;
         wiremock::Mock::given(wiremock::matchers::method("GET"))
             .and(wiremock::matchers::path("/api/whoami-v2"))
-            .and(wiremock::matchers::header("authorization", "Bearer hf_test"))
+            .and(wiremock::matchers::header(
+                "authorization",
+                "Bearer hf_test",
+            ))
             .respond_with(
-                wiremock::ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({ "name": "alice", "orgs": [{"name": "acme"}] })),
+                wiremock::ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({ "name": "alice", "orgs": [{"name": "acme"}] }),
+                ),
             )
             .mount(&server)
             .await;
@@ -668,12 +689,14 @@ mod tests {
             .and(wiremock::matchers::path(
                 "/api/models/mistralai/Mistral-7B-Instruct-v0.3/revision/main",
             ))
-            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "id": "mistralai/Mistral-7B-Instruct-v0.3",
-                "sha": "e0bc86c23ce5aae1db576c8cca6f06f1f73af2db",
-                "pipeline_tag": "text-generation",
-                "private": false
-            })))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "id": "mistralai/Mistral-7B-Instruct-v0.3",
+                    "sha": "e0bc86c23ce5aae1db576c8cca6f06f1f73af2db",
+                    "pipeline_tag": "text-generation",
+                    "private": false
+                })),
+            )
             .mount(&server)
             .await;
         let cfg = HuggingFaceConfig::for_test(None, &server.uri());
@@ -710,9 +733,11 @@ mod tests {
         let server = wiremock::MockServer::start().await;
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .and(wiremock::matchers::path("/models/gpt2"))
-            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!([
-                { "generated_text": "hello world" }
-            ])))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                    { "generated_text": "hello world" }
+                ])),
+            )
             .mount(&server)
             .await;
         let mut cfg = HuggingFaceConfig::for_test(Some("hf_test"), &server.uri());

@@ -1950,11 +1950,7 @@ fn cmd_provider_test(
             }
         }
         if let Some(model_id) = &model {
-            check.model = Some(
-                adapter
-                    .resolve_model_metadata(model_id, revision)
-                    .await?,
-            );
+            check.model = Some(adapter.resolve_model_metadata(model_id, revision).await?);
         }
         Ok::<(), CliError>(())
     })?;
@@ -1995,7 +1991,9 @@ fn cmd_provider_test(
                         println!("    task: {task}");
                     }
                 }
-                None => println!("  model: (none checked; pass --model or set HUGGINGFACE_DEFAULT_MODEL)"),
+                None => println!(
+                    "  model: (none checked; pass --model or set HUGGINGFACE_DEFAULT_MODEL)"
+                ),
             }
         }
         _ => print_value(&doc, format)?,

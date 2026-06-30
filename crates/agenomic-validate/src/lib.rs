@@ -753,7 +753,11 @@ fn system_semantic_checks(
 /// the CLI crate) so the validate crate stays dependency-light.
 fn is_huggingface_provider(provider: &str) -> bool {
     matches!(
-        provider.trim().to_ascii_lowercase().replace('-', "_").as_str(),
+        provider
+            .trim()
+            .to_ascii_lowercase()
+            .replace('-', "_")
+            .as_str(),
         "huggingface" | "hugging_face" | "hf"
     )
 }
@@ -785,7 +789,9 @@ fn provider_semantic_checks(doc: &serde_yaml::Value, report: &mut ValidationRepo
             severity: Severity::High,
             message: "runtime.model_id is required for the huggingface provider".into(),
             path: Some("genome.yaml".into()),
-            hint: Some("set a Hugging Face model id, e.g. mistralai/Mistral-7B-Instruct-v0.3".into()),
+            hint: Some(
+                "set a Hugging Face model id, e.g. mistralai/Mistral-7B-Instruct-v0.3".into(),
+            ),
             doc: None,
         });
     } else if model_id.contains(char::is_whitespace) {
@@ -816,7 +822,8 @@ fn provider_semantic_checks(doc: &serde_yaml::Value, report: &mut ValidationRepo
                 report.push_warning(ValidationIssue {
                     code: "agenomic::provider::huggingface::endpoint_insecure".into(),
                     severity: Severity::Medium,
-                    message: "runtime.endpoint_url uses http://; prefer https:// for token auth".into(),
+                    message: "runtime.endpoint_url uses http://; prefer https:// for token auth"
+                        .into(),
                     path: Some("genome.yaml".into()),
                     hint: None,
                     doc: None,
@@ -832,7 +839,10 @@ fn provider_semantic_checks(doc: &serde_yaml::Value, report: &mut ValidationRepo
                     severity: Severity::High,
                     message: "runtime.endpoint_url must not contain inline credentials".into(),
                     path: Some("genome.yaml".into()),
-                    hint: Some("remove the user:pass@ portion; authenticate with HUGGINGFACE_API_TOKEN".into()),
+                    hint: Some(
+                        "remove the user:pass@ portion; authenticate with HUGGINGFACE_API_TOKEN"
+                            .into(),
+                    ),
                     doc: None,
                 });
             }
@@ -924,7 +934,11 @@ mod hf_tests {
     #[test]
     fn accepts_valid_huggingface_genome() {
         let report = validate_genome(VALID_HF).unwrap();
-        assert!(report.valid, "valid HF genome rejected: {:?}", report.errors);
+        assert!(
+            report.valid,
+            "valid HF genome rejected: {:?}",
+            report.errors
+        );
     }
 
     #[test]
@@ -954,6 +968,9 @@ mod hf_tests {
         let genome = "spec_version: '0.1'\nagent:\n  id: 'agent://acme/x'\n  name: 'X'\n  domain: 'general'\n  criticality: 'low'\nruntime:\n  model_provider: 'openai'\n  model_id: 'gpt-4o'\ntools: []\nskills: []\nknowledge: []\npolicies: []\n";
         let report = validate_genome(genome).unwrap();
         assert!(report.valid);
-        assert!(report.warnings.iter().all(|w| !w.code.contains("huggingface")));
+        assert!(report
+            .warnings
+            .iter()
+            .all(|w| !w.code.contains("huggingface")));
     }
 }
