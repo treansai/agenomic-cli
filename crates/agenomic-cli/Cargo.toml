@@ -37,6 +37,7 @@ agenomic-compile = { workspace = true }
 agenomic-policy = { workspace = true }
 agenomic-governance = { workspace = true }
 agenomic-gate = { workspace = true }
+agenomic-track = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
 git-version = { workspace = true }

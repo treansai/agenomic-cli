@@ -1,0 +1,25 @@
+[package]
+name = "agenomic-track"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Online tracking engine for Agenomic: deterministic real-time drift, loop, intent, and runtime-harness detection over live agent events. Reuses agenomic-contract, agenomic-policy and agenomic-hash."
+
+[dependencies]
+agenomic-core = { workspace = true }
+agenomic-contract = { workspace = true }
+agenomic-policy = { workspace = true }
+agenomic-hash = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+chrono = { workspace = true }
+blake3 = { workspace = true }
+hex = { workspace = true }
+ulid = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
