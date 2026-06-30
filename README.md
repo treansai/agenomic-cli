@@ -38,7 +38,8 @@ agenomic attest dist/my-agent.bundle.tar.zst --output attestation.json
 
 `agenomic bundle compile-runtime` materializes deterministic
 `runtime/*.compiled` launch plans from `genome.yaml`. The MVP emits
-metadata + execution plans for `plain`, `langgraph`, and `crewai`
+metadata + execution plans for `plain`, `langgraph`, `crewai`, and
+`google-adk` (Google Agent Development Kit / [`agents-cli`](https://github.com/google/agents-cli))
 adapters so a bundle can carry portable runtime targets before build /
 registry upload.
 

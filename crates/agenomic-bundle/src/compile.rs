@@ -21,6 +21,8 @@ pub enum RuntimeAdapter {
     Plain,
     Langgraph,
     Crewai,
+    #[serde(rename = "google-adk")]
+    GoogleAdk,
 }
 
 impl RuntimeAdapter {
@@ -29,6 +31,7 @@ impl RuntimeAdapter {
             Self::Plain => "plain",
             Self::Langgraph => "langgraph",
             Self::Crewai => "crewai",
+            Self::GoogleAdk => "google-adk",
         }
     }
 
@@ -284,6 +287,7 @@ fn choose_adapters(
         match normalized.framework_hint.as_deref() {
             Some("langgraph") => out.push(RuntimeAdapter::Langgraph),
             Some("crewai") => out.push(RuntimeAdapter::Crewai),
+            Some("google-adk") => out.push(RuntimeAdapter::GoogleAdk),
             _ => {}
         }
         out
@@ -315,6 +319,15 @@ fn compile_for_adapter(
         }
         RuntimeAdapter::Crewai => {
             if normalized.framework_hint.as_deref() != Some("crewai") {
+                warnings.push(adapter_framework_warning(
+                    adapter,
+                    normalized.framework_hint.as_deref(),
+                ));
+                ready = false;
+            }
+        }
+        RuntimeAdapter::GoogleAdk => {
+            if normalized.framework_hint.as_deref() != Some("google-adk") {
                 warnings.push(adapter_framework_warning(
                     adapter,
                     normalized.framework_hint.as_deref(),
@@ -398,6 +411,12 @@ fn adapter_config(adapter: RuntimeAdapter, normalized: &NormalizedBundle) -> Jso
         RuntimeAdapter::Crewai => json!({
             "framework": "crewai",
             "binding_mode": "bundle-prompts-and-tools",
+            "entrypoint_source": normalized.execution.as_ref().map(|e| e.source.as_str()).unwrap_or("missing"),
+        }),
+        RuntimeAdapter::GoogleAdk => json!({
+            "framework": "google-adk",
+            "binding_mode": "bundle-prompts-and-tools",
+            "launcher": "adk",
             "entrypoint_source": normalized.execution.as_ref().map(|e| e.source.as_str()).unwrap_or("missing"),
         }),
     }
