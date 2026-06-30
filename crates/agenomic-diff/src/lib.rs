@@ -111,6 +111,7 @@ pub fn diff_bundles(
         .unwrap_or(Severity::Info);
     let replay_required = changes.iter().any(|c| {
         c.change_type == "model_fingerprint_changed"
+            || c.change_type == "model_revision_changed"
             || c.change_type == "knowledge_snapshot_changed"
     });
 
@@ -161,6 +162,22 @@ fn diff_model(
     c_g: &Option<serde_yaml::Value>,
     changes: &mut Vec<DiffChange>,
 ) {
+    // Provider switch (e.g. openai -> huggingface) is reported on its own: it
+    // changes auth, cost, and behaviour even when the model id string differs.
+    let b_provider = runtime_field(b_g, "model_provider");
+    let c_provider = runtime_field(c_g, "model_provider");
+    if b_provider != c_provider {
+        changes.push(DiffChange {
+            change_type: "model_provider_changed".into(),
+            category: DiffCategory::Model,
+            severity: Severity::High,
+            path: "genome.yaml#runtime.model_provider".into(),
+            before: b_provider.map(serde_json::Value::String),
+            after: c_provider.map(serde_json::Value::String),
+            explanation: "Model provider changed — re-validate auth and behavior".into(),
+        });
+    }
+
     let (b_id, b_fp) = model_info(b_g);
     let (c_id, c_fp) = model_info(c_g);
     if b_id != c_id {
@@ -184,6 +201,96 @@ fn diff_model(
             explanation: "Model fingerprint moved — replay required".into(),
         });
     }
+
+    // Hugging Face (and any provider that pins these) reproducibility fields.
+    // A revision move changes the resolved weights → replay required.
+    diff_runtime_string(
+        b_g,
+        c_g,
+        "revision",
+        "model_revision_changed",
+        Severity::High,
+        "Model revision changed — resolved weights differ, replay required",
+        changes,
+    );
+    diff_runtime_string(
+        b_g,
+        c_g,
+        "task",
+        "model_task_changed",
+        Severity::Medium,
+        "Model task changed — re-validate behavior",
+        changes,
+    );
+    diff_runtime_string(
+        b_g,
+        c_g,
+        "endpoint_url",
+        "model_endpoint_changed",
+        Severity::Medium,
+        "Inference endpoint changed — re-validate connectivity and behavior",
+        changes,
+    );
+
+    // Parameters (temperature, max_tokens, …) are compared structurally so any
+    // tweak is surfaced regardless of key order.
+    let b_params = runtime_value(b_g, "parameters");
+    let c_params = runtime_value(c_g, "parameters");
+    if b_params != c_params {
+        changes.push(DiffChange {
+            change_type: "model_parameters_changed".into(),
+            category: DiffCategory::Model,
+            severity: Severity::Medium,
+            path: "genome.yaml#runtime.parameters".into(),
+            before: b_params.map(yaml_to_json),
+            after: c_params.map(yaml_to_json),
+            explanation: "Model parameters changed — re-validate behavior".into(),
+        });
+    }
+}
+
+/// Emit a change when a `runtime.<field>` string differs between bundles.
+fn diff_runtime_string(
+    b_g: &Option<serde_yaml::Value>,
+    c_g: &Option<serde_yaml::Value>,
+    field: &str,
+    change_type: &str,
+    severity: Severity,
+    explanation: &str,
+    changes: &mut Vec<DiffChange>,
+) {
+    let before = runtime_field(b_g, field);
+    let after = runtime_field(c_g, field);
+    if before != after {
+        changes.push(DiffChange {
+            change_type: change_type.into(),
+            category: DiffCategory::Model,
+            severity,
+            path: format!("genome.yaml#runtime.{field}"),
+            before: before.map(serde_json::Value::String),
+            after: after.map(serde_json::Value::String),
+            explanation: explanation.into(),
+        });
+    }
+}
+
+fn runtime_field(g: &Option<serde_yaml::Value>, field: &str) -> Option<String> {
+    g.as_ref()
+        .and_then(|g| g.get("runtime"))
+        .and_then(|r| r.get(field))
+        .and_then(|x| x.as_str())
+        .map(str::to_string)
+}
+
+fn runtime_value(g: &Option<serde_yaml::Value>, field: &str) -> Option<serde_yaml::Value> {
+    g.as_ref()
+        .and_then(|g| g.get("runtime"))
+        .and_then(|r| r.get(field))
+        .cloned()
+}
+
+fn yaml_to_json(v: serde_yaml::Value) -> serde_json::Value {
+    serde_json::to_value(&v).unwrap_or(serde_json::Value::Null)
 }
 
 fn model_info(g: &Option<serde_yaml::Value>) -> (Option<String>, Option<String>) {
@@ -589,6 +696,61 @@ mod tests {
         assert!(r.changes.iter().any(
             |c| c.change_type == "model_fingerprint_changed" && c.severity == Severity::Medium
         ));
+    }
+
+    /// Write a Hugging Face genome with revision/task/parameters so HF-specific
+    /// diff paths can be exercised.
+    fn write_hf_bundle(dir: &Path, model: &str, revision: &str, temperature: &str) {
+        fs::create_dir_all(dir).unwrap();
+        let genome = format!(
+            "spec_version: '0.1'\nagent:\n  id: 'agent://acme/hf'\n  name: 'HF'\n  domain: 'general'\n  criticality: 'low'\nruntime:\n  model_provider: 'huggingface'\n  model_id: '{model}'\n  task: 'text-generation'\n  revision: '{revision}'\n  parameters:\n    temperature: {temperature}\n    max_tokens: 1024\ntools: []\nskills: []\nknowledge: []\npolicies: []\n"
+        );
+        fs::write(dir.join("genome.yaml"), genome).unwrap();
+        fs::write(
+            dir.join("behavior.contract.yaml"),
+            "spec_version: '0.1'\ncontract:\n  id: 'c'\n  rules: []\n",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn hf_revision_change_is_high_and_replay_required() {
+        let b = tempdir().unwrap();
+        let c = tempdir().unwrap();
+        write_hf_bundle(b.path(), "mistralai/Mistral-7B-Instruct-v0.3", "main", "0.2");
+        write_hf_bundle(c.path(), "mistralai/Mistral-7B-Instruct-v0.3", "v0.3", "0.2");
+        let r = diff_bundles(b.path(), c.path(), &DiffOptions::default()).unwrap();
+        assert!(r.replay_required, "revision move must require replay");
+        assert!(r
+            .changes
+            .iter()
+            .any(|c| c.change_type == "model_revision_changed" && c.severity == Severity::High));
+    }
+
+    #[test]
+    fn hf_parameter_change_is_reported() {
+        let b = tempdir().unwrap();
+        let c = tempdir().unwrap();
+        write_hf_bundle(b.path(), "mistralai/Mistral-7B-Instruct-v0.3", "main", "0.2");
+        write_hf_bundle(c.path(), "mistralai/Mistral-7B-Instruct-v0.3", "main", "0.7");
+        let r = diff_bundles(b.path(), c.path(), &DiffOptions::default()).unwrap();
+        assert!(r
+            .changes
+            .iter()
+            .any(|c| c.change_type == "model_parameters_changed"));
+    }
+
+    #[test]
+    fn provider_switch_is_high() {
+        let b = tempdir().unwrap();
+        let c = tempdir().unwrap();
+        write_bundle(b.path(), "fp1", &["a"]);
+        write_hf_bundle(c.path(), "mistralai/Mistral-7B-Instruct-v0.3", "main", "0.2");
+        let r = diff_bundles(b.path(), c.path(), &DiffOptions::default()).unwrap();
+        assert!(r
+            .changes
+            .iter()
+            .any(|c| c.change_type == "model_provider_changed" && c.severity == Severity::High));
     }
 
     #[test]

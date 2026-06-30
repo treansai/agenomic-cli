@@ -1,0 +1,18 @@
+spec_version: '0.1'
+agent_id: 'agent://treans/huggingface-agent'
+# The Hugging Face fields below are produced/refreshed by
+# `agm provider test huggingface --model mistralai/Mistral-7B-Instruct-v0.3`.
+# `resolved_commit` pins the exact weights; the *_hash fields make the release
+# reproducible without storing the endpoint URL or any token.
+model:
+  provider: 'huggingface'
+  model_id: 'mistralai/Mistral-7B-Instruct-v0.3'
+  revision: 'main'
+  resolved_commit: 'e0bc86c23ce5aae1db576c8cca6f06f1f73af2db'
+  task: 'text-generation'
+  fingerprint: 'e0bc86c23ce5aae1db576c8cca6f06f1f73af2db'
+  temperature: 0.2
+  metadata_hash: 'b3:9f0d1e7a8b2c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e'
+  parameter_hash: 'b3:1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b'
+tools: []
+knowledge: []

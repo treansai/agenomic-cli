@@ -162,3 +162,48 @@ fn cloud_login_defaults_to_hosted_endpoint() {
         "unexpected login output: {stdout}"
     );
 }
+
+#[test]
+fn providers_list_includes_huggingface() {
+    let output = agenomic().args(["providers", "list"]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(predicates::str::contains("huggingface").eval(&stdout));
+    assert!(predicates::str::contains("hf").eval(&stdout));
+}
+
+#[test]
+fn provider_singular_alias_works() {
+    // `agm provider list` is an alias for `agm providers list`.
+    let output = agenomic().args(["provider", "list"]).output().unwrap();
+    assert!(output.status.success());
+}
+
+#[test]
+fn provider_test_rejects_unknown_provider() {
+    let output = agenomic()
+        .args(["provider", "test", "openai"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(predicates::str::contains("huggingface").eval(&stderr));
+}
+
+#[test]
+fn validates_huggingface_example_bundle() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let example = std::path::Path::new(manifest_dir)
+        .join("../../examples/huggingface-agent")
+        .canonicalize()
+        .expect("example exists");
+    let output = agenomic()
+        .args(["validate", example.to_str().unwrap(), "--level", "strict"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "validate failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

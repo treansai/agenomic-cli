@@ -25,7 +25,28 @@
         "model_provider": { "type": "string", "minLength": 1 },
         "model_id": { "type": "string", "minLength": 1 },
         "model_fingerprint": { "type": "string" },
-        "temperature": { "type": "number" }
+        "temperature": { "type": "number" },
+        "task": {
+          "type": "string",
+          "description": "Optional provider task/pipeline tag, e.g. text-generation, embeddings, classification (Hugging Face and similar)."
+        },
+        "revision": {
+          "type": "string",
+          "description": "Optional model revision (branch, tag, or commit). For Hugging Face this pins the resolved weights, e.g. 'main' or a commit SHA."
+        },
+        "endpoint_url": {
+          "type": "string",
+          "description": "Optional dedicated inference endpoint URL (e.g. a Hugging Face Inference Endpoint). Never include credentials in this URL."
+        },
+        "organization": {
+          "type": "string",
+          "description": "Optional organization/user namespace for the provider."
+        },
+        "parameters": {
+          "type": "object",
+          "description": "Optional provider generation parameters (e.g. temperature, max_tokens). Hashed into the lockfile for reproducibility.",
+          "additionalProperties": true
+        }
       },
       "additionalProperties": true
     },

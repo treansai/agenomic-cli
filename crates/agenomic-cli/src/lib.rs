@@ -3,6 +3,7 @@
 mod cli;
 mod commands;
 mod enrich;
+pub mod huggingface;
 mod provider;
 mod render;
 mod track;
@@ -69,6 +70,7 @@ pub fn run() -> i32 {
         Commands::Cloud(args) => commands::cmd_cloud(args, cli.profile.as_deref()),
         Commands::Bucket(args) => commands::cmd_bucket(args, cli.profile.as_deref()),
         Commands::Bundle(args) => commands::cmd_bundle(args, format, no_color),
+        Commands::Providers(args) => commands::cmd_providers(args, format, no_color),
         Commands::Doctor => commands::cmd_doctor(),
         Commands::Completions { shell } => commands::cmd_completions(*shell),
     };

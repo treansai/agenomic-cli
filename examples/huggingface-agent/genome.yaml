@@ -1,0 +1,25 @@
+spec_version: '0.1'
+agent:
+  id: 'agent://treans/huggingface-agent'
+  name: 'Hugging Face Agent'
+  domain: 'general'
+  criticality: 'low'
+  description: 'Example agent that uses a Hugging Face model for text generation.'
+runtime:
+  model_provider: 'huggingface'
+  model_id: 'mistralai/Mistral-7B-Instruct-v0.3'
+  task: 'text-generation'
+  revision: 'main'
+  model_fingerprint: 'e0bc86c23ce5aae1db576c8cca6f06f1f73af2db'
+  temperature: 0.2
+  parameters:
+    temperature: 0.2
+    max_tokens: 1024
+tools: []
+skills:
+  - name: 'summarize'
+    prompt: 'prompts/system.md'
+knowledge: []
+policies: []
+memory:
+  stores_user_specific_data: false
