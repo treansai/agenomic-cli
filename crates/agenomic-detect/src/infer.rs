@@ -52,6 +52,11 @@ fn infer_framework(deps: &[&Dependency], genome: &mut DetectedGenome) {
     }
     // Priority order; within a rule the alphabetically-first matching dep wins.
     let rules: &[(&str, NamePred, bool)] = &[
+        (
+            "google-adk",
+            |n| n == "google-adk" || n == "google-agents-cli" || n == "agents-cli",
+            false,
+        ),
         ("langgraph", |n| n == "langgraph", false),
         (
             "langchain",
@@ -97,7 +102,13 @@ fn infer_provider(deps: &[&Dependency], genome: &mut DetectedGenome) {
     let rules: &[(&str, NamePred)] = &[
         ("anthropic", |n| n == "anthropic"),
         ("openai", |n| n == "openai"),
-        ("google", |n| n == "google-generativeai" || n == "vertexai"),
+        ("google", |n| {
+            n == "google-generativeai"
+                || n == "google-genai"
+                || n == "vertexai"
+                || n == "google-adk"
+                || n == "google-agents-cli"
+        }),
         ("cohere", |n| n == "cohere"),
     ];
     for (provider, pred) in rules {
@@ -284,5 +295,22 @@ mod tests {
         apply(&[dep("openai-agents", Some(">=0.1"))], &mut g);
         assert_eq!(g.framework.as_deref(), Some("openai-agents"));
         assert_eq!(g.model_provider, "openai");
+    }
+
+    #[test]
+    fn google_adk_sets_framework_and_gemini_default() {
+        let mut g = DetectedGenome::defaults();
+        apply(&[dep("google-adk", Some(">=1.0"))], &mut g);
+        assert_eq!(g.framework.as_deref(), Some("google-adk"));
+        assert_eq!(g.model_provider, "google");
+        assert_eq!(g.model_id, "gemini-1.5-pro");
+    }
+
+    #[test]
+    fn agents_cli_package_detected_as_google_adk() {
+        let mut g = DetectedGenome::defaults();
+        apply(&[dep("google-agents-cli", Some(">=0.1"))], &mut g);
+        assert_eq!(g.framework.as_deref(), Some("google-adk"));
+        assert_eq!(g.model_provider, "google");
     }
 }

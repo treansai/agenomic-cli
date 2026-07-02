@@ -6,6 +6,19 @@ All notable changes to `agenomic-cli` are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Google ADK / `agents-cli` support.** A new `google-adk` compile target lowers
+  a genome into a Google [Agent Development Kit](https://github.com/google/adk-python)
+  agent exposing the conventional `root_agent` (with `__init__.py` for discovery),
+  runnable via `adk run` / `adk web` and deployable through Google's
+  [`agents-cli`](https://github.com/google/agents-cli). The system prompt and each
+  skill prompt fold into the agent instruction; declared MCP tools are emitted as
+  typed stub callables. Gemini models bind natively; other providers route through
+  ADK's `LiteLlm` wrapper. Detection now recognises the `google-adk` /
+  `google-agents-cli` dependencies (framework `google-adk`, provider `google`), and
+  `bundle compile-runtime` gains a matching `google-adk` launch-plan adapter.
+
 ## [0.2.0-rc.0] - 2026-06-24
 
 ### Added

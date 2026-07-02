@@ -17,6 +17,9 @@ pub enum CompileTarget {
     LangGraph,
     /// A CrewAI crew with one task per skill.
     CrewAi,
+    /// A Google Agent Development Kit (ADK) agent, runnable with `adk run` /
+    /// `adk web` and deployable via Google's `agents-cli`.
+    GoogleAdk,
     /// The `plain` FastAPI service packaged as an OCI image (`Dockerfile`).
     Docker,
     /// A `componentize-py` WASM component exporting an `invoke` function.
@@ -25,10 +28,11 @@ pub enum CompileTarget {
 
 impl CompileTarget {
     /// All targets, in deterministic order. Used by `--all`.
-    pub const ALL: [CompileTarget; 5] = [
+    pub const ALL: [CompileTarget; 6] = [
         CompileTarget::Plain,
         CompileTarget::LangGraph,
         CompileTarget::CrewAi,
+        CompileTarget::GoogleAdk,
         CompileTarget::Docker,
         CompileTarget::Wasm,
     ];
@@ -39,6 +43,7 @@ impl CompileTarget {
             CompileTarget::Plain => "plain",
             CompileTarget::LangGraph => "langgraph",
             CompileTarget::CrewAi => "crewai",
+            CompileTarget::GoogleAdk => "google-adk",
             CompileTarget::Docker => "docker",
             CompileTarget::Wasm => "wasm",
         }
@@ -64,6 +69,9 @@ impl FromStr for CompileTarget {
             "plain" | "fastapi" => Ok(CompileTarget::Plain),
             "langgraph" => Ok(CompileTarget::LangGraph),
             "crewai" | "crew" => Ok(CompileTarget::CrewAi),
+            "google-adk" | "google_adk" | "adk" | "agents-cli" | "gemini" => {
+                Ok(CompileTarget::GoogleAdk)
+            }
             "docker" | "oci" => Ok(CompileTarget::Docker),
             "wasm" | "wasi" | "component" => Ok(CompileTarget::Wasm),
             other => Err(CompileError::UnknownTarget(other.to_string())),
@@ -91,6 +99,14 @@ mod tests {
         assert_eq!(
             CompileTarget::from_str("crew").unwrap(),
             CompileTarget::CrewAi
+        );
+        assert_eq!(
+            CompileTarget::from_str("adk").unwrap(),
+            CompileTarget::GoogleAdk
+        );
+        assert_eq!(
+            CompileTarget::from_str("Google-ADK").unwrap(),
+            CompileTarget::GoogleAdk
         );
     }
 

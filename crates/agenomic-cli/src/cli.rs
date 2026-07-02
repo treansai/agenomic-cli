@@ -342,6 +342,7 @@ pub enum TargetArg {
     Plain,
     Langgraph,
     Crewai,
+    GoogleAdk,
     Docker,
     Wasm,
 }
@@ -353,6 +354,7 @@ impl TargetArg {
             TargetArg::Plain => CompileTarget::Plain,
             TargetArg::Langgraph => CompileTarget::LangGraph,
             TargetArg::Crewai => CompileTarget::CrewAi,
+            TargetArg::GoogleAdk => CompileTarget::GoogleAdk,
             TargetArg::Docker => CompileTarget::Docker,
             TargetArg::Wasm => CompileTarget::Wasm,
         }

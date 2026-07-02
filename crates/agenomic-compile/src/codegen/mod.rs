@@ -15,6 +15,7 @@
 mod common;
 mod crewai;
 mod docker;
+mod google_adk;
 mod langgraph;
 mod plain;
 mod wasm;
@@ -32,6 +33,7 @@ pub(crate) fn generate(genome: &Genome, target: CompileTarget) -> CompiledArtifa
         CompileTarget::Plain => plain::generate(genome),
         CompileTarget::LangGraph => langgraph::generate(genome),
         CompileTarget::CrewAi => crewai::generate(genome),
+        CompileTarget::GoogleAdk => google_adk::generate(genome),
         CompileTarget::Docker => docker::generate(genome),
         CompileTarget::Wasm => wasm::generate(genome),
     }
