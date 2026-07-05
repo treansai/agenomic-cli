@@ -18,6 +18,19 @@ All notable changes to `agenomic-cli` are documented here. Format follows
   ADK's `LiteLlm` wrapper. Detection now recognises the `google-adk` /
   `google-agents-cli` dependencies (framework `google-adk`, provider `google`), and
   `bundle compile-runtime` gains a matching `google-adk` launch-plan adapter.
+- **Hugging Face provider.** Hugging Face is now a first-class model provider
+  (aliases `huggingface`, `hf`, `hugging_face`). Genomes can declare a Hugging
+  Face model with optional `task`, `revision`, `endpoint_url`, `organization`,
+  and `parameters`; the lockfile pins `revision`, `resolved_commit`, `task`, a
+  redacted `endpoint_ref`, and `endpoint_hash` / `metadata_hash` /
+  `parameter_hash` for reproducibility. New `agm providers list` and
+  `agm provider test <provider>` commands; `agm enrich` and `agm validate`
+  understand the provider, and `agm diff` reports `model_provider_changed`,
+  `model_revision_changed` (replay required), `model_task_changed`,
+  `model_endpoint_changed`, and `model_parameters_changed`. Tokens
+  (`HUGGINGFACE_API_TOKEN` / `HF_TOKEN`) are read only from the environment and
+  never appear in logs, traces, lockfiles, reports, or errors. New example at
+  `examples/huggingface-agent/` and docs at `docs/providers/huggingface.md`.
 
 ## [0.2.0-rc.0] - 2026-06-24
 

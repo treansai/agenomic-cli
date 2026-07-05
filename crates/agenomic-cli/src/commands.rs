@@ -1836,6 +1836,171 @@ pub fn cmd_bundle(
     }
 }
 
+/// `agm providers list` / `agm provider test <provider>`.
+pub fn cmd_providers(
+    args: &ProvidersCommand,
+    format: OutputFormat,
+    _no_color: bool,
+) -> CliResult<ExitCode> {
+    match &args.command {
+        ProvidersSub::List => cmd_providers_list(format),
+        ProvidersSub::Test {
+            provider,
+            model,
+            revision,
+        } => cmd_provider_test(provider, model.as_deref(), revision.as_deref(), format),
+    }
+}
+
+/// Static provider catalog plus whether each is configured in this environment.
+/// Adding a provider here keeps `providers list` and the docs in sync.
+fn cmd_providers_list(format: OutputFormat) -> CliResult<ExitCode> {
+    let env_set = |keys: &[&str]| keys.iter().any(|k| std::env::var(k).is_ok());
+    let providers = serde_json::json!([
+        {
+            "name": "anthropic",
+            "aliases": ["anthropic"],
+            "configured": env_set(&["ANTHROPIC_API_KEY"]),
+            "auth_env": ["ANTHROPIC_API_KEY"],
+        },
+        {
+            "name": "openai",
+            "aliases": ["openai"],
+            "configured": env_set(&["OPENAI_API_KEY"]),
+            "auth_env": ["OPENAI_API_KEY"],
+        },
+        {
+            "name": crate::huggingface::CANONICAL,
+            "aliases": crate::huggingface::ALIASES,
+            "configured": env_set(&["HUGGINGFACE_API_TOKEN", "HF_TOKEN"]),
+            "auth_env": ["HUGGINGFACE_API_TOKEN", "HF_TOKEN"],
+        },
+    ]);
+    let doc = serde_json::json!({ "providers": providers });
+    match format {
+        OutputFormat::Human => {
+            println!("Model providers:");
+            for p in providers.as_array().unwrap() {
+                let status = if p["configured"].as_bool().unwrap_or(false) {
+                    "configured"
+                } else {
+                    "not configured"
+                };
+                let aliases = p["aliases"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_default();
+                println!(
+                    "  - {:<12} [{status}]  aliases: {aliases}",
+                    p["name"].as_str().unwrap_or("?")
+                );
+            }
+        }
+        _ => print_value(&doc, format)?,
+    }
+    Ok(ExitCode::Success)
+}
+
+/// Validate a provider's credentials and basic connectivity. Only Hugging Face
+/// has a real connectivity probe today; other providers report a clear message.
+fn cmd_provider_test(
+    provider: &str,
+    model: Option<&str>,
+    revision: Option<&str>,
+    format: OutputFormat,
+) -> CliResult<ExitCode> {
+    if !crate::huggingface::is_huggingface(provider) {
+        return Err(CliError::Schema(format!(
+            "`provider test` currently supports only `huggingface` (aliases: {}); got `{provider}`",
+            crate::huggingface::ALIASES.join(", ")
+        )));
+    }
+
+    let cfg = crate::huggingface::HuggingFaceConfig::from_env();
+    let endpoint_configured = cfg.endpoint_url.is_some();
+    let organization = cfg.organization.clone();
+    let model = model
+        .map(str::to_string)
+        .or_else(|| cfg.default_model.clone());
+
+    let rt = tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
+    let adapter = crate::huggingface::HuggingFaceAdapter::new(cfg)?;
+
+    let mut check = crate::huggingface::ConnectionCheck {
+        provider: crate::huggingface::CANONICAL.to_string(),
+        authenticated: false,
+        account: None,
+        organization,
+        model: None,
+        endpoint_configured,
+    };
+
+    rt.block_on(async {
+        if adapter.config().has_token() {
+            let who = adapter.validate_credentials().await?;
+            check.authenticated = true;
+            check.account = who.name;
+            if check.organization.is_none() {
+                check.organization = who.organizations.into_iter().next();
+            }
+        }
+        if let Some(model_id) = &model {
+            check.model = Some(adapter.resolve_model_metadata(model_id, revision).await?);
+        }
+        Ok::<(), CliError>(())
+    })?;
+
+    let doc = serde_json::to_value(&check).map_err(|e| CliError::Internal(format!("{e}")))?;
+    match format {
+        OutputFormat::Human => {
+            println!("Provider: {}", check.provider);
+            println!(
+                "  authentication: {}",
+                if check.authenticated {
+                    "ok"
+                } else {
+                    "no token (anonymous; set HUGGINGFACE_API_TOKEN or HF_TOKEN)"
+                }
+            );
+            if let Some(acct) = &check.account {
+                println!("  account: {acct}");
+            }
+            if let Some(org) = &check.organization {
+                println!("  organization: {org}");
+            }
+            println!(
+                "  inference endpoint: {}",
+                if check.endpoint_configured {
+                    "configured"
+                } else {
+                    "serverless Inference API"
+                }
+            );
+            match &check.model {
+                Some(m) => {
+                    println!("  model: {} @ {}", m.model_id, m.revision);
+                    if let Some(sha) = &m.resolved_commit {
+                        println!("    resolved commit: {sha}");
+                    }
+                    if let Some(task) = &m.task {
+                        println!("    task: {task}");
+                    }
+                }
+                None => println!(
+                    "  model: (none checked; pass --model or set HUGGINGFACE_DEFAULT_MODEL)"
+                ),
+            }
+        }
+        _ => print_value(&doc, format)?,
+    }
+    Ok(ExitCode::Success)
+}
+
 const DEFAULT_BUCKET_SLUG: &str = "default";
 
 pub fn cmd_bucket(args: &BucketCommand, profile: Option<&str>) -> CliResult<ExitCode> {

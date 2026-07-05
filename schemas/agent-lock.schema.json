@@ -14,7 +14,35 @@
         "provider": { "type": "string", "minLength": 1 },
         "model_id": { "type": "string", "minLength": 1 },
         "fingerprint": { "type": "string" },
-        "temperature": { "type": "number" }
+        "temperature": { "type": "number" },
+        "revision": {
+          "type": "string",
+          "description": "Requested model revision (branch/tag/commit), e.g. 'main'."
+        },
+        "resolved_commit": {
+          "type": "string",
+          "description": "Resolved commit SHA (or equivalent revision identifier) captured at lock time. Makes the release reproducible."
+        },
+        "task": {
+          "type": "string",
+          "description": "Provider task/pipeline tag, e.g. text-generation."
+        },
+        "endpoint_ref": {
+          "type": "string",
+          "description": "Redacted reference to a configured inference endpoint (scheme://host[/path]); never the full URL or any credentials."
+        },
+        "endpoint_hash": {
+          "type": "string",
+          "description": "BLAKE3 hash of the configured endpoint URL, for drift detection without storing the URL verbatim."
+        },
+        "metadata_hash": {
+          "type": "string",
+          "description": "BLAKE3 hash of the resolved model metadata (model_id, revision, resolved_commit, task)."
+        },
+        "parameter_hash": {
+          "type": "string",
+          "description": "BLAKE3 hash of the canonicalized model parameters."
+        }
       },
       "additionalProperties": true
     },

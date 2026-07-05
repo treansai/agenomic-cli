@@ -1,0 +1,8 @@
+spec_version: '0.1'
+contract:
+  id: 'contract/huggingface-agent'
+  rules:
+    - id: 'rule/no-pii-in-output'
+      type: 'forbidden_output_pii'
+      severity: 'high'
+      description: 'The agent must not emit user PII in generated text.'

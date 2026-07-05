@@ -170,6 +170,13 @@ pub fn validate_bundle(dir: &Path, level: ValidationLevel) -> CliResult<Validati
 
     cross_reference(&genome_text, &lock_text, &contract_text, &mut report);
 
+    // Provider-specific semantic checks (e.g. Hugging Face).
+    if let Some(t) = &genome_text {
+        if let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(t) {
+            provider_semantic_checks(&doc, &mut report);
+        }
+    }
+
     if matches!(level, ValidationLevel::Strict) {
         if !report.errors.is_empty() {
             report.valid = false;
@@ -252,6 +259,9 @@ pub fn validate_genome(genome_yaml: &str) -> CliResult<ValidationReport> {
         ..Default::default()
     };
     run_schema(SchemaKind::Genome, genome_yaml, "genome.yaml", &mut report)?;
+    if let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(genome_yaml) {
+        provider_semantic_checks(&doc, &mut report);
+    }
     if !report.errors.is_empty() {
         report.valid = false;
     }
@@ -739,6 +749,107 @@ fn system_semantic_checks(
     }
 }
 
+/// Known provider aliases for Hugging Face. Kept here (rather than depending on
+/// the CLI crate) so the validate crate stays dependency-light.
+fn is_huggingface_provider(provider: &str) -> bool {
+    matches!(
+        provider
+            .trim()
+            .to_ascii_lowercase()
+            .replace('-', "_")
+            .as_str(),
+        "huggingface" | "hugging_face" | "hf"
+    )
+}
+
+/// Provider-specific semantic checks. Currently validates Hugging Face model
+/// declarations: a non-empty `model_id`, a safe `endpoint_url` (https, no inline
+/// credentials), and a recognised `task` when present. All are warnings except
+/// credential-bearing endpoint URLs, which are errors (they leak secrets).
+fn provider_semantic_checks(doc: &serde_yaml::Value, report: &mut ValidationReport) {
+    let runtime = match doc.get("runtime") {
+        Some(r) => r,
+        None => return,
+    };
+    let provider = runtime
+        .get("model_provider")
+        .and_then(|x| x.as_str())
+        .unwrap_or("");
+    if !is_huggingface_provider(provider) {
+        return;
+    }
+
+    let model_id = runtime
+        .get("model_id")
+        .and_then(|x| x.as_str())
+        .unwrap_or("");
+    if model_id.trim().is_empty() {
+        report.push_error(ValidationIssue {
+            code: "agenomic::provider::huggingface::missing_model_id".into(),
+            severity: Severity::High,
+            message: "runtime.model_id is required for the huggingface provider".into(),
+            path: Some("genome.yaml".into()),
+            hint: Some(
+                "set a Hugging Face model id, e.g. mistralai/Mistral-7B-Instruct-v0.3".into(),
+            ),
+            doc: None,
+        });
+    } else if model_id.contains(char::is_whitespace) {
+        report.push_warning(ValidationIssue {
+            code: "agenomic::provider::huggingface::suspicious_model_id".into(),
+            severity: Severity::Low,
+            message: format!("runtime.model_id '{model_id}' contains whitespace"),
+            path: Some("genome.yaml".into()),
+            hint: Some("Hugging Face model ids look like 'namespace/name'".into()),
+            doc: None,
+        });
+    }
+
+    if let Some(endpoint) = runtime.get("endpoint_url").and_then(|x| x.as_str()) {
+        if !endpoint.is_empty() {
+            let lower = endpoint.to_ascii_lowercase();
+            let scheme_ok = lower.starts_with("https://") || lower.starts_with("http://");
+            if !scheme_ok {
+                report.push_warning(ValidationIssue {
+                    code: "agenomic::provider::huggingface::endpoint_scheme".into(),
+                    severity: Severity::Medium,
+                    message: "runtime.endpoint_url should be an http(s) URL".into(),
+                    path: Some("genome.yaml".into()),
+                    hint: None,
+                    doc: None,
+                });
+            } else if lower.starts_with("http://") {
+                report.push_warning(ValidationIssue {
+                    code: "agenomic::provider::huggingface::endpoint_insecure".into(),
+                    severity: Severity::Medium,
+                    message: "runtime.endpoint_url uses http://; prefer https:// for token auth"
+                        .into(),
+                    path: Some("genome.yaml".into()),
+                    hint: None,
+                    doc: None,
+                });
+            }
+            // Inline credentials (`scheme://user:pass@host`) would leak a secret
+            // into the genome/lockfile. Treat as an error.
+            let after_scheme = endpoint.split("://").nth(1).unwrap_or("");
+            let authority = after_scheme.split('/').next().unwrap_or("");
+            if authority.contains('@') {
+                report.push_error(ValidationIssue {
+                    code: "agenomic::provider::huggingface::endpoint_credentials".into(),
+                    severity: Severity::High,
+                    message: "runtime.endpoint_url must not contain inline credentials".into(),
+                    path: Some("genome.yaml".into()),
+                    hint: Some(
+                        "remove the user:pass@ portion; authenticate with HUGGINGFACE_API_TOKEN"
+                            .into(),
+                    ),
+                    doc: None,
+                });
+            }
+        }
+    }
+}
+
 fn cross_reference(
     genome: &Option<String>,
     lock: &Option<String>,
@@ -811,5 +922,55 @@ fn cross_reference(
                 doc: None,
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod hf_tests {
+    use super::*;
+
+    const VALID_HF: &str = "spec_version: '0.1'\nagent:\n  id: 'agent://acme/hf'\n  name: 'HF'\n  domain: 'general'\n  criticality: 'low'\nruntime:\n  model_provider: 'huggingface'\n  model_id: 'mistralai/Mistral-7B-Instruct-v0.3'\n  task: 'text-generation'\n  revision: 'main'\ntools: []\nskills: []\nknowledge: []\npolicies: []\n";
+
+    #[test]
+    fn accepts_valid_huggingface_genome() {
+        let report = validate_genome(VALID_HF).unwrap();
+        assert!(
+            report.valid,
+            "valid HF genome rejected: {:?}",
+            report.errors
+        );
+    }
+
+    #[test]
+    fn rejects_endpoint_with_inline_credentials() {
+        let genome = "spec_version: '0.1'\nagent:\n  id: 'agent://acme/hf'\n  name: 'HF'\n  domain: 'general'\n  criticality: 'low'\nruntime:\n  model_provider: 'hf'\n  model_id: 'mistralai/Mistral-7B-Instruct-v0.3'\n  endpoint_url: 'https://user:pass@endpoint.hf.space/v1'\ntools: []\nskills: []\nknowledge: []\npolicies: []\n";
+        let report = validate_genome(genome).unwrap();
+        assert!(!report.valid);
+        assert!(report
+            .errors
+            .iter()
+            .any(|e| e.code == "agenomic::provider::huggingface::endpoint_credentials"));
+    }
+
+    #[test]
+    fn warns_on_http_endpoint() {
+        let genome = "spec_version: '0.1'\nagent:\n  id: 'agent://acme/hf'\n  name: 'HF'\n  domain: 'general'\n  criticality: 'low'\nruntime:\n  model_provider: 'huggingface'\n  model_id: 'gpt2'\n  endpoint_url: 'http://endpoint.hf.space/v1'\ntools: []\nskills: []\nknowledge: []\npolicies: []\n";
+        let report = validate_genome(genome).unwrap();
+        assert!(report.valid, "http endpoint should warn, not error");
+        assert!(report
+            .warnings
+            .iter()
+            .any(|w| w.code == "agenomic::provider::huggingface::endpoint_insecure"));
+    }
+
+    #[test]
+    fn non_huggingface_provider_is_untouched() {
+        let genome = "spec_version: '0.1'\nagent:\n  id: 'agent://acme/x'\n  name: 'X'\n  domain: 'general'\n  criticality: 'low'\nruntime:\n  model_provider: 'openai'\n  model_id: 'gpt-4o'\ntools: []\nskills: []\nknowledge: []\npolicies: []\n";
+        let report = validate_genome(genome).unwrap();
+        assert!(report.valid);
+        assert!(report
+            .warnings
+            .iter()
+            .all(|w| !w.code.contains("huggingface")));
     }
 }

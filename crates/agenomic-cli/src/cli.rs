@@ -151,6 +151,9 @@ pub enum Commands {
     Bucket(BucketCommand),
     /// Bundle utilities (extract, manifest, runtime compilation).
     Bundle(BundleCommand),
+    /// Model provider utilities (list providers, test connectivity).
+    #[command(visible_alias = "provider")]
+    Providers(ProvidersCommand),
     /// Run system diagnostics.
     Doctor,
     /// Print shell completion script.
@@ -700,6 +703,36 @@ pub enum CloudSub {
         /// Replay job id (UUID) whose report becomes the evidence.
         #[arg(long)]
         replay_job_id: String,
+    },
+}
+
+#[derive(Debug, Parser)]
+pub struct ProvidersCommand {
+    #[command(subcommand)]
+    pub command: ProvidersSub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProvidersSub {
+    /// List the model providers Agenomic understands and whether each is
+    /// configured in the current environment.
+    List,
+    /// Validate a provider's credentials and basic connectivity.
+    ///
+    /// For `huggingface`, this checks the token (`HUGGINGFACE_API_TOKEN` /
+    /// `HF_TOKEN`) against the Hub and, when a model is given or
+    /// `HUGGINGFACE_DEFAULT_MODEL` is set, resolves its metadata. Tokens are
+    /// never printed.
+    Test {
+        /// Provider name or alias (e.g. `huggingface`, `hf`, `hugging_face`).
+        provider: String,
+        /// Optional model id to resolve metadata for (defaults to
+        /// `HUGGINGFACE_DEFAULT_MODEL` when unset).
+        #[arg(long)]
+        model: Option<String>,
+        /// Optional model revision (branch/tag/commit). Defaults to `main`.
+        #[arg(long)]
+        revision: Option<String>,
     },
 }
 

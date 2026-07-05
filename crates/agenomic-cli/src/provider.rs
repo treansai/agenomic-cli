@@ -145,11 +145,39 @@ async fn direct_complete(
     match vendor {
         "anthropic" => anthropic_chat(client, model, prompt).await,
         "openai" => openai_chat(client, model, prompt).await,
+        other if crate::huggingface::is_huggingface(other) => {
+            huggingface_chat(model, prompt).await
+        }
         other => Err(CliError::Schema(format!(
-            "provider '{other}' is not supported by `agm enrich` (anthropic, openai, cloud); \
+            "provider '{other}' is not supported by `agm enrich` (anthropic, openai, huggingface, cloud); \
              pass --provider/--cloud explicitly"
         ))),
     }
+}
+
+/// Enrich via Hugging Face text generation. Reuses the shared adapter so token
+/// resolution (`HUGGINGFACE_API_TOKEN` / `HF_TOKEN`), endpoint selection,
+/// timeouts, and redaction all stay in one place.
+async fn huggingface_chat(model: &str, prompt: &str) -> CliResult<String> {
+    let cfg = crate::huggingface::HuggingFaceConfig::from_env();
+    let model = if model.is_empty() {
+        cfg.default_model.clone().ok_or_else(|| {
+            CliError::Schema(
+                "no Hugging Face model selected: set runtime.model_id, pass --model, or \
+                 HUGGINGFACE_DEFAULT_MODEL"
+                    .into(),
+            )
+        })?
+    } else {
+        model.to_string()
+    };
+    // JSON enrichment prompts benefit from bounded, non-echoed output.
+    let params = serde_json::json!({
+        "return_full_text": false,
+        "max_new_tokens": 1024,
+    });
+    let adapter = crate::huggingface::HuggingFaceAdapter::new(cfg)?;
+    adapter.generate_text(&model, prompt, Some(&params)).await
 }
 
 async fn anthropic_chat(client: &reqwest::Client, model: &str, prompt: &str) -> CliResult<String> {

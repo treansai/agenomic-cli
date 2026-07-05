@@ -110,6 +110,9 @@ fn infer_provider(deps: &[&Dependency], genome: &mut DetectedGenome) {
                 || n == "google-agents-cli"
         }),
         ("cohere", |n| n == "cohere"),
+        ("huggingface", |n| {
+            n == "huggingface-hub" || n == "huggingface_hub" || n == "transformers"
+        }),
     ];
     for (provider, pred) in rules {
         if let Some(dep) = deps.iter().find(|d| pred(&d.name)) {
