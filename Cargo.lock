@@ -306,6 +306,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "agenomic-ledger-local"
+version = "0.2.0-rc.0"
+dependencies = [
+ "agenomic-atep",
+ "agenomic-core",
+ "agenomic-fs",
+ "blake3",
+ "chrono",
+ "ed25519-dalek",
+ "hex",
+ "insta",
+ "proptest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "ulid",
+]
+
+[[package]]
 name = "agenomic-os"
 version = "0.2.0-rc.0"
 dependencies = [
