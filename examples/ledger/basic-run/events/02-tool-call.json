@@ -1,0 +1,1 @@
+{"agent_id": "agent://acme/support", "run_id": "run-1", "event_type": "tool.call.completed", "event_id": "evt-tool-call", "payload": {"tool": "search_kb", "duration_ms": 142}}

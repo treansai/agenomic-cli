@@ -128,6 +128,24 @@ it should fail closed with a diagnostic that references this file.
   expect cross-machine replay from `agenomic os replay` once that command
   ships.
 
+## Ledger cloud sync and `strict_cloud` mode
+
+- **Status**: not implemented (fail-closed stub).
+- **Affected**: `agenomic-ledger-local::pipeline` (`LedgerMode::StrictCloud`,
+  future `cloud_sync_enabled`), eventual `agenomic ledger` cloud surfaces.
+- **Expected behavior**: selecting `strict_cloud` (or enabling cloud sync)
+  refuses with `agenomic::ledger::cloud_unavailable` pointing here. Strict
+  modes fail closed; there is **no silent downgrade** to a weaker mode.
+- **Required surfaces** (agenomic-cloud follow-up): authenticated batch
+  ledger-entry ingestion, run/global chain queries, server-side verification,
+  dead-letter listing/replay, key rotation, and public-key export — with
+  tenant isolation and idempotency keys. The `cloud_sync_pending` /
+  `cloud_synced` durability states exist in the local state machine today and
+  activate when those APIs land.
+- **Also deferred from the ledger v1** (see `docs/plans/atep-ledger-plan.md`):
+  `encrypted_full_payload` storage mode (crypto-shredding), KMS-backed
+  keystore (Scaleway Key Manager), WAL segment compression, and SDK surfaces.
+
 ## CURRENT_SPEC_VERSION bump to 0.2
 
 - **Status**: deferred.

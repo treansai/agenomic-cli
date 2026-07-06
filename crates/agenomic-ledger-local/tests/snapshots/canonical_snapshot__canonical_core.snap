@@ -1,0 +1,5 @@
+---
+source: crates/agenomic-ledger-local/tests/canonical_snapshot.rs
+expression: core
+---
+{"agent_id":"agent://acme/support","event_id":"01JZFIXEDEVENT0000000000ZZ","event_payload_hash":"blake3:3891d84117b97ef012b0915ea446427d60224b4ac8ce883e5043d052e7b6ead5","event_type":"agent.started","genome_hash":"blake3-merkle-v1:0000000000000000000000000000000000000000000000000000000000000000","hash_algorithm":"blake3","ingestion_source":"tracking","ledger_entry_id":"01JZFIXEDENTRY0000000000ZZ","previous_entry_hash":"blake3:0000000000000000000000000000000000000000000000000000000000000000","previous_run_entry_hash":"blake3:0000000000000000000000000000000000000000000000000000000000000000","run_id":"run-1","run_sequence_number":0,"schema_version":"agenomic.ledger/v0.1","sequence_number":0,"session_id":"sess-1","signature_algorithm":"ed25519","signing_key_id":"ed25519:0011223344556677","timestamp":"2026-07-06T12:00:00.000000Z","turn_id":"turn-1","turn_sequence_number":0}

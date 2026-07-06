@@ -14,8 +14,45 @@ use agenomic_track::{
     TrackingEvent, TrackingSession,
 };
 
-use crate::cli::{OutputFormat, SessionStatusArg, TrackCommand, TrackSub};
+use crate::cli::{LedgerDirs, OutputFormat, SessionStatusArg, TrackCommand, TrackSub};
 use crate::render::render;
+
+/// `--ledger` options captured at `track start`.
+pub(crate) struct LedgerOpts {
+    pub enabled: bool,
+    pub store: Option<PathBuf>,
+    pub keys: Option<PathBuf>,
+}
+
+/// Sidecar (`<session dir>/ledger.json`) binding a session to the ledger.
+/// Lives beside the session files, NOT inside the spec'd session/report
+/// types — the tracking wire shapes stay untouched.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct LedgerBinding {
+    enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    store: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    keys: Option<PathBuf>,
+}
+
+impl LedgerBinding {
+    fn dirs(&self) -> LedgerDirs {
+        LedgerDirs {
+            store: self.store.clone(),
+            keys: self.keys.clone(),
+        }
+    }
+}
+
+fn binding_path(store: &SessionStore, session_id: &str) -> PathBuf {
+    store.session_dir(session_id).join("ledger.json")
+}
+
+fn load_binding(store: &SessionStore, session_id: &str) -> Option<LedgerBinding> {
+    let raw = std::fs::read_to_string(binding_path(store, session_id)).ok()?;
+    serde_json::from_str(&raw).ok()
+}
 
 pub fn cmd_track(args: &TrackCommand, format: OutputFormat, no_color: bool) -> CliResult<ExitCode> {
     match &args.command {
@@ -26,7 +63,24 @@ pub fn cmd_track(args: &TrackCommand, format: OutputFormat, no_color: bool) -> C
             config,
             agent,
             store,
-        } => start(bundle, release, env, config, agent, store, format, no_color),
+            ledger,
+            ledger_store,
+            ledger_keys,
+        } => start(
+            bundle,
+            release,
+            env,
+            config,
+            agent,
+            store,
+            LedgerOpts {
+                enabled: *ledger,
+                store: ledger_store.clone(),
+                keys: ledger_keys.clone(),
+            },
+            format,
+            no_color,
+        ),
         TrackSub::Event {
             session,
             file,
@@ -42,7 +96,15 @@ pub fn cmd_track(args: &TrackCommand, format: OutputFormat, no_color: bool) -> C
             session,
             output,
             store,
-        } => report(session, output, store, format, no_color),
+            include_ledger_proof,
+        } => report(
+            session,
+            output,
+            store,
+            *include_ledger_proof,
+            format,
+            no_color,
+        ),
         TrackSub::Stop {
             session,
             status,
@@ -224,6 +286,7 @@ fn start(
     config: &Option<PathBuf>,
     agent: &Option<String>,
     store: &Option<PathBuf>,
+    ledger: LedgerOpts,
     format: OutputFormat,
     no_color: bool,
 ) -> CliResult<ExitCode> {
@@ -253,6 +316,38 @@ fn start(
     let store = store_for(store)?;
     store.save_session(&session)?;
     store.save_baseline(&session.session_id, &baseline)?;
+
+    if ledger.enabled {
+        let binding = LedgerBinding {
+            enabled: true,
+            store: ledger.store,
+            keys: ledger.keys,
+        };
+        let raw =
+            serde_json::to_vec_pretty(&binding).map_err(|e| CliError::Internal(format!("{e}")))?;
+        let path = binding_path(&store, &session.session_id);
+        std::fs::write(&path, raw).map_err(|e| io_at(&path, e))?;
+
+        // Session lifecycle event (idempotent id: one per session).
+        let mut draft = agenomic_ledger_local::LedgerEntryDraft::new(
+            session.agent_id.clone(),
+            session.session_id.clone(),
+            "tracking.session.started",
+            agenomic_ledger_local::PayloadCommitment::Inline(serde_json::json!({
+                "session_id": session.session_id,
+                "agent_id": session.agent_id,
+                "environment": session.environment,
+                "release_id": session.release_id,
+                "genome_hash": session.genome_hash,
+                "started_at": session.started_at,
+            })),
+            agenomic_ledger_local::IngestionSource::Tracking,
+        );
+        draft.event_id = Some(format!("{}-session-started", session.session_id));
+        draft.session_id = Some(session.session_id.clone());
+        draft.genome_hash = session.genome_hash.clone();
+        crate::ledger::append_drafts(&binding.dirs(), vec![draft])?;
+    }
 
     render(&session, format, no_color)?;
     Ok(ExitCode::Success)
@@ -290,6 +385,14 @@ fn event(
     if appended {
         if let Some(stored) = engine.events.last() {
             store.append_events(session_id, std::slice::from_ref(stored))?;
+            // Ledger-bound session: every ingested event is appended to the
+            // ledger, committed by the tracking chain's own event hash.
+            if let Some(binding) = load_binding(&store, session_id) {
+                if binding.enabled {
+                    let draft = agenomic_ledger_local::convert::from_tracking_event(stored)?;
+                    crate::ledger::append_drafts(&binding.dirs(), vec![draft])?;
+                }
+            }
         }
     }
     store.save_session(&engine.session)?;
@@ -412,6 +515,7 @@ fn report(
     session_id: &str,
     output: &Option<PathBuf>,
     store: &Option<PathBuf>,
+    include_ledger_proof: bool,
     format: OutputFormat,
     no_color: bool,
 ) -> CliResult<ExitCode> {
@@ -423,7 +527,22 @@ fn report(
 
     let engine = TrackingEngine::resume(session, events, baseline);
     let harness = engine.run_harness(&inputs);
-    let report = build_report(&engine.session, &engine.events, &harness);
+    let mut report = build_report(&engine.session, &engine.events, &harness);
+    if include_ledger_proof {
+        let binding = load_binding(&store, session_id)
+            .filter(|b| b.enabled)
+            .ok_or_else(|| {
+                CliError::Schema(format!(
+                    "session '{session_id}' is not ledger-bound; start with \
+                     `agenomic track start --ledger`"
+                ))
+            })?;
+        let proof = crate::ledger::build_proof(&binding.dirs(), session_id)?;
+        report.ledger_proof =
+            Some(serde_json::to_value(&proof).map_err(|e| CliError::Internal(format!("{e}")))?);
+        // Recompute so the report hash covers the attached proof.
+        report.report_hash = Some(report.compute_hash());
+    }
 
     if let Some(out) = output {
         let bytes =
@@ -464,6 +583,27 @@ fn stop(
     let report = build_report(&engine.session, &engine.events, &harness);
     store.save_session(&engine.session)?;
     store.save_report(&report)?;
+
+    if let Some(binding) = load_binding(&store, session_id) {
+        if binding.enabled {
+            let mut draft = agenomic_ledger_local::LedgerEntryDraft::new(
+                engine.session.agent_id.clone(),
+                session_id,
+                "tracking.session.completed",
+                agenomic_ledger_local::PayloadCommitment::Inline(serde_json::json!({
+                    "session_id": session_id,
+                    "status": engine.session.status.label(),
+                    "event_count": engine.events.len(),
+                    "final_status": report.final_status,
+                    "report_hash": report.report_hash,
+                })),
+                agenomic_ledger_local::IngestionSource::Tracking,
+            );
+            draft.event_id = Some(format!("{session_id}-session-completed"));
+            draft.session_id = Some(session_id.to_string());
+            crate::ledger::append_drafts(&binding.dirs(), vec![draft])?;
+        }
+    }
 
     render(&report, format, no_color)?;
     if matches!(report.final_status, agenomic_track::FinalStatus::Fail) {

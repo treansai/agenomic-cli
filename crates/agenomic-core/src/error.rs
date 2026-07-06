@@ -143,6 +143,42 @@ pub enum CliError {
     #[error("port proposal failed: {0}")]
     #[diagnostic(code(agenomic::os::port_failed))]
     OsPortFailed(String),
+
+    #[error("ledger integrity check failed: {reason}")]
+    #[diagnostic(code(agenomic::ledger::integrity), severity(Error))]
+    LedgerIntegrity { reason: String },
+
+    #[error("ledger signature verification failed for entry {entry_id}")]
+    #[diagnostic(code(agenomic::ledger::signature_invalid))]
+    LedgerSignatureInvalid { entry_id: String },
+
+    #[error("ledger key store error: {0}")]
+    #[diagnostic(
+        code(agenomic::ledger::keystore),
+        help("inspect the key manifest with `agenomic ledger keys list`")
+    )]
+    LedgerKeyStore(String),
+
+    #[error("ledger append conflict: {reason}")]
+    #[diagnostic(
+        code(agenomic::ledger::conflict),
+        help("the ledger is append-only; conflicting entries are never overwritten")
+    )]
+    LedgerConflict { reason: String },
+
+    #[error("ledger is saturated: {reason}")]
+    #[diagnostic(
+        code(agenomic::ledger::busy),
+        help("the event was NOT silently dropped; retry, raise queue limits, or free disk space — see `agenomic ledger queue status`")
+    )]
+    LedgerBusy { reason: String },
+
+    #[error("ledger cloud mode is not yet available: {reason}")]
+    #[diagnostic(
+        code(agenomic::ledger::cloud_unavailable),
+        help("strict_cloud / cloud_sync require cloud ledger ingestion APIs that do not exist yet — see docs/BACKEND_GAPS.md; strict modes fail closed and are never silently downgraded")
+    )]
+    LedgerCloudUnavailable { reason: String },
 }
 
 impl CliError {
@@ -179,6 +215,11 @@ impl CliError {
             Self::OsLauncherFailed(_) => ExitCode::OsLauncherFailed,
             Self::OsPolicyViolation(_) => ExitCode::OsPolicyViolation,
             Self::OsPortFailed(_) => ExitCode::OsPortFailed,
+            Self::LedgerIntegrity { .. }
+            | Self::LedgerSignatureInvalid { .. }
+            | Self::LedgerConflict { .. } => ExitCode::LedgerIntegrityFailed,
+            Self::LedgerKeyStore(_) | Self::LedgerBusy { .. } => ExitCode::InternalError,
+            Self::LedgerCloudUnavailable { .. } => ExitCode::InvalidUsage,
         }
     }
 }
@@ -239,5 +280,17 @@ mod tests {
             16
         );
         assert_eq!(CliError::OsPortFailed("x".into()).exit_code().as_i32(), 17);
+    }
+
+    #[test]
+    fn ledger_variants_map_to_19() {
+        let e = CliError::LedgerIntegrity { reason: "x".into() };
+        assert_eq!(e.exit_code().as_i32(), 19);
+        let e = CliError::LedgerSignatureInvalid {
+            entry_id: "x".into(),
+        };
+        assert_eq!(e.exit_code().as_i32(), 19);
+        let e = CliError::LedgerConflict { reason: "x".into() };
+        assert_eq!(e.exit_code().as_i32(), 19);
     }
 }

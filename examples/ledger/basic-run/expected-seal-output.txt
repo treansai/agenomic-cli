@@ -1,0 +1,2 @@
+Sealed block 01KWVT5WT75HQMR9MHRX1RZZYX covering sequences 0..=2
+  merkle root: blake3-merkle-v1:a439cd14649d548c88682d8ad258fb2ecdaca7368ba74170df80b0c2f3d885e9

@@ -145,6 +145,10 @@ pub enum Commands {
     Atep(AtepCommand),
     /// Online tracking of production agents (drift / loops / intent / harness).
     Track(TrackCommand),
+    /// Append-only, tamper-evident cryptographic event ledger.
+    Ledger(LedgerCommand),
+    /// Offline-verifiable evidence proof bundles (ledger-backed).
+    Evidence(EvidenceCommand),
     /// Cloud authentication.
     Cloud(CloudCommand),
     /// Bucket selection for cloud pushes.
@@ -422,6 +426,16 @@ pub struct AtepEmitArgs {
     /// ed25519 signing key for the emitted events. Required with `--atep`.
     #[arg(long)]
     pub signing_key: Option<PathBuf>,
+    /// Also append the results to the cryptographic event ledger (dual-emit
+    /// alongside the signed ATEP `governance` stream, never instead of it).
+    #[arg(long)]
+    pub ledger: bool,
+    /// Ledger data root override (default `.agenomic/ledger`).
+    #[arg(long)]
+    pub ledger_store: Option<PathBuf>,
+    /// Ledger key store override (default `~/.config/agenomic/keys`).
+    #[arg(long)]
+    pub ledger_keys: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -521,6 +535,18 @@ pub struct ReplayArgs {
     pub fail_on: SeverityArg,
     #[arg(long)]
     pub output: Option<PathBuf>,
+    /// Verify this run's ledger chain BEFORE replaying (exit 19 on failure)
+    /// and attach the ledger proof to the replay report. The ledger proves
+    /// provenance/integrity of the recorded events; replay itself stays
+    /// statistical.
+    #[arg(long)]
+    pub from_ledger: Option<String>,
+    /// Ledger data root override (default `.agenomic/ledger`).
+    #[arg(long)]
+    pub ledger_store: Option<PathBuf>,
+    /// Ledger key store override (default `~/.config/agenomic/keys`).
+    #[arg(long)]
+    pub ledger_keys: Option<PathBuf>,
 }
 
 #[derive(Debug, Parser)]
@@ -802,6 +828,17 @@ pub enum TrackSub {
         /// Store root directory (default: `<cwd>/.agenomic/tracking`).
         #[arg(long)]
         store: Option<PathBuf>,
+        /// Bind the session to the cryptographic event ledger: session
+        /// lifecycle and every ingested event are appended (hash-committed)
+        /// to the ledger.
+        #[arg(long)]
+        ledger: bool,
+        /// Ledger data root override (default `.agenomic/ledger`).
+        #[arg(long)]
+        ledger_store: Option<PathBuf>,
+        /// Ledger key store override (default `~/.config/agenomic/keys`).
+        #[arg(long)]
+        ledger_keys: Option<PathBuf>,
     },
     /// Ingest a runtime event into a session (idempotent; safe to retry).
     Event {
@@ -840,6 +877,11 @@ pub enum TrackSub {
         output: Option<PathBuf>,
         #[arg(long)]
         store: Option<PathBuf>,
+        /// Attach the ledger proof block (root hash, run chain head, block
+        /// ids, verification/gap/queue-loss status, signing key ids). The
+        /// session must have been started with `--ledger`.
+        #[arg(long)]
+        include_ledger_proof: bool,
     },
     /// Stop a session: run the harness, finalize, and persist the report.
     Stop {
@@ -850,5 +892,234 @@ pub enum TrackSub {
         status: SessionStatusArg,
         #[arg(long)]
         store: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Parser)]
+pub struct LedgerCommand {
+    #[command(subcommand)]
+    pub command: LedgerSub,
+}
+
+/// Shared location flags for the ledger subcommands.
+#[derive(Debug, Parser, Clone)]
+pub struct LedgerDirs {
+    /// Ledger data root (store, WAL, dead-letter, blocks).
+    /// Default: `<cwd>/.agenomic/ledger`.
+    #[arg(long)]
+    pub store: Option<PathBuf>,
+    /// Signing-key store directory.
+    /// Default: `~/.config/agenomic/keys`.
+    #[arg(long)]
+    pub keys: Option<PathBuf>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LedgerSub {
+    /// Initialize the ledger layout and generate a signing key if absent.
+    Init {
+        #[command(flatten)]
+        dirs: LedgerDirs,
+    },
+    /// Show the ledger overview: entries, runs, chain head, blocks, WAL
+    /// health, dead-letter backlog.
+    Status {
+        #[command(flatten)]
+        dirs: LedgerDirs,
+    },
+    /// Seal all unsealed entries into a signed block (explicit flush
+    /// trigger).
+    Seal {
+        #[command(flatten)]
+        dirs: LedgerDirs,
+    },
+    /// Append one event (JSON file, or `-` for stdin) to the ledger.
+    Append {
+        /// Event JSON: `{agent_id, run_id, event_type, payload, ...}`.
+        #[arg(long)]
+        event: PathBuf,
+        #[command(flatten)]
+        dirs: LedgerDirs,
+    },
+    /// Print the most recent entries (optionally for one run).
+    Tail {
+        /// Only entries of this run.
+        #[arg(long)]
+        run: Option<String>,
+        /// Show at most this many trailing entries.
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+        #[command(flatten)]
+        dirs: LedgerDirs,
+    },
+    /// Run the full offline verification engine (exit 19 on failure).
+    Verify {
+        /// Verify a single run's chain instead of the whole ledger.
+        #[arg(long)]
+        run: Option<String>,
+        /// Verify a single block against its covered entries.
+        #[arg(long)]
+        block: Option<String>,
+        #[command(flatten)]
+        dirs: LedgerDirs,
+    },
+    /// Export entries as a verifiable JSONL chain.
+    Export {
+        /// Only entries of this run.
+        #[arg(long)]
+        run: Option<String>,
+        /// Output path for the JSONL export.
+        #[arg(long)]
+        output: PathBuf,
+        #[command(flatten)]
+        dirs: LedgerDirs,
+    },
+    /// Show one entry in full (by ledger entry id or producer event id).
+    Inspect {
+        /// `ledger_entry_id` or `event_id`.
+        #[arg(long)]
+        entry: String,
+        #[command(flatten)]
+        dirs: LedgerDirs,
+    },
+    /// Ingestion queue management.
+    Queue(LedgerQueueCommand),
+    /// Signing-key lifecycle.
+    Keys(LedgerKeysCommand),
+}
+
+#[derive(Debug, Parser)]
+pub struct LedgerQueueCommand {
+    #[command(subcommand)]
+    pub command: LedgerQueueSub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LedgerQueueSub {
+    /// Show durable queue state: pending WAL records, damage, dead letters.
+    Status {
+        #[command(flatten)]
+        dirs: LedgerDirs,
+    },
+    /// Drain pending WAL records into the signed ledger.
+    Flush {
+        #[command(flatten)]
+        dirs: LedgerDirs,
+    },
+    /// Re-attempt pending WAL records (same recovery path as flush).
+    Retry {
+        #[command(flatten)]
+        dirs: LedgerDirs,
+    },
+    /// Dead-letter management.
+    DeadLetter(LedgerDeadLetterCommand),
+}
+
+#[derive(Debug, Parser)]
+pub struct LedgerDeadLetterCommand {
+    #[command(subcommand)]
+    pub command: LedgerDeadLetterSub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LedgerDeadLetterSub {
+    /// List dead-lettered events with reasons and attempt counts.
+    List {
+        #[command(flatten)]
+        dirs: LedgerDirs,
+    },
+    /// Re-submit dead-lettered events; records are removed only on success.
+    Replay {
+        /// Replay one record instead of all.
+        #[arg(long)]
+        id: Option<String>,
+        #[command(flatten)]
+        dirs: LedgerDirs,
+    },
+}
+
+#[derive(Debug, Parser)]
+pub struct LedgerKeysCommand {
+    #[command(subcommand)]
+    pub command: LedgerKeysSub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LedgerKeysSub {
+    /// Generate the first signing key (use `rotate` to supersede one).
+    Generate {
+        #[command(flatten)]
+        dirs: LedgerDirs,
+    },
+    /// List keys with status (active / rotated / revoked) and usage.
+    List {
+        #[command(flatten)]
+        dirs: LedgerDirs,
+    },
+    /// Rotate: new active key; the old key keeps verifying history.
+    Rotate {
+        #[command(flatten)]
+        dirs: LedgerDirs,
+    },
+    /// Revoke a non-active key (entries it signed are flagged, not failed).
+    Revoke {
+        /// Key id (`ed25519:<8hex>`).
+        key_id: String,
+        #[command(flatten)]
+        dirs: LedgerDirs,
+    },
+    /// Print (or write) a key's public half as SPKI PEM.
+    ExportPublic {
+        /// Key id; defaults to the active key.
+        #[arg(long)]
+        key: Option<String>,
+        /// Write to this file instead of stdout.
+        #[arg(long)]
+        output: Option<PathBuf>,
+        #[command(flatten)]
+        dirs: LedgerDirs,
+    },
+}
+
+#[derive(Debug, Parser)]
+pub struct EvidenceCommand {
+    #[command(subcommand)]
+    pub command: EvidenceSub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum EvidenceSub {
+    /// Assemble an offline-verifiable proof bundle from the ledger.
+    /// Locally-signed bundles are technical integrity evidence with a
+    /// non-probative status; org-attested probative packs are a hosted
+    /// service.
+    Export {
+        /// Scope the bundle to one run (omit for the whole ledger).
+        #[arg(long)]
+        run: Option<String>,
+        /// Output directory for the bundle.
+        #[arg(long)]
+        output: PathBuf,
+        /// Include the ledger chain, blocks, Merkle data, signatures, and
+        /// verification report (the §5.10 members).
+        #[arg(long)]
+        include_ledger: bool,
+        /// Existing replay report to include as `replay_report.json`.
+        #[arg(long)]
+        replay_report: Option<PathBuf>,
+        /// Existing policy results to include as `policy_results.json`.
+        #[arg(long)]
+        policy_results: Option<PathBuf>,
+        /// Existing risk summary to include as `risk_summary.md`.
+        #[arg(long)]
+        risk_summary: Option<PathBuf>,
+        #[command(flatten)]
+        dirs: LedgerDirs,
+    },
+    /// Verify a proof bundle completely offline (no keystore, no network —
+    /// public keys ship inside the bundle). Exit 19 on failure.
+    Verify {
+        /// Bundle directory.
+        bundle: PathBuf,
     },
 }

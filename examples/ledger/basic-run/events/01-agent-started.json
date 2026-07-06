@@ -1,0 +1,1 @@
+{"agent_id": "agent://acme/support", "run_id": "run-1", "event_type": "agent.started", "event_id": "evt-agent-started", "payload": {"environment": "production"}}

@@ -1,0 +1,5 @@
+---
+source: crates/agenomic-ledger-local/tests/canonical_snapshot.rs
+expression: hash
+---
+blake3:741eb71af555afc19f5480eb117eb062ed38ae10647932541340383b55573b0c

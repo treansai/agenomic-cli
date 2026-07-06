@@ -31,6 +31,11 @@ pub enum ExitCode {
     /// (`RequireHumanApproval`). Distinct from a hard block (16): the effect is
     /// not denied, only paused pending a signed human decision.
     ToolBoundaryReviewRequired = 18,
+    /// The cryptographic event ledger failed an integrity check (broken hash
+    /// chain, invalid entry signature, tampering, or corrupted store). See
+    /// `docs/plans/atep-ledger-plan.md`. Distinct from ATEP integrity (10):
+    /// the ledger is the cross-producer event chain, not the ATEP stream.
+    LedgerIntegrityFailed = 19,
 }
 
 impl ExitCode {
@@ -73,5 +78,6 @@ mod tests {
         assert_eq!(ExitCode::OsPolicyViolation.as_i32(), 16);
         assert_eq!(ExitCode::OsPortFailed.as_i32(), 17);
         assert_eq!(ExitCode::ToolBoundaryReviewRequired.as_i32(), 18);
+        assert_eq!(ExitCode::LedgerIntegrityFailed.as_i32(), 19);
     }
 }

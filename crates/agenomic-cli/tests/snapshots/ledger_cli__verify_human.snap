@@ -1,0 +1,7 @@
+---
+source: crates/agenomic-cli/tests/ledger_cli.rs
+expression: scrubbed
+---
+Ledger verification [PASSED]  scope: full ledger
+  entries: 2  runs: 2  blocks: 1
+  head:    blake3:[hash]

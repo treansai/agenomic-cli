@@ -85,6 +85,13 @@ pub struct TrackingReport {
     pub recommendations: Vec<String>,
     pub final_status: FinalStatus,
     pub evidence_event_ids: Vec<String>,
+    /// Cryptographic ledger proof block (root hash, run chain head, block
+    /// ids, key ids, verification status) attached by
+    /// `agenomic track report --include-ledger-proof`. Untyped to keep this
+    /// crate ledger-unaware; the shape is `agenomic.ledger.proof/v0.1`.
+    /// Attach BEFORE computing `report_hash` so the hash covers the proof.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ledger_proof: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub report_hash: Option<String>,
 }
@@ -184,6 +191,7 @@ pub fn build_report(
         recommendations,
         final_status,
         evidence_event_ids: evidence,
+        ledger_proof: None,
         report_hash: None,
     };
     report.report_hash = Some(report.compute_hash());
