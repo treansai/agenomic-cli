@@ -1244,6 +1244,22 @@ fn emit_governance_events(
     }
     store.append_batch(StreamId::Governance, &events)?;
 
+    // Dual-emit: also record the results on the cryptographic event ledger
+    // (alongside the signed ATEP trail, never instead of it). The ledger
+    // records proposals and critiques; approval stays a human act.
+    let mut ledger_appended = 0usize;
+    if emit.ledger {
+        let dirs = crate::cli::LedgerDirs {
+            store: emit.ledger_store.clone(),
+            keys: emit.ledger_keys.clone(),
+        };
+        let drafts: Vec<agenomic_ledger_local::LedgerEntryDraft> = descriptors
+            .iter()
+            .map(agenomic_ledger_local::convert::from_governance_descriptor)
+            .collect::<CliResult<_>>()?;
+        ledger_appended = crate::ledger::append_drafts(&dirs, drafts)?.len();
+    }
+
     Ok(Some(serde_json::json!({
         "store": store_dir,
         "agent_id": manifest.agent_id,
@@ -1252,6 +1268,7 @@ fn emit_governance_events(
         "stream_seq_start": seq_start,
         "signer_key_id": key_id,
         "store_merkle_root": hex::encode(store.store_merkle_root()),
+        "ledger_events_appended": ledger_appended,
     })))
 }
 
@@ -1511,6 +1528,28 @@ pub fn cmd_diff(args: &DiffArgs, format: OutputFormat, no_color: bool) -> CliRes
 }
 
 pub fn cmd_replay(args: &ReplayArgs, format: OutputFormat, no_color: bool) -> CliResult<ExitCode> {
+    // --from-ledger: verify the run's ledger chain BEFORE replaying (fail
+    // closed, exit 19) and attach the ledger proof to the report. The ledger
+    // proves provenance/integrity of the recorded events; the replay itself
+    // stays statistical — trace content still comes from --traces /
+    // --from-atep / the bundle.
+    let ledger_dirs = crate::cli::LedgerDirs {
+        store: args.ledger_store.clone(),
+        keys: args.ledger_keys.clone(),
+    };
+    if let Some(run_id) = &args.from_ledger {
+        let pre = crate::ledger::verify_run_for_integration(&ledger_dirs, run_id)?;
+        if !pre.passed {
+            return Err(CliError::LedgerIntegrity {
+                reason: format!(
+                    "run '{run_id}' failed pre-replay ledger verification \
+                     (first invalid sequence: {:?}); refusing to replay \
+                     unverified history",
+                    pre.first_invalid_sequence
+                ),
+            });
+        }
+    }
     let opts = ReplayOptions {
         bundle: args.bundle.clone(),
         traces: args.traces.clone(),
@@ -1519,7 +1558,12 @@ pub fn cmd_replay(args: &ReplayArgs, format: OutputFormat, no_color: bool) -> Cl
         runs_per_trace: args.runs_per_trace,
         fail_on: args.fail_on.to_severity(),
     };
-    let report = run_local_replay(opts)?;
+    let mut report = run_local_replay(opts)?;
+    if let Some(run_id) = &args.from_ledger {
+        let proof = crate::ledger::build_proof(&ledger_dirs, run_id)?;
+        report.ledger_proof =
+            Some(serde_json::to_value(&proof).map_err(|e| CliError::Internal(format!("{e}")))?);
+    }
     if let Some(out) = &args.output {
         let bytes =
             serde_json::to_vec_pretty(&report).map_err(|e| CliError::Internal(format!("{e}")))?;

@@ -146,8 +146,7 @@ fn ledger_proof_reflects_run_state() {
         proof.run_head_hash,
         entries
             .iter()
-            .filter(|e| e.run_id == "run-a")
-            .next_back()
+            .rfind(|e| e.run_id == "run-a")
             .unwrap()
             .entry_hash
     );

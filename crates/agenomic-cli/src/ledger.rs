@@ -1128,3 +1128,263 @@ fn keys_export_public(
     }
     Ok(ExitCode::Success)
 }
+
+// ---- cross-command integration helpers -------------------------------------
+
+/// Ensure the ledger layout + an active signing key exist (used by
+/// integrations like `track start --ledger` so they work without a prior
+/// explicit `ledger init`).
+pub(crate) fn ensure_ready(dirs: &LedgerDirs) -> CliResult<()> {
+    let l = layout(dirs)?;
+    let mut keys = open_keys(&l)?;
+    if keys.active_key_id().is_err() {
+        keys.generate()?;
+    }
+    if !l.store.exists() {
+        let (pipeline, _) = open_pipeline(&l)?;
+        pipeline.shutdown(FLUSH_TIMEOUT)?;
+    }
+    Ok(())
+}
+
+/// Append producer drafts through the durable pipeline (blocks disabled —
+/// integration appends are one-shot processes; sealing belongs to
+/// `ledger seal` and the auto-triggers). Conflicts and validation failures
+/// surface as errors after all drafts were attempted; duplicates are
+/// idempotent successes.
+pub(crate) fn append_drafts(
+    dirs: &LedgerDirs,
+    drafts: Vec<LedgerEntryDraft>,
+) -> CliResult<Vec<agenomic_ledger_local::AppendOutcome>> {
+    let l = layout(dirs)?;
+    ensure_ready(dirs)?;
+    let (pipeline, _) = LedgerPipeline::start(
+        FileLedgerStore::open(&l.store)?,
+        open_keys(&l)?,
+        Some(&l.wal),
+        Some(&l.dead_letter),
+        None,
+        LedgerConfig::default(),
+    )?;
+    let mut outcomes = Vec::with_capacity(drafts.len());
+    let mut first_error: Option<CliError> = None;
+    for draft in drafts {
+        match pipeline.append(draft) {
+            Ok(outcome) => outcomes.push(outcome),
+            Err(e) => {
+                // Keep appending the rest (each failure is already recorded
+                // explicitly by the pipeline); report the first error.
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
+            }
+        }
+    }
+    pipeline.flush(FLUSH_TIMEOUT)?;
+    pipeline.shutdown(FLUSH_TIMEOUT)?;
+    match first_error {
+        Some(e) => Err(e),
+        None => Ok(outcomes),
+    }
+}
+
+/// Build the ledger proof block for one run (tracking session / replay
+/// source). Runs the full verification engine over the ledger.
+pub(crate) fn build_proof(
+    dirs: &LedgerDirs,
+    run_id: &str,
+) -> CliResult<agenomic_ledger_local::LedgerProof> {
+    let l = layout(dirs)?;
+    require_initialized(&l)?;
+    let entries = read_entries(&l)?;
+    let blocks = BlockChain::open(&l.blocks)?;
+    let keys = open_keys(&l)?;
+    let dead_lettered = if l.dead_letter.exists() {
+        DeadLetterStore::open(&l.dead_letter)?.len()?
+    } else {
+        0
+    };
+    agenomic_ledger_local::build_ledger_proof(
+        run_id,
+        &entries,
+        blocks.blocks(),
+        &keys,
+        Some(&l.wal),
+        dead_lettered,
+    )
+}
+
+/// Verify one run's chain (used by `replay --from-ledger` as the mandatory
+/// pre-replay check). Returns the report; the caller decides the exit path.
+pub(crate) fn verify_run_for_integration(
+    dirs: &LedgerDirs,
+    run_id: &str,
+) -> CliResult<VerificationReport> {
+    let l = layout(dirs)?;
+    require_initialized(&l)?;
+    let entries = read_entries(&l)?;
+    let chain = BlockChain::open(&l.blocks)?;
+    let keys = open_keys(&l)?;
+    verify_run_scope(run_id, &entries, chain.blocks(), &keys, &l)
+}
+
+// ---- evidence proof bundles -------------------------------------------------
+
+#[derive(Debug, Serialize)]
+struct EvidenceExportOut {
+    output: String,
+    run: Option<String>,
+    members: usize,
+    absent_members: Vec<String>,
+    probative_status: String,
+    signing_key_id: String,
+}
+impl EvidenceExportOut {
+    fn human(&self, w: &mut dyn Write, _o: &RenderOptions) -> CliResult<()> {
+        writeln!(w, "Evidence proof bundle written to {}", self.output).map_err(io)?;
+        if let Some(run) = &self.run {
+            writeln!(w, "  scope: run {run}").map_err(io)?;
+        }
+        writeln!(
+            w,
+            "  members: {} (absent: {})",
+            self.members,
+            if self.absent_members.is_empty() {
+                "none".to_string()
+            } else {
+                self.absent_members.join(", ")
+            }
+        )
+        .map_err(io)?;
+        writeln!(w, "  status: {}", self.probative_status).map_err(io)?;
+        writeln!(w, "  signed by: {}", self.signing_key_id).map_err(io)?;
+        writeln!(
+            w,
+            "  verify offline with: agenomic evidence verify {}",
+            self.output
+        )
+        .map_err(io)?;
+        Ok(())
+    }
+}
+impl_render_tail!(EvidenceExportOut, "Evidence Export");
+
+#[derive(Debug, Serialize)]
+struct EvidenceVerifyOut {
+    bundle: String,
+    passed: bool,
+    result: agenomic_ledger_local::BundleVerification,
+}
+impl EvidenceVerifyOut {
+    fn human(&self, w: &mut dyn Write, _o: &RenderOptions) -> CliResult<()> {
+        let verdict = if self.passed { "PASSED" } else { "FAILED" };
+        writeln!(
+            w,
+            "Evidence bundle verification [{verdict}]  {}",
+            self.bundle
+        )
+        .map_err(io)?;
+        writeln!(
+            w,
+            "  manifest signature: {}",
+            if self.result.manifest_signature_valid {
+                "valid"
+            } else {
+                "INVALID"
+            }
+        )
+        .map_err(io)?;
+        writeln!(w, "  status: {}", self.result.probative_status).map_err(io)?;
+        for m in &self.result.member_hash_failures {
+            writeln!(w, "  - member hash mismatch: {m}").map_err(io)?;
+        }
+        for m in &self.result.missing_members {
+            writeln!(w, "  - missing member: {m}").map_err(io)?;
+        }
+        if !self.result.ledger.entries.hash_failures.is_empty() {
+            writeln!(
+                w,
+                "  - entry hash failures at {:?}",
+                self.result.ledger.entries.hash_failures
+            )
+            .map_err(io)?;
+        }
+        if !self.result.ledger.entries.signature_failures.is_empty() {
+            writeln!(
+                w,
+                "  - entry signature failures at {:?}",
+                self.result.ledger.entries.signature_failures
+            )
+            .map_err(io)?;
+        }
+        Ok(())
+    }
+}
+impl_render_tail!(EvidenceVerifyOut, "Evidence Verification");
+
+pub fn cmd_evidence(
+    args: &crate::cli::EvidenceCommand,
+    format: OutputFormat,
+    no_color: bool,
+) -> CliResult<ExitCode> {
+    match &args.command {
+        crate::cli::EvidenceSub::Export {
+            run,
+            output,
+            include_ledger,
+            replay_report,
+            policy_results,
+            risk_summary,
+            dirs,
+        } => {
+            if !include_ledger {
+                return Err(CliError::Schema(
+                    "only ledger-backed bundles exist locally; pass --include-ledger".to_string(),
+                ));
+            }
+            let l = layout(dirs)?;
+            require_initialized(&l)?;
+            let entries = read_entries(&l)?;
+            let chain = BlockChain::open(&l.blocks)?;
+            let keys = open_keys(&l)?;
+            let extras = agenomic_ledger_local::BundleExtras {
+                replay_report: replay_report.clone(),
+                policy_results: policy_results.clone(),
+                risk_summary: risk_summary.clone(),
+            };
+            let manifest = agenomic_ledger_local::assemble_bundle(
+                output,
+                run.as_deref(),
+                &entries,
+                chain.blocks(),
+                &keys,
+                &extras,
+            )?;
+            let out = EvidenceExportOut {
+                output: output.display().to_string(),
+                run: run.clone(),
+                members: manifest.members.len(),
+                absent_members: manifest.absent_members.clone(),
+                probative_status: manifest.probative_status.clone(),
+                signing_key_id: manifest.signing_key_id.clone(),
+            };
+            render(&out, format, no_color)?;
+            Ok(ExitCode::Success)
+        }
+        crate::cli::EvidenceSub::Verify { bundle } => {
+            let result = agenomic_ledger_local::verify_bundle(bundle)?;
+            let passed = result.passed;
+            let out = EvidenceVerifyOut {
+                bundle: bundle.display().to_string(),
+                passed,
+                result,
+            };
+            render(&out, format, no_color)?;
+            Ok(if passed {
+                ExitCode::Success
+            } else {
+                ExitCode::LedgerIntegrityFailed
+            })
+        }
+    }
+}

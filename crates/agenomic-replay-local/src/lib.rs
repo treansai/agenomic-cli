@@ -56,6 +56,12 @@ pub struct ReplayReport {
     /// Honesty disclaimers and other diagnostic notes.
     #[serde(default)]
     pub notes: Vec<ValidationIssue>,
+    /// Cryptographic ledger proof block attached by
+    /// `agenomic replay --from-ledger` (shape `agenomic.ledger.proof/v0.1`).
+    /// Provenance/integrity of the recorded events only — replay itself
+    /// stays statistical; the ledger never makes it deterministic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ledger_proof: Option<serde_json::Value>,
 }
 
 const REPORT_VERSION: &str = "agenomic.replay/v0.1";
@@ -142,6 +148,7 @@ pub fn run_local_replay(options: ReplayOptions) -> CliResult<ReplayReport> {
         aggregates,
         generated_at: chrono::Utc::now(),
         notes,
+        ledger_proof: None,
     })
 }
 

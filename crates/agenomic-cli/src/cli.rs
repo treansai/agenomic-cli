@@ -147,6 +147,8 @@ pub enum Commands {
     Track(TrackCommand),
     /// Append-only, tamper-evident cryptographic event ledger.
     Ledger(LedgerCommand),
+    /// Offline-verifiable evidence proof bundles (ledger-backed).
+    Evidence(EvidenceCommand),
     /// Cloud authentication.
     Cloud(CloudCommand),
     /// Bucket selection for cloud pushes.
@@ -424,6 +426,16 @@ pub struct AtepEmitArgs {
     /// ed25519 signing key for the emitted events. Required with `--atep`.
     #[arg(long)]
     pub signing_key: Option<PathBuf>,
+    /// Also append the results to the cryptographic event ledger (dual-emit
+    /// alongside the signed ATEP `governance` stream, never instead of it).
+    #[arg(long)]
+    pub ledger: bool,
+    /// Ledger data root override (default `.agenomic/ledger`).
+    #[arg(long)]
+    pub ledger_store: Option<PathBuf>,
+    /// Ledger key store override (default `~/.config/agenomic/keys`).
+    #[arg(long)]
+    pub ledger_keys: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -523,6 +535,18 @@ pub struct ReplayArgs {
     pub fail_on: SeverityArg,
     #[arg(long)]
     pub output: Option<PathBuf>,
+    /// Verify this run's ledger chain BEFORE replaying (exit 19 on failure)
+    /// and attach the ledger proof to the replay report. The ledger proves
+    /// provenance/integrity of the recorded events; replay itself stays
+    /// statistical.
+    #[arg(long)]
+    pub from_ledger: Option<String>,
+    /// Ledger data root override (default `.agenomic/ledger`).
+    #[arg(long)]
+    pub ledger_store: Option<PathBuf>,
+    /// Ledger key store override (default `~/.config/agenomic/keys`).
+    #[arg(long)]
+    pub ledger_keys: Option<PathBuf>,
 }
 
 #[derive(Debug, Parser)]
@@ -804,6 +828,17 @@ pub enum TrackSub {
         /// Store root directory (default: `<cwd>/.agenomic/tracking`).
         #[arg(long)]
         store: Option<PathBuf>,
+        /// Bind the session to the cryptographic event ledger: session
+        /// lifecycle and every ingested event are appended (hash-committed)
+        /// to the ledger.
+        #[arg(long)]
+        ledger: bool,
+        /// Ledger data root override (default `.agenomic/ledger`).
+        #[arg(long)]
+        ledger_store: Option<PathBuf>,
+        /// Ledger key store override (default `~/.config/agenomic/keys`).
+        #[arg(long)]
+        ledger_keys: Option<PathBuf>,
     },
     /// Ingest a runtime event into a session (idempotent; safe to retry).
     Event {
@@ -842,6 +877,11 @@ pub enum TrackSub {
         output: Option<PathBuf>,
         #[arg(long)]
         store: Option<PathBuf>,
+        /// Attach the ledger proof block (root hash, run chain head, block
+        /// ids, verification/gap/queue-loss status, signing key ids). The
+        /// session must have been started with `--ledger`.
+        #[arg(long)]
+        include_ledger_proof: bool,
     },
     /// Stop a session: run the harness, finalize, and persist the report.
     Stop {
@@ -1038,5 +1078,48 @@ pub enum LedgerKeysSub {
         output: Option<PathBuf>,
         #[command(flatten)]
         dirs: LedgerDirs,
+    },
+}
+
+#[derive(Debug, Parser)]
+pub struct EvidenceCommand {
+    #[command(subcommand)]
+    pub command: EvidenceSub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum EvidenceSub {
+    /// Assemble an offline-verifiable proof bundle from the ledger.
+    /// Locally-signed bundles are technical integrity evidence with a
+    /// non-probative status; org-attested probative packs are a hosted
+    /// service.
+    Export {
+        /// Scope the bundle to one run (omit for the whole ledger).
+        #[arg(long)]
+        run: Option<String>,
+        /// Output directory for the bundle.
+        #[arg(long)]
+        output: PathBuf,
+        /// Include the ledger chain, blocks, Merkle data, signatures, and
+        /// verification report (the §5.10 members).
+        #[arg(long)]
+        include_ledger: bool,
+        /// Existing replay report to include as `replay_report.json`.
+        #[arg(long)]
+        replay_report: Option<PathBuf>,
+        /// Existing policy results to include as `policy_results.json`.
+        #[arg(long)]
+        policy_results: Option<PathBuf>,
+        /// Existing risk summary to include as `risk_summary.md`.
+        #[arg(long)]
+        risk_summary: Option<PathBuf>,
+        #[command(flatten)]
+        dirs: LedgerDirs,
+    },
+    /// Verify a proof bundle completely offline (no keystore, no network —
+    /// public keys ship inside the bundle). Exit 19 on failure.
+    Verify {
+        /// Bundle directory.
+        bundle: PathBuf,
     },
 }

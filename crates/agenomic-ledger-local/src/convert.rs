@@ -33,7 +33,7 @@ use agenomic_track::TrackingEvent;
 /// assert_eq!(draft.event_id.as_deref(), Some("evt-1"));
 /// ```
 pub fn from_tracking_event(event: &TrackingEvent) -> CliResult<LedgerEntryDraft> {
-    let event_type = serde_json::to_value(&event.event_type)
+    let event_type = serde_json::to_value(event.event_type)
         .ok()
         .and_then(|v| v.as_str().map(String::from))
         .ok_or_else(|| CliError::Internal("serialize tracking event type".to_string()))?;
