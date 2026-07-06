@@ -13,6 +13,7 @@
 pub mod canonical;
 pub mod chain;
 pub mod config;
+pub mod deadletter;
 pub mod entry;
 pub mod keystore;
 pub mod ledger;
@@ -25,6 +26,7 @@ pub use canonical::{
 };
 pub use chain::{ChainPositions, ChainState, RunHead};
 pub use config::{LedgerConfig, LedgerMode};
+pub use deadletter::{DeadLetterReason, DeadLetterRecord, DeadLetterStore};
 pub use entry::{
     deterministic_timestamp, DurabilityStatus, IngestionSource, LedgerEntry, LedgerEntryDraft,
     PayloadCommitment, VerificationStatus, LEDGER_SCHEMA_VERSION, VOLATILE_FIELDS,
