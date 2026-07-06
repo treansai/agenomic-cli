@@ -4,6 +4,7 @@ mod cli;
 mod commands;
 mod enrich;
 pub mod huggingface;
+mod ledger;
 mod provider;
 mod render;
 mod track;
@@ -67,6 +68,7 @@ pub fn run() -> i32 {
         Commands::Trace(args) => commands::cmd_trace(args),
         Commands::Atep(args) => commands::cmd_atep(args),
         Commands::Track(args) => track::cmd_track(args, format, no_color),
+        Commands::Ledger(args) => ledger::cmd_ledger(args, format, no_color),
         Commands::Cloud(args) => commands::cmd_cloud(args, cli.profile.as_deref()),
         Commands::Bucket(args) => commands::cmd_bucket(args, cli.profile.as_deref()),
         Commands::Bundle(args) => commands::cmd_bundle(args, format, no_color),
