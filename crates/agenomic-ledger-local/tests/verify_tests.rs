@@ -137,20 +137,30 @@ fn age_trigger_seals_after_max_age() {
     pipeline.append(draft("e-1", "run-1", 1)).unwrap();
     pipeline.flush(FLUSH).unwrap();
 
-    // Poll until the worker's age tick seals (bounded wait, no fixed sleep).
+    // Poll until age ticks have sealed BOTH entries (bounded wait, no fixed
+    // sleep). On a slow runner the first tick can fire between the two
+    // appends and seal them into separate blocks — that is correct trigger
+    // behavior, so assert total coverage, not block shape.
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
-        if !pipeline.blocks().unwrap().is_empty() {
+        let covered: u64 = pipeline
+            .blocks()
+            .unwrap()
+            .iter()
+            .map(|b| b.entry_count)
+            .sum();
+        if covered == 2 {
             break;
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "age trigger did not seal within 5s"
+            "age trigger did not seal both entries within 5s (covered: {covered})"
         );
         std::thread::sleep(Duration::from_millis(10));
     }
-    let blocks = pipeline.blocks().unwrap();
-    assert_eq!(blocks[0].entry_count, 2);
+    let report = pipeline.verify().unwrap();
+    assert!(report.passed, "{report:?}");
+    assert!(report.blocks.unsealed_tail.is_none());
     pipeline.shutdown(FLUSH).unwrap();
 }
 
