@@ -99,7 +99,13 @@ pub enum VerificationStatus {
 }
 
 /// How a draft commits its payload.
-#[derive(Debug, Clone)]
+///
+/// Serialization note: the WAL persists drafts, and the pipeline resolves
+/// `Inline` payloads to their hash *before* the WAL write — so raw payloads
+/// never touch disk (security §5.5). The `Inline` arm still round-trips for
+/// in-memory use.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum PayloadCommitment {
     /// A JSON payload to be committed by canonical hash. The payload itself
     /// is never stored in the entry.
@@ -141,7 +147,7 @@ impl PayloadCommitment {
 
 /// A producer event on its way into the ledger. The ledger assigns ids,
 /// chain positions, hashes, and the signature.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LedgerEntryDraft {
     /// Producer event id; assigned a fresh ULID if absent.
     pub event_id: Option<String>,

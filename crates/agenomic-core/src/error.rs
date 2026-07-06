@@ -165,6 +165,20 @@ pub enum CliError {
         help("the ledger is append-only; conflicting entries are never overwritten")
     )]
     LedgerConflict { reason: String },
+
+    #[error("ledger is saturated: {reason}")]
+    #[diagnostic(
+        code(agenomic::ledger::busy),
+        help("the event was NOT silently dropped; retry, raise queue limits, or free disk space — see `agenomic ledger queue status`")
+    )]
+    LedgerBusy { reason: String },
+
+    #[error("ledger cloud mode is not yet available: {reason}")]
+    #[diagnostic(
+        code(agenomic::ledger::cloud_unavailable),
+        help("strict_cloud / cloud_sync require cloud ledger ingestion APIs that do not exist yet — see docs/BACKEND_GAPS.md; strict modes fail closed and are never silently downgraded")
+    )]
+    LedgerCloudUnavailable { reason: String },
 }
 
 impl CliError {
@@ -204,7 +218,8 @@ impl CliError {
             Self::LedgerIntegrity { .. }
             | Self::LedgerSignatureInvalid { .. }
             | Self::LedgerConflict { .. } => ExitCode::LedgerIntegrityFailed,
-            Self::LedgerKeyStore(_) => ExitCode::InternalError,
+            Self::LedgerKeyStore(_) | Self::LedgerBusy { .. } => ExitCode::InternalError,
+            Self::LedgerCloudUnavailable { .. } => ExitCode::InvalidUsage,
         }
     }
 }
