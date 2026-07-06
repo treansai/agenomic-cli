@@ -1,0 +1,6 @@
+Ledger at led
+  entries:  2 across 1 run(s)
+  head:     blake3:3c62aa01d93d97b8c48ad66ce2db6b40e1815e1ef754d4754c07e06cf9034d3f
+  blocks:   0 sealed, 2 entrie(s) unsealed
+  wal:      1 segment(s), 1 pending, 0 damaged, 0 quarantined
+  dead-letter: 0 record(s)

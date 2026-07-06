@@ -1,0 +1,1 @@
+{"agent_id":"agent://acme/support","run_id":"run-crash","event_type":"agent.started","event_id":"crash-e1","payload":{"n":1}}

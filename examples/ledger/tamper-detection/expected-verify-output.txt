@@ -1,0 +1,9 @@
+Ledger verification [FAILED]  scope: full ledger
+  entries: 3  runs: 1  blocks: 1
+  head:    blake3:f41e996c841d6e4ce85b3aadf488f13c7c4d2a12aae0300d1c6e319fbec15f91
+  first invalid sequence: 1
+  - entry hash failures at [1]
+  - signature failures at [1]
+  recommendation: tampering detected: entry content no longer matches its sealed hash — restore from a trusted export and investigate write access to the ledger files
+  recommendation: signature failures present: confirm the key manifest is the one that signed this ledger (agenomic ledger keys list)
+tampered_verify_exit=19

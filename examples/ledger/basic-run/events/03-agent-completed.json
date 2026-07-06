@@ -1,0 +1,1 @@
+{"agent_id": "agent://acme/support", "run_id": "run-1", "event_type": "agent.completed", "event_id": "evt-agent-completed", "payload": {"outcome": "resolved"}}

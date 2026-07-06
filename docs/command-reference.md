@@ -343,3 +343,29 @@ success.
 Signing-key lifecycle: rotation keeps historical entries verifiable forever;
 revoked keys flag (never silently fail) verification; export prints the
 public half only.
+
+### Ledger integrations
+
+- `agenomic track start --ledger [--ledger-store DIR] [--ledger-keys DIR]` —
+  bind the session: lifecycle + every ingested event are hash-committed to
+  the ledger. `agenomic track report --include-ledger-proof` attaches the
+  proof block (root hash, run chain head, block ids, key ids,
+  verification/gap/queue-loss status); the report hash covers it.
+- `agenomic governance <cluster|hypothesize|critique|audit> … --ledger` —
+  dual-emit engine results to the ledger alongside the signed ATEP
+  `governance` stream (never instead of it).
+- `agenomic replay … --from-ledger RUN` — verify the run's ledger chain
+  BEFORE replaying (exit 19 on failure) and attach the ledger proof to the
+  replay report. Provenance/integrity only: replay stays statistical.
+
+### `agenomic evidence export --include-ledger [--run ID] --output DIR [--replay-report F] [--policy-results F] [--risk-summary F]`
+
+Assemble the offline-verifiable proof bundle (signed manifest, chain,
+blocks, Merkle data, signatures, embedded public keys, verification
+report). Locally-signed bundles are technical integrity evidence with a
+non-probative status and the platform legal notice.
+
+### `agenomic evidence verify <DIR>`
+
+Re-verify a proof bundle on a clean machine — no keystore, no network;
+public keys ship inside. Exit 19 on any failure.
