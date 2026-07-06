@@ -13,6 +13,7 @@
 pub mod canonical;
 pub mod chain;
 pub mod entry;
+pub mod keystore;
 
 pub use canonical::{
     canonical_json, payload_hash, prefixed_blake3, BLAKE3_PREFIX, GENESIS_ENTRY_HASH,
@@ -23,3 +24,4 @@ pub use entry::{
     deterministic_timestamp, DurabilityStatus, IngestionSource, LedgerEntry, LedgerEntryDraft,
     PayloadCommitment, VerificationStatus, LEDGER_SCHEMA_VERSION, VOLATILE_FIELDS,
 };
+pub use keystore::{FileKeyStore, KeyRecord, KeyStatus, SigningKeyStore, KEYS_MANIFEST_VERSION};
