@@ -19,6 +19,7 @@ ed25519-dalek = { workspace = true }
 hex = { workspace = true }
 ulid = { workspace = true }
 chrono = { workspace = true }
+crc32fast = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

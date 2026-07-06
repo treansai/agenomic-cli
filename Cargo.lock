@@ -314,6 +314,7 @@ dependencies = [
  "agenomic-fs",
  "blake3",
  "chrono",
+ "crc32fast",
  "ed25519-dalek",
  "hex",
  "insta",
