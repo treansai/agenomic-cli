@@ -1,0 +1,5 @@
+---
+source: crates/agenomic-ledger-local/tests/canonical_snapshot.rs
+expression: GENESIS_ENTRY_HASH
+---
+blake3:0000000000000000000000000000000000000000000000000000000000000000
