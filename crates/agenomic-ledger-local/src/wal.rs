@@ -251,9 +251,12 @@ impl WalWriter {
                             report.pending.push(record);
                         }
                     }
-                    if fully_applied && !is_last && !torn {
+                    if fully_applied && !torn {
                         // Every record is already in the signed ledger; the
-                        // segment is safe to remove.
+                        // segment is safe to remove (also for the last one —
+                        // a fresh segment starts on the next append, and
+                        // `next_wal_seq` stays above the checkpoint so
+                        // sequence numbers are never reused).
                         std::fs::remove_file(segment).map_err(|e| io_at(segment, e))?;
                         report.removed_segments.push(
                             segment
@@ -291,7 +294,11 @@ impl WalWriter {
                 current,
                 current_len,
                 total_len,
-                next_wal_seq: report.last_wal_seq + 1,
+                // Above both the highest surviving record AND the
+                // checkpoint: after a full cleanup the sequence must not
+                // restart below the checkpoint, or recovery would skip
+                // fresh records as already-applied.
+                next_wal_seq: report.last_wal_seq.max(checkpoint) + 1,
             },
             report,
         ))

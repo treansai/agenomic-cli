@@ -455,11 +455,14 @@ Backpressure: bounded queue full ⇒ spill to WAL-backed disk queue up to
 proceeds — the failure is recorded and surfaced in status/health, satisfying
 both non-negotiables).
 
-Workers: the `LedgerPipeline` handle owns either a dedicated
-`tokio::runtime::Runtime` (multi-thread, small) or is constructed inside the
-CLI's existing `block_on` bridges — decided at Phase 2 gate with a working
-spike; the crate API is runtime-agnostic (`start(config) -> LedgerHandle`,
-`LedgerHandle::{append, flush, shutdown, status}`). Stages: canonicalize → full
+Workers: **decided at the Phase 2 gate — std threads + bounded
+`std::sync::mpsc::sync_channel`, no tokio.** Every pipeline stage is
+synchronous work (file IO, BLAKE3, Ed25519) and the workspace has no
+long-lived async runtime anywhere; a crate-owned tokio runtime would add an
+ownership problem without buying concurrency. The API surface is
+runtime-agnostic as planned (`start` / `append` / `flush` / `shutdown` /
+`status`), so an async facade can wrap it later without a format or API
+break. Stages: canonicalize → full
 schema validation → hash+chain-link (single sequencer task per store: chain
 linking is inherently serial — this is where strict per-run ordering is
 enforced) → sign (batched) → persist → (cloud sync: Q6 stub). Retry worker with

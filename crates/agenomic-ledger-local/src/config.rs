@@ -80,6 +80,9 @@ pub struct LedgerConfig {
     /// true). Disabling only changes *where* failures are recorded (status
     /// counters + error returns) — never whether.
     pub dead_letter_enabled: bool,
+    /// Artificial per-event delay in the sealer worker, for backpressure /
+    /// chaos testing of slow consumers. Always 0 in production.
+    pub worker_delay_ms: u64,
 }
 
 impl Default for LedgerConfig {
@@ -93,6 +96,7 @@ impl Default for LedgerConfig {
             retry_max_attempts: 3,
             retry_backoff_ms: 25,
             dead_letter_enabled: true,
+            worker_delay_ms: 0,
         }
     }
 }

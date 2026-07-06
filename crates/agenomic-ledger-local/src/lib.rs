@@ -17,6 +17,7 @@ pub mod deadletter;
 pub mod entry;
 pub mod keystore;
 pub mod ledger;
+pub mod pipeline;
 pub mod store;
 pub mod wal;
 
@@ -33,5 +34,6 @@ pub use entry::{
 };
 pub use keystore::{FileKeyStore, KeyRecord, KeyStatus, SigningKeyStore, KEYS_MANIFEST_VERSION};
 pub use ledger::{verify_entries, Ledger, LedgerVerification};
+pub use pipeline::{AppendOutcome, LedgerPipeline, QueueStatus, RecoveryReport};
 pub use store::{FileLedgerStore, LedgerStore, MemoryLedgerStore, LEDGER_MANIFEST_VERSION};
 pub use wal::{WalRecord, WalRecoveryReport, WalWriter, WAL_VERSION};
