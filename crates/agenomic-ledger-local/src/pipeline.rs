@@ -29,12 +29,14 @@
 //! backlog (queue full), subsequent events also spill until the worker
 //! drains the backlog — the queue is never allowed to overtake the WAL.
 
+use crate::block::{BlockChain, LedgerBlock};
 use crate::config::{LedgerConfig, LedgerMode};
 use crate::deadletter::{DeadLetterReason, DeadLetterStore};
 use crate::entry::{LedgerEntry, LedgerEntryDraft, PayloadCommitment};
 use crate::keystore::SigningKeyStore;
-use crate::ledger::{Ledger, LedgerVerification};
+use crate::ledger::Ledger;
 use crate::store::LedgerStore;
+use crate::verify::VerificationReport;
 use crate::wal::WalWriter;
 use agenomic_core::{CliError, CliResult};
 use serde::{Deserialize, Serialize};
@@ -139,6 +141,12 @@ struct Core<S: LedgerStore, K: SigningKeyStore> {
     wal: Option<WalWriter>,
     dead_letter: Option<DeadLetterStore>,
     applied_wal_seq: u64,
+    /// Block sealing (None = blocks disabled).
+    blocks: Option<BlockChain>,
+    /// When the oldest currently-unsealed entry was appended (age trigger).
+    oldest_unsealed_since: Option<std::time::Instant>,
+    /// WAL dir for verification reports.
+    wal_dir: Option<std::path::PathBuf>,
 }
 
 struct WorkItem {
@@ -196,11 +204,14 @@ impl<S: LedgerStore + Send + 'static, K: SigningKeyStore + Send + 'static> Ledge
     /// `wal_dir` is required by WAL-bearing modes and ignored by
     /// best-effort; `dead_letter_dir` is required unless
     /// `dead_letter_enabled` is false.
+    /// `blocks_path` enables block sealing (the `blocks.jsonl` location);
+    /// `None` disables blocks entirely — they are optional by design.
     pub fn start(
         store: S,
         keys: K,
         wal_dir: Option<&Path>,
         dead_letter_dir: Option<&Path>,
+        blocks_path: Option<&Path>,
         config: LedgerConfig,
     ) -> CliResult<(Self, RecoveryReport)> {
         config.validate()?;
@@ -238,6 +249,11 @@ impl<S: LedgerStore + Send + 'static, K: SigningKeyStore + Send + 'static> Ledge
             .map(|e| (e.event_id, e.event_payload_hash))
             .collect();
 
+        let blocks = match blocks_path {
+            Some(path) => Some(BlockChain::open(path)?),
+            None => None,
+        };
+
         let counters = Arc::new(Counters::default());
         let mut core = Core {
             ledger,
@@ -245,6 +261,9 @@ impl<S: LedgerStore + Send + 'static, K: SigningKeyStore + Send + 'static> Ledge
             wal,
             dead_letter,
             applied_wal_seq: 0,
+            blocks,
+            oldest_unsealed_since: None,
+            wal_dir: wal_dir.map(|p| p.to_path_buf()),
         };
 
         // Recovery: replay WAL records above the checkpoint, in order,
@@ -462,8 +481,9 @@ impl<S: LedgerStore + Send + 'static, K: SigningKeyStore + Send + 'static> Ledge
         }
     }
 
-    /// Flush, stop the worker, and write the final checkpoint. Consumes the
-    /// pipeline. Returns the final status snapshot.
+    /// Flush, stop the worker, seal the unsealed tail (the shutdown seal
+    /// trigger), and write the final checkpoint. Consumes the pipeline.
+    /// Returns the final status snapshot.
     pub fn shutdown(mut self, flush_timeout: Duration) -> CliResult<QueueStatus> {
         let flush_result = self.flush(flush_timeout);
         self.sender.take(); // Disconnect: the worker drains and exits.
@@ -473,6 +493,7 @@ impl<S: LedgerStore + Send + 'static, K: SigningKeyStore + Send + 'static> Ledge
             })?;
         }
         flush_result?;
+        seal_unsealed_range(&mut *self.lock_core()?)?;
         self.status()
     }
 
@@ -499,10 +520,39 @@ impl<S: LedgerStore + Send + 'static, K: SigningKeyStore + Send + 'static> Ledge
         })
     }
 
-    /// Verify the ledger this pipeline writes to (chain, hashes,
-    /// signatures, key status).
-    pub fn verify(&self) -> CliResult<LedgerVerification> {
-        self.lock_core()?.ledger.verify()
+    /// Seal all currently-unsealed entries into one block (the explicit
+    /// flush trigger; also used by `agenomic ledger seal` and shutdown).
+    /// Returns `None` when blocks are disabled or nothing is unsealed.
+    pub fn seal(&self) -> CliResult<Option<LedgerBlock>> {
+        seal_unsealed_range(&mut *self.lock_core()?)
+    }
+
+    /// All sealed blocks, in chain order (empty when blocks are disabled).
+    pub fn blocks(&self) -> CliResult<Vec<LedgerBlock>> {
+        Ok(self
+            .lock_core()?
+            .blocks
+            .as_ref()
+            .map(|c| c.blocks().to_vec())
+            .unwrap_or_default())
+    }
+
+    /// Run the full §5.9 verification engine over this ledger: entries,
+    /// blocks, key status, and WAL health, with a structured report.
+    pub fn verify(&self) -> CliResult<VerificationReport> {
+        let core = self.lock_core()?;
+        let entries = core.ledger.read_all()?;
+        let blocks = core
+            .blocks
+            .as_ref()
+            .map(|c| c.blocks().to_vec())
+            .unwrap_or_default();
+        crate::verify::verify_ledger(
+            &entries,
+            &blocks,
+            core.ledger.keystore(),
+            core.wal_dir.as_deref(),
+        )
     }
 
     /// All ledger entries in append order.
@@ -606,6 +656,12 @@ fn seal_one<S: LedgerStore, K: SigningKeyStore>(
                     .insert(entry.event_id.clone(), entry.event_payload_hash.clone());
                 counters.appended.fetch_add(1, AtomicOrdering::SeqCst);
                 advance_watermark(core, wal_seq)?;
+                if core.blocks.is_some() {
+                    if core.oldest_unsealed_since.is_none() {
+                        core.oldest_unsealed_since = Some(std::time::Instant::now());
+                    }
+                    maybe_seal_by_count(core, config)?;
+                }
                 return Ok(SealOutcome::Appended(Box::new(entry)));
             }
             Err(e) if attempt <= config.retry_max_attempts => {
@@ -645,6 +701,69 @@ fn record_dead_letter<S: LedgerStore, K: SigningKeyStore>(
     Ok(())
 }
 
+/// Seal everything currently unsealed into one block, regardless of
+/// thresholds (explicit flush / shutdown triggers). `None` when blocks are
+/// disabled or nothing is unsealed.
+fn seal_unsealed_range<S: LedgerStore, K: SigningKeyStore>(
+    core: &mut Core<S, K>,
+) -> CliResult<Option<LedgerBlock>> {
+    let Some(chain) = core.blocks.as_mut() else {
+        return Ok(None);
+    };
+    let start = chain.next_start_sequence();
+    let entries = core.ledger.read_all()?;
+    if entries.len() as u64 <= start {
+        core.oldest_unsealed_since = None;
+        return Ok(None);
+    }
+    let block = chain.seal(&entries[start as usize..], core.ledger.keystore())?;
+    core.oldest_unsealed_since = None;
+    Ok(Some(block))
+}
+
+/// The max-entries trigger: seal once the unsealed tail reaches the
+/// configured size.
+fn maybe_seal_by_count<S: LedgerStore, K: SigningKeyStore>(
+    core: &mut Core<S, K>,
+    config: &LedgerConfig,
+) -> CliResult<()> {
+    let Some(max_entries) = config.block_max_entries else {
+        return Ok(());
+    };
+    let Some(chain) = core.blocks.as_ref() else {
+        return Ok(());
+    };
+    let unsealed = core
+        .ledger
+        .len()
+        .saturating_sub(chain.next_start_sequence());
+    if unsealed >= max_entries {
+        seal_unsealed_range(core)?;
+    }
+    Ok(())
+}
+
+/// The max-age trigger: seal once the oldest unsealed entry has waited the
+/// configured time. Runs on worker idle ticks.
+fn maybe_seal_by_age<S: LedgerStore, K: SigningKeyStore>(
+    core: &Arc<Mutex<Core<S, K>>>,
+    config: &LedgerConfig,
+) {
+    let Some(max_age_ms) = config.block_max_age_ms else {
+        return;
+    };
+    let Ok(mut core) = core.lock() else { return };
+    let due = core
+        .oldest_unsealed_since
+        .map(|t| t.elapsed() >= Duration::from_millis(max_age_ms))
+        .unwrap_or(false);
+    if due {
+        // A seal failure here is retried on the next tick; the entries
+        // remain individually signed and WAL-durable either way.
+        let _ = seal_unsealed_range(&mut core);
+    }
+}
+
 fn advance_watermark<S: LedgerStore, K: SigningKeyStore>(
     core: &mut Core<S, K>,
     wal_seq: Option<u64>,
@@ -675,6 +794,7 @@ fn spawn_worker<S: LedgerStore + Send + 'static, K: SigningKeyStore + Send + 'st
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     drain_backlog(&core, &counters, &config);
+                    maybe_seal_by_age(&core, &config);
                 }
                 Err(RecvTimeoutError::Disconnected) => {
                     // Shutdown: drain whatever is left, then the backlog.

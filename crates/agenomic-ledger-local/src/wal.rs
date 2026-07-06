@@ -84,6 +84,64 @@ struct Checkpoint {
     applied_wal_seq: u64,
 }
 
+/// Read-only WAL health snapshot for verification reports (§5.9 "corrupted
+/// WAL segments" check). Unlike [`WalWriter::open`], this never truncates,
+/// quarantines, or deletes anything.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WalHealth {
+    /// Live `.wal` segments on disk.
+    pub segments: u64,
+    /// Segments with CRC/framing damage (including a torn tail).
+    pub damaged_segments: Vec<String>,
+    /// Previously quarantined `.corrupt` files still present.
+    pub quarantined_segments: Vec<String>,
+    /// Records above the checkpoint (durable but not yet sealed into the
+    /// ledger).
+    pub pending_records: u64,
+}
+
+/// Scan a WAL directory read-only and report its health.
+///
+/// ```
+/// # use agenomic_ledger_local::wal::scan_health;
+/// # let dir = tempfile::tempdir().unwrap();
+/// let health = scan_health(dir.path()).unwrap();
+/// assert_eq!(health.segments, 0);
+/// ```
+pub fn scan_health(dir: &Path) -> CliResult<WalHealth> {
+    let mut health = WalHealth::default();
+    if !dir.exists() {
+        return Ok(health);
+    }
+    let checkpoint = WalWriter::read_checkpoint(dir)?;
+    for segment in list_segments(dir)? {
+        health.segments += 1;
+        let name = segment
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        match read_segment(&segment) {
+            Ok((records, _, torn)) => {
+                if torn {
+                    health.damaged_segments.push(name);
+                }
+                health.pending_records +=
+                    records.iter().filter(|r| r.wal_seq > checkpoint).count() as u64;
+            }
+            Err(_) => health.damaged_segments.push(name),
+        }
+    }
+    for entry in std::fs::read_dir(dir).map_err(|e| io_at(dir, e))? {
+        let path = entry.map_err(|e| io_at(dir, e))?.path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if name.ends_with(".corrupt") {
+            health.quarantined_segments.push(name.to_string());
+        }
+    }
+    Ok(health)
+}
+
 /// Append-side handle over a WAL directory.
 #[derive(Debug)]
 pub struct WalWriter {

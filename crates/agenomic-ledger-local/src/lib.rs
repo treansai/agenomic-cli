@@ -20,6 +20,7 @@ pub mod keystore;
 pub mod ledger;
 pub mod pipeline;
 pub mod store;
+pub mod verify;
 pub mod wal;
 
 pub use block::{BlockChain, LedgerBlock, BLOCK_SCHEMA_VERSION, GENESIS_BLOCK_HASH};
@@ -38,4 +39,5 @@ pub use keystore::{FileKeyStore, KeyRecord, KeyStatus, SigningKeyStore, KEYS_MAN
 pub use ledger::{verify_entries, Ledger, LedgerVerification};
 pub use pipeline::{AppendOutcome, LedgerPipeline, QueueStatus, RecoveryReport};
 pub use store::{FileLedgerStore, LedgerStore, MemoryLedgerStore, LEDGER_MANIFEST_VERSION};
-pub use wal::{WalRecord, WalRecoveryReport, WalWriter, WAL_VERSION};
+pub use verify::{verify_ledger, BlockVerification, VerificationReport, VERIFY_REPORT_VERSION};
+pub use wal::{scan_health, WalHealth, WalRecord, WalRecoveryReport, WalWriter, WAL_VERSION};

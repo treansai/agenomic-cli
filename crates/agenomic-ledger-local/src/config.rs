@@ -72,6 +72,13 @@ pub struct LedgerConfig {
     /// Reject payloads whose canonical form exceeds this (oversized-event
     /// rule of §5.7); rejected events surface as explicit errors.
     pub max_payload_bytes: usize,
+    /// Seal a block once this many entries are unsealed (`None` disables
+    /// the count trigger). Blocks are an additional integrity layer —
+    /// entries are WAL-durable and signed before any block exists.
+    pub block_max_entries: Option<u64>,
+    /// Seal a block once the oldest unsealed entry is this old (`None`
+    /// disables the age trigger).
+    pub block_max_age_ms: Option<u64>,
     /// Transient-failure retry attempts before dead-lettering.
     pub retry_max_attempts: u32,
     /// Base backoff between retries (doubles per attempt).
@@ -93,6 +100,8 @@ impl Default for LedgerConfig {
             queue_max_disk_bytes: 256 * 1024 * 1024,
             wal_segment_max_bytes: 16 * 1024 * 1024,
             max_payload_bytes: 1024 * 1024,
+            block_max_entries: Some(512),
+            block_max_age_ms: Some(60_000),
             retry_max_attempts: 3,
             retry_backoff_ms: 25,
             dead_letter_enabled: true,

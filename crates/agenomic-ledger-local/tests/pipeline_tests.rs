@@ -22,6 +22,7 @@ struct Dirs {
     wal: std::path::PathBuf,
     dead_letter: std::path::PathBuf,
     keys: std::path::PathBuf,
+    blocks: std::path::PathBuf,
 }
 
 fn dirs() -> Dirs {
@@ -33,6 +34,7 @@ fn dirs() -> Dirs {
         wal: base.join("wal"),
         dead_letter: base.join("dead-letter"),
         keys: base.join("keys"),
+        blocks: base.join("blocks.jsonl"),
     }
 }
 
@@ -56,6 +58,7 @@ fn start(
         keystore(&d.keys),
         Some(&d.wal),
         Some(&d.dead_letter),
+        Some(&d.blocks),
         config,
     )
     .unwrap()
@@ -92,7 +95,7 @@ fn durable_mode_appends_everything_and_verifies() {
     assert_eq!(status.busy_rejections, 0);
 
     let verification = pipeline.verify().unwrap();
-    assert!(verification.valid, "{verification:?}");
+    assert!(verification.passed, "{verification:?}");
     assert_eq!(verification.entry_count, 50);
     pipeline.shutdown(FLUSH).unwrap();
 }
@@ -150,7 +153,7 @@ fn crash_recovery_replays_wal_without_loss_or_duplicates() {
     assert_eq!(recovery.replayed, 7);
     assert_eq!(recovery.deduplicated, 0);
     let v = pipeline.verify().unwrap();
-    assert!(v.valid);
+    assert!(v.passed);
     assert_eq!(v.entry_count, 7);
     pipeline.shutdown(FLUSH).unwrap();
 
@@ -178,7 +181,7 @@ fn lagging_checkpoint_deduplicates_instead_of_double_appending() {
     assert_eq!(recovery.replayed, 0, "no double appends");
     assert_eq!(recovery.deduplicated, 5, "replay was idempotent");
     assert_eq!(pipeline.read_all().unwrap().len(), 5);
-    assert!(pipeline.verify().unwrap().valid);
+    assert!(pipeline.verify().unwrap().passed);
     pipeline.shutdown(FLUSH).unwrap();
 }
 
@@ -247,7 +250,7 @@ fn disk_budget_exhaustion_is_explicit_and_recoverable() {
         "everything accepted was appended"
     );
     assert_eq!(status.busy_rejections, refused);
-    assert!(pipeline.verify().unwrap().valid);
+    assert!(pipeline.verify().unwrap().passed);
     pipeline.shutdown(FLUSH).unwrap();
 
     // Recovery path: after the sealer drained the WAL, a restart accepts
@@ -290,7 +293,7 @@ fn best_effort_backpressure_refuses_explicitly_never_drops() {
     let status = pipeline.status().unwrap();
     assert_eq!(status.appended, enqueued, "all accepted events landed");
     assert_eq!(status.busy_rejections, refused);
-    assert!(pipeline.verify().unwrap().valid);
+    assert!(pipeline.verify().unwrap().passed);
     pipeline.shutdown(FLUSH).unwrap();
 }
 
@@ -323,7 +326,7 @@ fn durable_overflow_spills_to_wal_and_preserves_run_order() {
         assert_eq!(entry.run_sequence_number, i as u64);
         assert_eq!(entry.event_id, format!("e-{i}"));
     }
-    assert!(pipeline.verify().unwrap().valid);
+    assert!(pipeline.verify().unwrap().passed);
     pipeline.shutdown(FLUSH).unwrap();
 }
 
@@ -343,7 +346,7 @@ fn strict_verified_returns_the_sealed_entry_synchronously() {
     assert!(entry.entry_hash.starts_with("blake3:"));
     assert!(entry.hash_is_valid().unwrap());
     assert_eq!(pipeline.read_all().unwrap().len(), 1, "synchronous persist");
-    assert!(pipeline.verify().unwrap().valid);
+    assert!(pipeline.verify().unwrap().passed);
     pipeline.shutdown(FLUSH).unwrap();
 }
 
@@ -355,6 +358,7 @@ fn strict_cloud_fails_closed_at_startup() {
         keystore(&d.keys),
         Some(&d.wal),
         Some(&d.dead_letter),
+        Some(&d.blocks),
         LedgerConfig {
             mode: LedgerMode::StrictCloud,
             ..LedgerConfig::default()
@@ -432,7 +436,7 @@ fn load_accounting_proves_zero_silent_drops() {
         explained, total,
         "zero silent drops: {status:?} {outcomes:?}"
     );
-    assert!(pipeline.verify().unwrap().valid);
+    assert!(pipeline.verify().unwrap().passed);
     pipeline.shutdown(FLUSH).unwrap();
 }
 
@@ -457,6 +461,6 @@ fn shutdown_flushes_everything() {
     let (pipeline, recovery) = start(&d, LedgerConfig::default());
     assert_eq!(recovery.replayed, 0);
     assert_eq!(pipeline.read_all().unwrap().len(), 20);
-    assert!(pipeline.verify().unwrap().valid);
+    assert!(pipeline.verify().unwrap().passed);
     pipeline.shutdown(FLUSH).unwrap();
 }

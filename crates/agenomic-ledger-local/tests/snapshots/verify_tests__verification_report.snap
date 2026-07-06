@@ -1,0 +1,67 @@
+---
+source: crates/agenomic-ledger-local/tests/verify_tests.rs
+expression: report
+---
+{
+  "report_version": "agenomic.ledger.verify/v0.1",
+  "passed": true,
+  "entry_count": 3,
+  "first_invalid_sequence": null,
+  "chain_evaluated": true,
+  "entries": {
+    "entry_count": 3,
+    "chain_valid": true,
+    "broken_at_sequence": null,
+    "hash_failures": [],
+    "signature_failures": [],
+    "unresolved_key_failures": [],
+    "revoked_key_warnings": [],
+    "head_hash": "[hash]",
+    "valid": true
+  },
+  "sequence_gaps": [],
+  "duplicate_sequences": [],
+  "duplicate_event_ids": [],
+  "conflicting_event_ids": [],
+  "payload_hash_format_failures": [],
+  "blocks": {
+    "block_count": 1,
+    "chain_valid": true,
+    "broken_at_block": null,
+    "merkle_mismatches": [],
+    "entries_hash_mismatches": [],
+    "hash_failures": [],
+    "signature_failures": [],
+    "unverifiable_ranges": [],
+    "coverage_gaps": [],
+    "range_overlaps": [],
+    "unsealed_tail": [
+      2,
+      2
+    ],
+    "valid": true
+  },
+  "wal": {
+    "segments": 1,
+    "damaged_segments": [],
+    "quarantined_segments": [],
+    "pending_records": 0
+  },
+  "chain_summary": {
+    "head_hash": "[hash]",
+    "run_count": 2,
+    "runs": {
+      "run-a": {
+        "entry_count": 2,
+        "head_hash": "[hash]"
+      },
+      "run-b": {
+        "entry_count": 1,
+        "head_hash": "[hash]"
+      }
+    }
+  },
+  "recommendations": [
+    "unsealed entries pending: run `agenomic ledger seal` to block them"
+  ]
+}

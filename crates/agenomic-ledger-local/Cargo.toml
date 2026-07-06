@@ -24,4 +24,4 @@ crc32fast = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 proptest = { workspace = true }
-insta = { workspace = true }
+insta = { workspace = true, features = ["redactions"] }
