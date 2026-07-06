@@ -22,6 +22,7 @@
 //! surfaces must not carry non-integer floats; payloads are committed by
 //! `event_payload_hash`, never hashed inline.
 
+use agenomic_core::{CliError, CliResult};
 use serde_json::Value;
 use std::cmp::Ordering;
 
@@ -185,6 +186,80 @@ pub fn entry_hash_from_digest(digest: &[u8; 32]) -> String {
     format!("{BLAKE3_PREFIX}{}", hex::encode(digest))
 }
 
+/// Prefix for a Merkle root (`blake3-merkle-v1:<hex>`), shared with RFC
+/// 0002/0010 and the cloud port.
+pub const MERKLE_PREFIX: &str = "blake3-merkle-v1:";
+
+/// Decode a `blake3:` / `blake3-merkle-v1:` prefixed (or bare) 32-byte hex
+/// hash into raw bytes.
+fn hash_to_bytes(h: &str) -> CliResult<[u8; 32]> {
+    let hexstr = h
+        .strip_prefix(BLAKE3_PREFIX)
+        .or_else(|| h.strip_prefix(MERKLE_PREFIX))
+        .unwrap_or(h);
+    let raw = hex::decode(hexstr)
+        .map_err(|e| CliError::Internal(format!("invalid hash hex {h:?}: {e}")))?;
+    raw.as_slice()
+        .try_into()
+        .map_err(|_| CliError::Internal(format!("hash {h:?} is not 32 bytes")))
+}
+
+/// Compute the Merkle root over an ordered list of entry-hash strings.
+/// Byte-compatible port of `agenomic-canonical::merkle_root` (RFC 0010):
+/// domain-separated, index-bound leaves (`AGENTLOCK-LEAF-v1\0` + 16-digit
+/// index), `AGENTLOCK-NODE-v1\0` nodes with odd-node duplication, and the
+/// defined `AGENOMIC-EMPTY-v1\0` root for an empty list. The `AGENTLOCK-*`
+/// domain strings are frozen byte constants (RFC 0002) — never rename.
+///
+/// ```
+/// # use agenomic_ledger_local::canonical::merkle_root;
+/// let root = merkle_root(&[
+///     format!("blake3:{}", "aa".repeat(32)),
+///     format!("blake3:{}", "bb".repeat(32)),
+/// ]).unwrap();
+/// assert!(root.starts_with("blake3-merkle-v1:"));
+/// ```
+pub fn merkle_root(entry_hashes: &[String]) -> CliResult<String> {
+    if entry_hashes.is_empty() {
+        return Ok(format!(
+            "{MERKLE_PREFIX}{}",
+            blake3_hex(b"AGENOMIC-EMPTY-v1\0")
+        ));
+    }
+
+    let mut nodes: Vec<[u8; 32]> = Vec::with_capacity(entry_hashes.len());
+    for (i, h) in entry_hashes.iter().enumerate() {
+        let mut buf = Vec::with_capacity(18 + 16 + 1 + 32);
+        buf.extend_from_slice(b"AGENTLOCK-LEAF-v1\0");
+        buf.extend_from_slice(format!("{i:016}").as_bytes());
+        buf.push(0);
+        buf.extend_from_slice(&hash_to_bytes(h)?);
+        nodes.push(blake3::hash(&buf).into());
+    }
+
+    while nodes.len() > 1 {
+        let mut next: Vec<[u8; 32]> = Vec::with_capacity(nodes.len().div_ceil(2));
+        let mut i = 0;
+        while i < nodes.len() {
+            let left = nodes[i];
+            let right = if i + 1 < nodes.len() {
+                nodes[i + 1]
+            } else {
+                nodes[i]
+            };
+            let mut buf = Vec::with_capacity(18 + 32 + 32);
+            buf.extend_from_slice(b"AGENTLOCK-NODE-v1\0");
+            buf.extend_from_slice(&left);
+            buf.extend_from_slice(&right);
+            next.push(blake3::hash(&buf).into());
+            i += 2;
+        }
+        nodes = next;
+    }
+
+    Ok(format!("{MERKLE_PREFIX}{}", hex::encode(nodes[0])))
+}
+
 /// Commit an arbitrary JSON payload by hash: the canonical form is hashed,
 /// the payload itself is never stored in the entry (Q4 `hash_only` default).
 ///
@@ -265,5 +340,44 @@ mod tests {
     fn non_ascii_passes_through_unescaped() {
         let v = json!({ "s": "héllo — 事件" });
         assert_eq!(canonical_json(&v), "{\"s\":\"héllo — 事件\"}");
+    }
+
+    // Merkle tests vendored from agenomic-canonical (byte-compat pins).
+
+    fn h(byte: &str) -> String {
+        format!("blake3:{}", byte.repeat(32))
+    }
+
+    #[test]
+    fn merkle_root_is_stable_and_order_sensitive() {
+        let (a, b) = (h("aa"), h("bb"));
+        let root1 = merkle_root(&[a.clone(), b.clone()]).unwrap();
+        let root2 = merkle_root(&[a.clone(), b.clone()]).unwrap();
+        assert_eq!(root1, root2);
+        assert!(root1.starts_with(MERKLE_PREFIX));
+        assert_ne!(root1, merkle_root(&[b, a]).unwrap());
+    }
+
+    #[test]
+    fn merkle_root_handles_odd_counts() {
+        let leaves = [h("aa"), h("bb"), h("cc")];
+        assert_eq!(merkle_root(&leaves).unwrap(), merkle_root(&leaves).unwrap());
+    }
+
+    #[test]
+    fn merkle_root_empty_is_defined() {
+        assert_eq!(
+            merkle_root(&[]).unwrap(),
+            format!("{MERKLE_PREFIX}{}", blake3_hex(b"AGENOMIC-EMPTY-v1\0"))
+        );
+    }
+
+    #[test]
+    fn merkle_leaves_are_index_bound() {
+        // Swapping equal leaves must NOT produce the same root as changing
+        // their count — index binding makes position part of the leaf.
+        let same = [h("aa"), h("aa")];
+        let one = [h("aa")];
+        assert_ne!(merkle_root(&same).unwrap(), merkle_root(&one).unwrap());
     }
 }
