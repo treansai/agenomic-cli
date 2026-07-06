@@ -10,6 +10,7 @@
 //! The ledger *extends* ATEP/tracking/governance/replay events — producers'
 //! payloads are committed by hash, never re-encoded or mutated.
 
+pub mod block;
 pub mod canonical;
 pub mod chain;
 pub mod config;
@@ -21,9 +22,10 @@ pub mod pipeline;
 pub mod store;
 pub mod wal;
 
+pub use block::{BlockChain, LedgerBlock, BLOCK_SCHEMA_VERSION, GENESIS_BLOCK_HASH};
 pub use canonical::{
-    canonical_json, payload_hash, prefixed_blake3, BLAKE3_PREFIX, GENESIS_ENTRY_HASH,
-    LEDGER_ENTRY_DOMAIN,
+    canonical_json, merkle_root, payload_hash, prefixed_blake3, BLAKE3_PREFIX, GENESIS_ENTRY_HASH,
+    LEDGER_ENTRY_DOMAIN, MERKLE_PREFIX,
 };
 pub use chain::{ChainPositions, ChainState, RunHead};
 pub use config::{LedgerConfig, LedgerMode};
