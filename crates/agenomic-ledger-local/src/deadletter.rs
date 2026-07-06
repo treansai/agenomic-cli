@@ -107,7 +107,9 @@ impl DeadLetterStore {
         Ok(dead_letter_id)
     }
 
-    /// All records, oldest first (ULID file names sort chronologically).
+    /// All records, in ULID id order — chronological to millisecond
+    /// precision; records created within the same millisecond order by the
+    /// ULID's random component (stable, but not insertion order).
     pub fn list(&self) -> CliResult<Vec<DeadLetterRecord>> {
         let mut paths = Vec::new();
         for entry in std::fs::read_dir(&self.dir).map_err(|e| io_at(&self.dir, e))? {
@@ -197,9 +199,22 @@ mod tests {
 
         let records = store.list().unwrap();
         assert_eq!(records.len(), 2);
-        assert_eq!(records[0].dead_letter_id, id1);
-        assert_eq!(records[0].event_id, "e-1");
-        assert_eq!(records[1].attempts, 3);
+        // Same-millisecond ULIDs tie-break randomly, so look records up by
+        // id instead of assuming insertion order.
+        let by_id = |id: &str| {
+            records
+                .iter()
+                .find(|r| r.dead_letter_id == id)
+                .expect("record present")
+        };
+        assert_eq!(by_id(&id1).event_id, "e-1");
+        assert_eq!(by_id(&id1).attempts, 1);
+        let other = records
+            .iter()
+            .find(|r| r.dead_letter_id != id1)
+            .expect("second record present");
+        assert_eq!(other.event_id, "e-2");
+        assert_eq!(other.attempts, 3);
 
         store.remove(&id1).unwrap();
         assert_eq!(store.len().unwrap(), 1);
