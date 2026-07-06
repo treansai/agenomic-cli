@@ -1,8 +1,13 @@
 # Phase 0 plan — cryptographic ATEP ledger
 
-**Status: Phase 0 COMPLETE — awaiting sign-off on every §2 arbitration (Q0–Q8)
-and the §3 contradictions. NO implementation until an explicit "go". Every
-subsequent phase (1–5) also ends with a gate.**
+**Status: Phase 0 SIGNED OFF (2026-07-06) — cleared for Phase 1 on explicit
+"go Phase 1". Decisions locked: Q0 open-core cut as proposed · Q1 crate
+`agenomic-ledger-local` · Q2 BLAKE3 · Q3 canonical JSON (JCS port) · Q4
+default `hash_only` · Q5 per-turn chain deferred (fields reserved) · Q6
+`strict_cloud` fail-closed stub · Q7 KMS follow-up, file keystore v1 · Q8
+`.agenomic/ledger` data / `~/.config/agenomic/keys` keys · exit code 19
+reserved (LedgerIntegrityFailed) · `keys revoke` verb added. Phases 1–5 each
+still end at a STOP gate.**
 
 Prompt contract: internal/private, append-only, tamper-evident, signed event
 ledger for all Agenomic runtime and governance events. Blockchain-style hash
