@@ -11,8 +11,15 @@
 //! payloads are committed by hash, never re-encoded or mutated.
 
 pub mod canonical;
+pub mod chain;
+pub mod entry;
 
 pub use canonical::{
     canonical_json, payload_hash, prefixed_blake3, BLAKE3_PREFIX, GENESIS_ENTRY_HASH,
     LEDGER_ENTRY_DOMAIN,
+};
+pub use chain::{ChainPositions, ChainState, RunHead};
+pub use entry::{
+    deterministic_timestamp, DurabilityStatus, IngestionSource, LedgerEntry, LedgerEntryDraft,
+    PayloadCommitment, VerificationStatus, LEDGER_SCHEMA_VERSION, VOLATILE_FIELDS,
 };
