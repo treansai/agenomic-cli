@@ -314,6 +314,8 @@ dependencies = [
  "agenomic-atep",
  "agenomic-core",
  "agenomic-fs",
+ "agenomic-governance",
+ "agenomic-track",
  "blake3",
  "chrono",
  "crc32fast",

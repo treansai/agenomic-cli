@@ -14,11 +14,13 @@ pub mod block;
 pub mod canonical;
 pub mod chain;
 pub mod config;
+pub mod convert;
 pub mod deadletter;
 pub mod entry;
 pub mod keystore;
 pub mod ledger;
 pub mod pipeline;
+pub mod proof;
 pub mod store;
 pub mod verify;
 pub mod wal;
@@ -38,6 +40,10 @@ pub use entry::{
 pub use keystore::{FileKeyStore, KeyRecord, KeyStatus, SigningKeyStore, KEYS_MANIFEST_VERSION};
 pub use ledger::{verify_entries, Ledger, LedgerVerification};
 pub use pipeline::{AppendOutcome, LedgerPipeline, QueueStatus, RecoveryReport};
+pub use proof::{
+    assemble_bundle, build_ledger_proof, verify_bundle, BundleExtras, BundleVerification,
+    EmbeddedKeyResolver, LedgerProof, ProofManifest, LEGAL_NOTICE, PROOF_MANIFEST_VERSION,
+};
 pub use store::{FileLedgerStore, LedgerStore, MemoryLedgerStore, LEDGER_MANIFEST_VERSION};
 pub use verify::{verify_ledger, BlockVerification, VerificationReport, VERIFY_REPORT_VERSION};
 pub use wal::{scan_health, WalHealth, WalRecord, WalRecoveryReport, WalWriter, WAL_VERSION};

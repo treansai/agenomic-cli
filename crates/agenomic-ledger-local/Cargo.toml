@@ -12,6 +12,8 @@ description = "Local append-only, tamper-evident cryptographic event ledger (has
 agenomic-core = { workspace = true }
 agenomic-fs = { workspace = true }
 agenomic-atep = { workspace = true }
+agenomic-track = { workspace = true }
+agenomic-governance = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 blake3 = { workspace = true }
