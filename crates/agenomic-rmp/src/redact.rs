@@ -116,11 +116,9 @@ fn walk(value: &mut serde_json::Value, path: &str, scan: &mut SecretScan) {
                 walk(v, &format!("{path}[{i}]"), scan);
             }
         }
-        serde_json::Value::String(s) => {
-            if value_is_sensitive(s) {
-                *s = REDACTED.into();
-                scan.redacted_paths.push(path.to_string());
-            }
+        serde_json::Value::String(s) if value_is_sensitive(s) => {
+            *s = REDACTED.into();
+            scan.redacted_paths.push(path.to_string());
         }
         _ => {}
     }
