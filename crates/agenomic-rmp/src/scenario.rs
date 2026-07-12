@@ -237,8 +237,8 @@ pub fn validate_scenario(scenario: &TestScenario) -> CliResult<()> {
 /// Parse scenarios from a JSON document holding either a single scenario or
 /// an array of scenarios.
 pub fn parse_scenarios(text: &str) -> CliResult<Vec<TestScenario>> {
-    let value: serde_json::Value = serde_json::from_str(text)
-        .map_err(|e| CliError::Schema(format!("scenario JSON: {e}")))?;
+    let value: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| CliError::Schema(format!("scenario JSON: {e}")))?;
     let scenarios: Vec<TestScenario> = if value.is_array() {
         serde_json::from_value(value).map_err(|e| CliError::Schema(format!("scenarios: {e}")))?
     } else {
@@ -264,12 +264,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_unknown_check() {
-        let mut s = TestScenario::new(
-            "agent://a/b",
-            "t",
-            ScenarioSource::Manual,
-            Severity::Low,
-        );
+        let mut s = TestScenario::new("agent://a/b", "t", ScenarioSource::Manual, Severity::Low);
         s.expected_outputs.push(TestScenarioExpectedOutput {
             check: "regex".into(),
             value: None,
@@ -281,12 +276,7 @@ mod tests {
 
     #[test]
     fn parse_single_and_array() {
-        let s = TestScenario::new(
-            "agent://a/b",
-            "t",
-            ScenarioSource::Manual,
-            Severity::Low,
-        );
+        let s = TestScenario::new("agent://a/b", "t", ScenarioSource::Manual, Severity::Low);
         let one = serde_json::to_string(&s).unwrap();
         let many = format!("[{one}]");
         assert_eq!(parse_scenarios(&one).unwrap().len(), 1);
@@ -295,12 +285,7 @@ mod tests {
 
     #[test]
     fn trace_envelope_conversion() {
-        let mut s = TestScenario::new(
-            "agent://a/b",
-            "t",
-            ScenarioSource::Manual,
-            Severity::Low,
-        );
+        let mut s = TestScenario::new("agent://a/b", "t", ScenarioSource::Manual, Severity::Low);
         s.inputs.push(TestScenarioInput {
             name: None,
             input: serde_json::json!({"claim": 1}),

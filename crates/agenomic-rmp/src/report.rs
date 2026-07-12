@@ -61,9 +61,8 @@ impl RmpReport {
     pub fn compute_hash(&self) -> agenomic_core::CliResult<String> {
         let mut clone = self.clone();
         clone.report_hash = None;
-        let json = serde_json::to_vec(&clone).map_err(|e| {
-            agenomic_core::CliError::Internal(format!("serialize report: {e}"))
-        })?;
+        let json = serde_json::to_vec(&clone)
+            .map_err(|e| agenomic_core::CliError::Internal(format!("serialize report: {e}")))?;
         let mut hasher = blake3::Hasher::new();
         hasher.update(REPORT_DOMAIN);
         hasher.update(&json);
@@ -87,21 +86,33 @@ pub fn build_rmp_report(
 
     let mut worst_severity: Option<Severity> = None;
     let count = |findings: &[crate::types::Finding],
-                     finding_counts: &mut BTreeMap<String, u64>,
-                     evidence_refs: &mut Vec<String>,
-                     worst: &mut Option<Severity>| {
+                 finding_counts: &mut BTreeMap<String, u64>,
+                 evidence_refs: &mut Vec<String>,
+                 worst: &mut Option<Severity>| {
         for f in findings {
-            *finding_counts.entry(f.kind.label().to_string()).or_default() += 1;
+            *finding_counts
+                .entry(f.kind.label().to_string())
+                .or_default() += 1;
             evidence_refs.extend(f.evidence_refs.iter().cloned());
             *worst = Some(worst.map_or(f.severity, |w| w.max(f.severity)));
         }
     };
 
     if let Some(r) = &review {
-        count(&r.findings, &mut finding_counts, &mut evidence_refs, &mut worst_severity);
+        count(
+            &r.findings,
+            &mut finding_counts,
+            &mut evidence_refs,
+            &mut worst_severity,
+        );
     }
     if let Some(m) = &monitor {
-        count(&m.findings, &mut finding_counts, &mut evidence_refs, &mut worst_severity);
+        count(
+            &m.findings,
+            &mut finding_counts,
+            &mut evidence_refs,
+            &mut worst_severity,
+        );
         proposals.extend(m.scenario_proposals.iter().cloned());
         if let Some(hash) = &m.report.report_hash {
             evidence_refs.push(format!("track-report:{hash}"));
@@ -190,10 +201,7 @@ pub fn build_rmp_report(
 /// Render the report as operator-facing Markdown.
 pub fn render_markdown(report: &RmpReport) -> String {
     let mut md = String::new();
-    md.push_str(&format!(
-        "# RMP Report — {}\n\n",
-        report.session.agent_id
-    ));
+    md.push_str(&format!("# RMP Report — {}\n\n", report.session.agent_id));
     md.push_str(&format!(
         "- Session: `{}`\n- Environment: {}\n- Release: {}\n- Genome: {}\n\
          - Final risk score: **{:.2}**\n- Recommendation: **{}**\n- Ledger: {}\n\n",
@@ -269,7 +277,11 @@ mod tests {
             ReleaseRecommendation::Approve
         );
         assert_eq!(report.verification_status, "unverified");
-        assert!(report.report_hash.as_deref().unwrap().starts_with("blake3:"));
+        assert!(report
+            .report_hash
+            .as_deref()
+            .unwrap()
+            .starts_with("blake3:"));
     }
 
     #[test]

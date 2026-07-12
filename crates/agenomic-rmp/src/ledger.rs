@@ -213,6 +213,8 @@ mod tests {
         );
         let outcome = record_rmp_event(&pipeline, &ev).unwrap();
         assert!(matches!(outcome, AppendOutcome::Appended(_)));
-        pipeline.shutdown(std::time::Duration::from_secs(5)).unwrap();
+        pipeline
+            .shutdown(std::time::Duration::from_secs(5))
+            .unwrap();
     }
 }

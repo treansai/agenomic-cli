@@ -234,8 +234,7 @@ impl ReviewEngine {
                         FindingKind::RiskGap,
                         Severity::Medium,
                         format!("Failure mode not in risk matrix: {mode}"),
-                        "declared in the use case card but absent from the risk matrix"
-                            .to_string(),
+                        "declared in the use case card but absent from the risk matrix".to_string(),
                     ));
                 }
             }
@@ -279,10 +278,7 @@ impl ReviewEngine {
         metrics.insert("risk_coverage_ratio".into(), coverage.coverage_ratio);
         if let Some(replay) = &replay_report {
             metrics.insert("replay_total_traces".into(), replay.total_traces as f64);
-            metrics.insert(
-                "replay_violations".into(),
-                replay.violations.len() as f64,
-            );
+            metrics.insert("replay_violations".into(), replay.violations.len() as f64);
             metrics.insert(
                 "replay_contract_passed".into(),
                 if replay.contract_passed { 1.0 } else { 0.0 },
@@ -313,9 +309,7 @@ impl ReviewEngine {
                     &inputs.agent_id,
                     FindingKind::Regression,
                     Severity::High,
-                    format!(
-                        "Review score regressed: {score:.2} vs best recent {best_recent:.2}"
-                    ),
+                    format!("Review score regressed: {score:.2} vs best recent {best_recent:.2}"),
                     "investigate the diff between this candidate and the last approved release"
                         .to_string(),
                 ));
@@ -323,10 +317,7 @@ impl ReviewEngine {
         }
 
         // 11. Result + recommendation.
-        let result = if findings
-            .iter()
-            .any(|f| f.severity >= self.config.fail_on)
-        {
+        let result = if findings.iter().any(|f| f.severity >= self.config.fail_on) {
             EvaluationResult::Fail
         } else if findings.is_empty() {
             EvaluationResult::Pass
@@ -482,9 +473,7 @@ impl ReviewEngine {
         release_risk_score: f64,
         findings: &[Finding],
     ) -> ReleaseRecommendation {
-        if matches!(result, EvaluationResult::Fail)
-            || findings.iter().any(|f| f.blocks_release)
-        {
+        if matches!(result, EvaluationResult::Fail) || findings.iter().any(|f| f.blocks_release) {
             return ReleaseRecommendation::Block;
         }
         if release_risk_score >= self.config.human_review_threshold

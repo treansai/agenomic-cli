@@ -160,7 +160,10 @@ impl RmpStore {
             }
             latest.insert(record.proposal_id.clone(), record);
         }
-        Ok(order.into_iter().filter_map(|id| latest.remove(&id)).collect())
+        Ok(order
+            .into_iter()
+            .filter_map(|id| latest.remove(&id))
+            .collect())
     }
 
     /// Append findings (append-only).
@@ -290,9 +293,8 @@ impl RmpStore {
             if line.trim().is_empty() {
                 continue;
             }
-            let value: T = serde_json::from_str(line).map_err(|e| {
-                CliError::Schema(format!("{} line {}: {e}", path.display(), i + 1))
-            })?;
+            let value: T = serde_json::from_str(line)
+                .map_err(|e| CliError::Schema(format!("{} line {}: {e}", path.display(), i + 1)))?;
             out.push(value);
         }
         Ok(out)
@@ -335,7 +337,10 @@ mod tests {
         store.append_proposals("sess", &[p.clone()]).unwrap();
         let loaded = store.load_proposals("sess").unwrap();
         assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].status, crate::enrich::EnrichmentStatus::PendingReview);
+        assert_eq!(
+            loaded[0].status,
+            crate::enrich::EnrichmentStatus::PendingReview
+        );
     }
 
     #[test]

@@ -104,8 +104,7 @@ fn save_binding(store: &RmpStore, session_id: &str, binding: &RmpBinding) -> Cli
     let dir = store.session_dir(session_id);
     std::fs::create_dir_all(&dir).map_err(|e| io_at(&dir, e))?;
     let path = dir.join("binding.json");
-    let raw =
-        serde_json::to_vec_pretty(binding).map_err(|e| CliError::Internal(format!("{e}")))?;
+    let raw = serde_json::to_vec_pretty(binding).map_err(|e| CliError::Internal(format!("{e}")))?;
     std::fs::write(&path, raw).map_err(|e| io_at(&path, e))?;
     Ok(())
 }
@@ -116,8 +115,7 @@ fn load_rmp_binding(store: &RmpStore, session_id: &str) -> Option<RmpBinding> {
 }
 
 fn write_json_file<T: serde::Serialize>(path: &Path, value: &T) -> CliResult<()> {
-    let bytes =
-        serde_json::to_vec_pretty(value).map_err(|e| CliError::Internal(format!("{e}")))?;
+    let bytes = serde_json::to_vec_pretty(value).map_err(|e| CliError::Internal(format!("{e}")))?;
     std::fs::write(path, &bytes).map_err(|e| io_at(path, e))?;
     Ok(())
 }
@@ -204,7 +202,11 @@ impl RmpStatusView {
         writeln!(
             w,
             "  ledger: {}",
-            if self.session.ledger_enabled { "enabled" } else { "disabled" }
+            if self.session.ledger_enabled {
+                "enabled"
+            } else {
+                "disabled"
+            }
         )
         .map_err(io)?;
         Ok(())
@@ -304,7 +306,11 @@ impl ProposalsView {
                 p.severity.label(),
                 p.proposed_scenario.title,
                 p.status.label(),
-                if p.human_approval_required { "required" } else { "optional" }
+                if p.human_approval_required {
+                    "required"
+                } else {
+                    "optional"
+                }
             )
             .map_err(io)?;
         }
@@ -639,14 +645,23 @@ pub fn cmd_rmp(args: &RmpCommand, format: OutputFormat, no_color: bool) -> CliRe
             agent,
             stores,
             ledger,
-        } => rmp_start(bundle, release, env, agent, stores, ledger, format, no_color),
+        } => rmp_start(
+            bundle, release, env, agent, stores, ledger, format, no_color,
+        ),
         RmpSub::Status { session, stores } => rmp_status(session, stores, format, no_color),
         RmpSub::Report {
             session,
             output,
             include_ledger_proof,
             stores,
-        } => rmp_report(session, output, *include_ledger_proof, stores, format, no_color),
+        } => rmp_report(
+            session,
+            output,
+            *include_ledger_proof,
+            stores,
+            format,
+            no_color,
+        ),
         RmpSub::Review {
             bundle,
             session,
@@ -668,7 +683,11 @@ pub fn cmd_rmp(args: &RmpCommand, format: OutputFormat, no_color: bool) -> CliRe
         RmpSub::Protect { session, stores } => {
             let store = rmp_store(stores)?;
             let outcome = run_protect(&store, stores, session)?;
-            render(&ProtectView::from(session.clone(), outcome), format, no_color)?;
+            render(
+                &ProtectView::from(session.clone(), outcome),
+                format,
+                no_color,
+            )?;
             Ok(ExitCode::Success)
         }
         RmpSub::EnrichScenarios {
@@ -790,7 +809,10 @@ fn rmp_status(
             if tstore.exists(tid) {
                 let tsession = tstore.load_session(tid)?;
                 let events = tstore.load_events(tid)?;
-                (Some(events.len() as u64), Some(tsession.alerts.len() as u64))
+                (
+                    Some(events.len() as u64),
+                    Some(tsession.alerts.len() as u64),
+                )
             } else {
                 (None, None)
             }
@@ -869,8 +891,11 @@ fn rmp_report(
     let protect = store.load_protect(session_id)?;
 
     let ledger_proof = if include_ledger_proof {
-        let binding = load_rmp_binding(&store, session_id)
-            .and_then(|b| b.ledger.filter(|l| l.enabled).map(|l| (b.tracking_session_id, l)));
+        let binding = load_rmp_binding(&store, session_id).and_then(|b| {
+            b.ledger
+                .filter(|l| l.enabled)
+                .map(|l| (b.tracking_session_id, l))
+        });
         let Some((tracking_id, ledger)) = binding else {
             return Err(CliError::Schema(format!(
                 "session '{session_id}' is not ledger-bound; start with `agenomic rmp start --ledger`"
@@ -941,12 +966,24 @@ fn rmp_review(
         }
     };
 
-    let corpus_store = bundle_store(bundle, &RmpStoreArgs { store: None, tracking_store: None });
-    let mut inputs = review_inputs(bundle, scenario_files, risk_matrix_file, traces, &corpus_store)?;
+    let corpus_store = bundle_store(
+        bundle,
+        &RmpStoreArgs {
+            store: None,
+            tracking_store: None,
+        },
+    );
+    let mut inputs = review_inputs(
+        bundle,
+        scenario_files,
+        risk_matrix_file,
+        traces,
+        &corpus_store,
+    )?;
     inputs.release_id = session.release_id.clone();
     inputs.approved_proposals = approved_proposals(&store, &session.session_id)?;
-    inputs.carried_findings = session_findings(&store, stores, &session.session_id)
-        .unwrap_or_default();
+    inputs.carried_findings =
+        session_findings(&store, stores, &session.session_id).unwrap_or_default();
 
     let outcome = ReviewEngine::default().run(inputs)?;
 
@@ -1025,7 +1062,9 @@ fn rmp_monitor(
         CliError::Schema(format!("session '{session_id}' has no monitor binding"))
     })?;
     let tid = binding.tracking_session_id.ok_or_else(|| {
-        CliError::Schema(format!("session '{session_id}' has no live monitor session"))
+        CliError::Schema(format!(
+            "session '{session_id}' has no live monitor session"
+        ))
     })?;
     let tstore = match &binding.tracking_store {
         Some(p) => SessionStore::new(p.clone()),
@@ -1234,10 +1273,8 @@ pub fn cmd_review(
             }
             // Persist under the review session id so `review report` works.
             let store = corpus_store;
-            let mut session = RmpSession::new(
-                outcome.session.agent_id.clone(),
-                "review".to_string(),
-            );
+            let mut session =
+                RmpSession::new(outcome.session.agent_id.clone(), "review".to_string());
             session.session_id = outcome.session.session_id.clone();
             session.genome_hash = outcome.session.genome_hash.clone();
             store.save_session(&session)?;
@@ -1455,7 +1492,8 @@ fn monitor_event(
     tstore.save_session(&engine.session)?;
 
     // Findings raised by this event (monitor view of the alerts).
-    let msession = MonitorSession::from_tracking(&engine.session, RmpMode::DurableLowLatency, false);
+    let msession =
+        MonitorSession::from_tracking(&engine.session, RmpMode::DurableLowLatency, false);
     let session_ref = &msession;
     let findings: Vec<Finding> = alerts
         .iter()
@@ -1559,7 +1597,11 @@ pub fn cmd_protect(
             let store = rmp_store(stores)?;
             require_rmp_session(&store, session)?;
             let outcome = protect_outcome(&store, stores, session)?;
-            render(&ProtectView::from(session.clone(), outcome), format, no_color)?;
+            render(
+                &ProtectView::from(session.clone(), outcome),
+                format,
+                no_color,
+            )?;
             Ok(ExitCode::Success)
         }
         ProtectSub::ActionPlan {

@@ -52,9 +52,11 @@ impl AgentTypeAssessment {
     pub fn from_id_card(card: &crate::cards::AgentIdCard) -> Self {
         let external_side_effects = card.allowed_tools.iter().any(|t| {
             let t = t.to_ascii_lowercase();
-            ["payment", "email", "send", "write", "delete", "refund", "post", "exec"]
-                .iter()
-                .any(|k| t.contains(k))
+            [
+                "payment", "email", "send", "write", "delete", "refund", "post", "exec",
+            ]
+            .iter()
+            .any(|k| t.contains(k))
         });
         let human_in_the_loop = !card.human_approval_required_for.is_empty();
         let autonomy_level = match (card.autonomous, human_in_the_loop) {
@@ -270,11 +272,7 @@ impl RiskMatrix {
 
     /// Fraction of open risks covered by at least one scenario.
     pub fn coverage_ratio(&self) -> f64 {
-        let open: Vec<&RiskItem> = self
-            .items
-            .iter()
-            .filter(|i| i.status == "open")
-            .collect();
+        let open: Vec<&RiskItem> = self.items.iter().filter(|i| i.status == "open").collect();
         if open.is_empty() {
             return 1.0;
         }

@@ -285,7 +285,9 @@ impl MonitorEngine {
             "warning_alerts": report.alert_counts.warning,
         });
         if let Some(hash) = &report.report_hash {
-            history_entry.evidence_refs.push(format!("track-report:{hash}"));
+            history_entry
+                .evidence_refs
+                .push(format!("track-report:{hash}"));
         }
 
         Ok(MonitorOutcome {
@@ -309,8 +311,7 @@ impl MonitorEngine {
         } else {
             EvaluationResult::Pass
         };
-        let score =
-            (1.0 - critical as f64 * 0.25 - warning as f64 * 0.05).clamp(0.0, 1.0);
+        let score = (1.0 - critical as f64 * 0.25 - warning as f64 * 0.05).clamp(0.0, 1.0);
         (result, score)
     }
 

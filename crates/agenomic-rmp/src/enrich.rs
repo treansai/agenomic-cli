@@ -68,7 +68,11 @@ pub struct ScenarioEnrichmentProposal {
 
 impl ScenarioEnrichmentProposal {
     /// Create a proposal for a scenario derived from a finding.
-    pub fn new(finding: &Finding, proposed_scenario: TestScenario, reason: impl Into<String>) -> Self {
+    pub fn new(
+        finding: &Finding,
+        proposed_scenario: TestScenario,
+        reason: impl Into<String>,
+    ) -> Self {
         Self {
             spec_version: ENRICHMENT_VERSION.into(),
             proposal_id: format!("sep_{}", ulid::Ulid::new()),
@@ -151,10 +155,7 @@ impl ScenarioEnrichmentProposal {
 /// | MissingHumanApproval / DangerousAutonomy | human-approval gate scenario |
 /// | ToolMisuse / MemoryMisuse / SuspiciousOutput / Anomaly | forbidden-behavior scenario |
 pub fn proposals_from_findings(findings: &[Finding]) -> Vec<ScenarioEnrichmentProposal> {
-    findings
-        .iter()
-        .filter_map(proposal_from_finding)
-        .collect()
+    findings.iter().filter_map(proposal_from_finding).collect()
 }
 
 fn scenario_source_for(finding: &Finding) -> ScenarioSource {

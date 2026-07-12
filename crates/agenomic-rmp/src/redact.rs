@@ -12,14 +12,33 @@ pub const REDACTED: &str = "[REDACTED]";
 
 /// Key substrings that mark a JSON field as sensitive.
 const SENSITIVE_KEYS: &[&str] = &[
-    "api_key", "apikey", "secret", "token", "password", "passwd", "credential",
-    "authorization", "auth_header", "private_key", "session_key", "access_key",
+    "api_key",
+    "apikey",
+    "secret",
+    "token",
+    "password",
+    "passwd",
+    "credential",
+    "authorization",
+    "auth_header",
+    "private_key",
+    "session_key",
+    "access_key",
 ];
 
 /// Value prefixes of well-known credential formats.
 const SENSITIVE_VALUE_PREFIXES: &[&str] = &[
-    "sk-", "ghp_", "gho_", "github_pat_", "xoxb-", "xoxp-", "agm_", "AKIA",
-    "-----BEGIN PRIVATE KEY", "-----BEGIN OPENSSH PRIVATE KEY", "Bearer ",
+    "sk-",
+    "ghp_",
+    "gho_",
+    "github_pat_",
+    "xoxb-",
+    "xoxp-",
+    "agm_",
+    "AKIA",
+    "-----BEGIN PRIVATE KEY",
+    "-----BEGIN OPENSSH PRIVATE KEY",
+    "Bearer ",
 ];
 
 /// Result of scanning a value for secrets.

@@ -191,9 +191,8 @@ impl ProtectEngine {
         let recommendations = self.recommend(&session, agent_id, &all);
 
         // 5. Action plans for the highest-severity alerts.
-        let scenario_proposals = proposals_from_findings(
-            &all.iter().map(|f| (*f).clone()).collect::<Vec<_>>(),
-        );
+        let scenario_proposals =
+            proposals_from_findings(&all.iter().map(|f| (*f).clone()).collect::<Vec<_>>());
         let action_plans: Vec<ActionPlan> = alerts
             .iter()
             .filter(|a| a.severity >= Severity::High)
@@ -237,10 +236,13 @@ impl ProtectEngine {
 
         let mut steps: Vec<ActionPlanStep> = Vec::new();
         let mut order: u32 = 1;
-        let push = |title: String, description: String, phase: &str, approval: bool,
-                        rec_ids: Vec<String>,
-                        steps: &mut Vec<ActionPlanStep>,
-                        order: &mut u32| {
+        let push = |title: String,
+                    description: String,
+                    phase: &str,
+                    approval: bool,
+                    rec_ids: Vec<String>,
+                    steps: &mut Vec<ActionPlanStep>,
+                    order: &mut u32| {
             steps.push(ActionPlanStep {
                 step_id: format!("aps_{}", ulid::Ulid::new()),
                 order: *order,
@@ -360,9 +362,14 @@ impl ProtectEngine {
                     "repeated failures exceed the configured threshold; the agent is \
                      likely stuck in a degraded state",
                 )
-                .with_evidence(findings.iter().filter(|f| {
-                    matches!(f.kind, FindingKind::Failure | FindingKind::HarnessViolation)
-                }).map(|f| f.finding_id.clone())),
+                .with_evidence(
+                    findings
+                        .iter()
+                        .filter(|f| {
+                            matches!(f.kind, FindingKind::Failure | FindingKind::HarnessViolation)
+                        })
+                        .map(|f| f.finding_id.clone()),
+                ),
             );
         }
 
@@ -441,7 +448,11 @@ impl ProtectEngine {
             .map(|(dedup_key, group)| {
                 // Safe: groups are built from non-empty pushes.
                 let first = group[0];
-                let severity = group.iter().map(|f| f.severity).max().unwrap_or(first.severity);
+                let severity = group
+                    .iter()
+                    .map(|f| f.severity)
+                    .max()
+                    .unwrap_or(first.severity);
                 let occurrence_count = group.len() as u64;
                 let mut evidence: Vec<String> = group
                     .iter()
@@ -470,7 +481,11 @@ impl ProtectEngine {
             })
             .collect();
         // Highest severity first.
-        alerts.sort_by(|a, b| b.severity.cmp(&a.severity).then(a.dedup_key.cmp(&b.dedup_key)));
+        alerts.sort_by(|a, b| {
+            b.severity
+                .cmp(&a.severity)
+                .then(a.dedup_key.cmp(&b.dedup_key))
+        });
         alerts
     }
 
@@ -508,9 +523,7 @@ impl ProtectEngine {
 }
 
 /// Deterministic finding→recommendation templates.
-fn recommendation_templates(
-    f: &Finding,
-) -> Vec<(RecommendationKind, String, String)> {
+fn recommendation_templates(f: &Finding) -> Vec<(RecommendationKind, String, String)> {
     let src = &f.title;
     match f.kind {
         FindingKind::Drift => vec![

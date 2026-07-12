@@ -63,30 +63,27 @@ pub use protect::{
 pub use redact::{redact_json, redact_text, SecretScan, REDACTED};
 pub use report::{build_rmp_report, render_markdown, RmpReport, RMP_REPORT_VERSION};
 pub use review::{
-    CoverageReport, ReleaseRecommendation, ReviewConfig, ReviewEngine, ReviewInputs,
-    ReviewOutcome,
+    CoverageReport, ReleaseRecommendation, ReviewConfig, ReviewEngine, ReviewInputs, ReviewOutcome,
 };
 pub use risk::{
     AgentTypeAssessment, AssociatedRisk, ImpactDriver, RiskItem, RiskMatrix, RISK_MATRIX_VERSION,
 };
 pub use scenario::{
-    parse_scenarios, validate_scenario, ScenarioSource, TestScenario,
-    TestScenarioExpectedOutput, TestScenarioInput, SCENARIO_VERSION,
+    parse_scenarios, validate_scenario, ScenarioSource, TestScenario, TestScenarioExpectedOutput,
+    TestScenarioInput, SCENARIO_VERSION,
 };
 pub use store::RmpStore;
 pub use types::{
     ActionPlan, ActionPlanStep, Alert, AlertRoute, AlertStatus, AnomalyFinding,
-    EvaluationHistoryEntry, EvaluationResult, Finding, FindingKind, MonitorFinding,
-    MonitorSession, PolicyViolationFinding, ProtectFinding, ProtectSession, Recommendation,
-    RecommendationKind, ReviewFinding, ReviewSession, RmpEvidenceBundle, RmpFeedbackEvent,
-    RmpMode, RmpSession, RmpSessionStatus, RMP_SPEC_VERSION,
+    EvaluationHistoryEntry, EvaluationResult, Finding, FindingKind, MonitorFinding, MonitorSession,
+    PolicyViolationFinding, ProtectFinding, ProtectSession, Recommendation, RecommendationKind,
+    ReviewFinding, ReviewSession, RmpEvidenceBundle, RmpFeedbackEvent, RmpMode, RmpSession,
+    RmpSessionStatus, RMP_SPEC_VERSION,
 };
 
 /// Compute the `blake3:`-prefixed canonical hash of any serializable value,
 /// matching the ledger's payload-hash convention.
-pub fn value_hash<T: serde::Serialize>(
-    value: &T,
-) -> agenomic_core::CliResult<String> {
+pub fn value_hash<T: serde::Serialize>(value: &T) -> agenomic_core::CliResult<String> {
     let v = serde_json::to_value(value)
         .map_err(|e| agenomic_core::CliError::Internal(format!("serialize for hash: {e}")))?;
     Ok(agenomic_ledger_local::payload_hash(&v))

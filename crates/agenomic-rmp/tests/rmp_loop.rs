@@ -71,7 +71,9 @@ fn full_loop_with_ledger() {
     )
     .unwrap();
     let sid = monitor.session().tracking_session_id.clone();
-    monitor.ingest(tool_event(&sid, 0, "claims_db.lookup")).unwrap();
+    monitor
+        .ingest(tool_event(&sid, 0, "claims_db.lookup"))
+        .unwrap();
     monitor.ingest(tool_event(&sid, 1, "shell.exec")).unwrap();
     assert!(monitor.protect_triggered());
     let monitor_outcome = monitor
@@ -133,13 +135,18 @@ fn full_loop_with_ledger() {
         },
     )
     .unwrap();
-    assert!(manifest.files.iter().any(|f| f.path == "monitor_report.json"));
+    assert!(manifest
+        .files
+        .iter()
+        .any(|f| f.path == "monitor_report.json"));
     assert!(manifest.files.iter().any(|f| f.path == "action_plan.md"));
 
     // ---- 6. Store persistence -----------------------------------------
     let store = RmpStore::new(tmp.path().join("rmp"));
     store.save_session(&report.session).unwrap();
-    store.save_report(&report.session.session_id, &report).unwrap();
+    store
+        .save_report(&report.session.session_id, &report)
+        .unwrap();
     store
         .append_proposals(&report.session.session_id, &[proposal])
         .unwrap();
@@ -148,7 +155,10 @@ fn full_loop_with_ledger() {
     // ---- 7. Ledger durability: events survived, chain verifies --------
     // The pipeline was moved into the monitor; re-open the store directly.
     std::thread::sleep(Duration::from_millis(200));
-    let entries = FileLedgerStore::open(&store_dir).unwrap().read_all().unwrap();
+    let entries = FileLedgerStore::open(&store_dir)
+        .unwrap()
+        .read_all()
+        .unwrap();
     assert!(
         entries
             .iter()

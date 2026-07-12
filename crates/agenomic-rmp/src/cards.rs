@@ -86,11 +86,11 @@ impl AgentIdCard {
         card.description = s(&["agent", "description"]);
         card.domain = s(&["agent", "domain"]);
         card.criticality = s(&["agent", "criticality"]);
-        if let Some(tools) = genome
-            .get("tools")
-            .and_then(|t| t.as_array())
-            .or_else(|| genome.pointer("/capabilities/tools").and_then(|t| t.as_array()))
-        {
+        if let Some(tools) = genome.get("tools").and_then(|t| t.as_array()).or_else(|| {
+            genome
+                .pointer("/capabilities/tools")
+                .and_then(|t| t.as_array())
+        }) {
             for t in tools {
                 let name = t
                     .as_str()
@@ -179,7 +179,10 @@ tools:
         assert_eq!(card.domain, "insurance");
         assert_eq!(
             card.allowed_tools,
-            vec!["claims_db.lookup".to_string(), "payments.refund".to_string()]
+            vec![
+                "claims_db.lookup".to_string(),
+                "payments.refund".to_string()
+            ]
         );
     }
 }

@@ -63,7 +63,12 @@ pub struct EvidenceManifest {
 /// Manifest version constant.
 pub const EVIDENCE_MANIFEST_VERSION: &str = "agenomic.rmp.evidence/v0.1";
 
-fn write_file(out_dir: &Path, name: &str, bytes: &[u8], files: &mut Vec<EvidenceFile>) -> CliResult<()> {
+fn write_file(
+    out_dir: &Path,
+    name: &str,
+    bytes: &[u8],
+    files: &mut Vec<EvidenceFile>,
+) -> CliResult<()> {
     let path = out_dir.join(name);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| io_at(parent, e))?;
@@ -146,7 +151,11 @@ pub fn export_evidence(
         // Rendered action plans + recommendations for auditors.
         let mut plans_md = String::from("# Action plans\n\n");
         for plan in &protect.action_plans {
-            plans_md.push_str(&format!("## {} ({})\n\n", plan.title, plan.severity.label()));
+            plans_md.push_str(&format!(
+                "## {} ({})\n\n",
+                plan.title,
+                plan.severity.label()
+            ));
             for step in &plan.steps {
                 plans_md.push_str(&format!(
                     "{}. [{}] {}{}\n",
@@ -178,7 +187,12 @@ pub fn export_evidence(
                 }
             ));
         }
-        write_file(out_dir, "recommendations.md", recs_md.as_bytes(), &mut files)?;
+        write_file(
+            out_dir,
+            "recommendations.md",
+            recs_md.as_bytes(),
+            &mut files,
+        )?;
     }
     if !report.scenario_proposals.is_empty() {
         write_file(

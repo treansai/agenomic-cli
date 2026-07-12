@@ -98,7 +98,11 @@ fn full_rmp_loop_via_cli() {
         ])
         .output()
         .unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     // ---- rmp start (with ledger) -----------------------------------------
     let mut args: Vec<String> = vec![
@@ -146,7 +150,12 @@ fn full_rmp_loop_via_cli() {
         .output()
         .unwrap();
     // A critical drift alert blocks the release → exit 7.
-    assert_eq!(out.status.code(), Some(7), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        out.status.code(),
+        Some(7),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["ingested"], true);
     assert!(!v["findings"].as_array().unwrap().is_empty());
@@ -242,13 +251,23 @@ fn full_rmp_loop_via_cli() {
         .output()
         .unwrap();
     // Critical production findings → Block → exit 1.
-    assert_eq!(out.status.code(), Some(1), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let report: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&report_file).unwrap()).unwrap();
     assert_eq!(report["release_recommendation"], "block");
     assert_eq!(report["verification_status"], "verified");
-    assert!(report["report_hash"].as_str().unwrap().starts_with("blake3:"));
-    assert!(report["ledger_proof"]["verification_passed"].as_bool().unwrap());
+    assert!(report["report_hash"]
+        .as_str()
+        .unwrap()
+        .starts_with("blake3:"));
+    assert!(report["ledger_proof"]["verification_passed"]
+        .as_bool()
+        .unwrap());
 
     // ---- evidence export ----------------------------------------------------
     let evidence_dir = tmp.path().join("evidence");
@@ -282,7 +301,11 @@ fn full_rmp_loop_via_cli() {
         ])
         .output()
         .unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]
@@ -367,6 +390,9 @@ fn enrich_scenarios_from_findings_file() {
     let proposals = v["proposals"].as_array().unwrap();
     assert_eq!(proposals.len(), 1);
     assert_eq!(proposals[0]["human_approval_required"], true);
-    assert_eq!(proposals[0]["proposed_scenario"]["source"], "monitor_derived");
+    assert_eq!(
+        proposals[0]["proposed_scenario"]["source"],
+        "monitor_derived"
+    );
     assert!(out_file.exists());
 }
