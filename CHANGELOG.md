@@ -8,6 +8,30 @@ All notable changes to `agenomic-cli` are documented here. Format follows
 
 ### Added
 
+- **Review · Monitor · Protect (RMP).** A new `agenomic-rmp` crate and the
+  `agenomic rmp` / `review` / `monitor` / `protect` command families implement
+  the continuous safety loop for production agents. **Review** evaluates an
+  agent with structured test scenarios, a typed risk matrix (likelihood ×
+  impact × impact drivers, agent-type assessment), deterministic replay
+  against the behavior contract, regression detection over evaluation
+  history, and a release recommendation. **Monitor** wraps the online
+  tracking engine and appends every live event to the cryptographic ledger
+  through the durable WAL pipeline (`durable_low_latency` default; crash
+  recovery, idempotent ingestion, dead-letter queue). **Protect** derives
+  session-level anomalies (repeated failures, missing human approval,
+  dangerous autonomy), generates deduplicated/routed/throttled alerts,
+  deterministic recommendations (high-impact kinds always require human
+  approval), ordered action plans, and audit-ready evidence bundles. The
+  loop closes through scenario enrichment proposals: production findings
+  become new Review scenarios via an explicit
+  `draft → pending_review → approved → applied` workflow. All lifecycle
+  events (`rmp.*`, `review.*`, `monitor.*`, `protect.*`) are recorded into
+  the signed ledger when enabled, with redaction applied before anything is
+  hash-committed. New schemas (`schemas/rmp-*.schema.json`), docs
+  (`docs/review-monitor-protect.md`, `docs/rmp/`), and examples
+  (`examples/rmp/`). No LLM is called anywhere in the loop; an optional
+  provider interface exists for advisory suggestions only.
+
 - **Google ADK / `agents-cli` support.** A new `google-adk` compile target lowers
   a genome into a Google [Agent Development Kit](https://github.com/google/adk-python)
   agent exposing the conventional `root_agent` (with `__init__.py` for discovery),

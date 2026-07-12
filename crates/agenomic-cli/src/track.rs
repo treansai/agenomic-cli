@@ -28,16 +28,16 @@ pub(crate) struct LedgerOpts {
 /// Lives beside the session files, NOT inside the spec'd session/report
 /// types — the tracking wire shapes stay untouched.
 #[derive(serde::Serialize, serde::Deserialize)]
-struct LedgerBinding {
-    enabled: bool,
+pub(crate) struct LedgerBinding {
+    pub(crate) enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    store: Option<PathBuf>,
+    pub(crate) store: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    keys: Option<PathBuf>,
+    pub(crate) keys: Option<PathBuf>,
 }
 
 impl LedgerBinding {
-    fn dirs(&self) -> LedgerDirs {
+    pub(crate) fn dirs(&self) -> LedgerDirs {
         LedgerDirs {
             store: self.store.clone(),
             keys: self.keys.clone(),
@@ -45,11 +45,11 @@ impl LedgerBinding {
     }
 }
 
-fn binding_path(store: &SessionStore, session_id: &str) -> PathBuf {
+pub(crate) fn binding_path(store: &SessionStore, session_id: &str) -> PathBuf {
     store.session_dir(session_id).join("ledger.json")
 }
 
-fn load_binding(store: &SessionStore, session_id: &str) -> Option<LedgerBinding> {
+pub(crate) fn load_binding(store: &SessionStore, session_id: &str) -> Option<LedgerBinding> {
     let raw = std::fs::read_to_string(binding_path(store, session_id)).ok()?;
     serde_json::from_str(&raw).ok()
 }
@@ -115,7 +115,7 @@ pub fn cmd_track(args: &TrackCommand, format: OutputFormat, no_color: bool) -> C
 
 // ---- helpers --------------------------------------------------------------
 
-fn store_for(store: &Option<PathBuf>) -> CliResult<SessionStore> {
+pub(crate) fn store_for(store: &Option<PathBuf>) -> CliResult<SessionStore> {
     let root = match store {
         Some(p) => p.clone(),
         None => {
@@ -127,7 +127,7 @@ fn store_for(store: &Option<PathBuf>) -> CliResult<SessionStore> {
     Ok(SessionStore::new(root))
 }
 
-fn read_input(path: &Path) -> CliResult<String> {
+pub(crate) fn read_input(path: &Path) -> CliResult<String> {
     if path.as_os_str() == "-" {
         let mut buf = String::new();
         std::io::stdin()
@@ -139,7 +139,7 @@ fn read_input(path: &Path) -> CliResult<String> {
     }
 }
 
-fn require_session(store: &SessionStore, id: &str) -> CliResult<TrackingSession> {
+pub(crate) fn require_session(store: &SessionStore, id: &str) -> CliResult<TrackingSession> {
     if !store.exists(id) {
         return Err(CliError::Schema(format!(
             "unknown tracking session '{id}' (start one with `agenomic track start`)"
@@ -166,7 +166,7 @@ fn union_baseline(mut a: DriftBaseline, b: DriftBaseline) -> DriftBaseline {
 }
 
 /// Derive `(baseline, agent_id, genome_hash)` from a bundle directory.
-fn load_bundle_baseline(
+pub(crate) fn load_bundle_baseline(
     bundle: &Path,
 ) -> CliResult<(DriftBaseline, Option<String>, Option<String>)> {
     let mut baseline = DriftBaseline::default();
@@ -214,7 +214,7 @@ fn load_bundle_baseline(
 
 /// Load the optional harness inputs (behavior contract + policies) from the
 /// bundle the session was started against.
-fn load_harness_inputs(session: &TrackingSession) -> CliResult<HarnessInputs> {
+pub(crate) fn load_harness_inputs(session: &TrackingSession) -> CliResult<HarnessInputs> {
     let mut inputs = HarnessInputs {
         fail_on: session.tracking_config.fail_on,
         ..Default::default()
@@ -246,7 +246,7 @@ fn load_harness_inputs(session: &TrackingSession) -> CliResult<HarnessInputs> {
 
 /// Build a full [`TrackingEvent`] from possibly-partial JSON input, filling the
 /// auto fields (id, session, timestamp, sequence, agent) the producer omitted.
-fn hydrate_event(
+pub(crate) fn hydrate_event(
     raw: serde_json::Value,
     session: &TrackingSession,
     seq: u64,
@@ -290,6 +290,25 @@ fn start(
     format: OutputFormat,
     no_color: bool,
 ) -> CliResult<ExitCode> {
+    let store = store_for(store)?;
+    let session = start_tracking_session(bundle, release, env, config, agent, &store, &ledger)?;
+    render(&session, format, no_color)?;
+    Ok(ExitCode::Success)
+}
+
+/// Create and persist a tracking session for a bundle. Shared by
+/// `agenomic track start`, `agenomic monitor start`, and `agenomic rmp
+/// start`; writes the ledger binding + session-started event when
+/// `ledger.enabled`.
+pub(crate) fn start_tracking_session(
+    bundle: &Path,
+    release: &Option<String>,
+    env: &str,
+    config: &Option<PathBuf>,
+    agent: &Option<String>,
+    store: &SessionStore,
+    ledger: &LedgerOpts,
+) -> CliResult<TrackingSession> {
     let (baseline, detected_agent, genome_hash) = load_bundle_baseline(bundle)?;
     let agent_id = agent.clone().or(detected_agent).ok_or_else(|| {
         CliError::Schema(
@@ -313,19 +332,18 @@ fn start(
         ..Default::default()
     };
 
-    let store = store_for(store)?;
     store.save_session(&session)?;
     store.save_baseline(&session.session_id, &baseline)?;
 
     if ledger.enabled {
         let binding = LedgerBinding {
             enabled: true,
-            store: ledger.store,
-            keys: ledger.keys,
+            store: ledger.store.clone(),
+            keys: ledger.keys.clone(),
         };
         let raw =
             serde_json::to_vec_pretty(&binding).map_err(|e| CliError::Internal(format!("{e}")))?;
-        let path = binding_path(&store, &session.session_id);
+        let path = binding_path(store, &session.session_id);
         std::fs::write(&path, raw).map_err(|e| io_at(&path, e))?;
 
         // Session lifecycle event (idempotent id: one per session).
@@ -349,8 +367,7 @@ fn start(
         crate::ledger::append_drafts(&binding.dirs(), vec![draft])?;
     }
 
-    render(&session, format, no_color)?;
-    Ok(ExitCode::Success)
+    Ok(session)
 }
 
 fn event(

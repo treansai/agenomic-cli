@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agenomic.dev/schemas/v0.1/rmp-test-scenario.schema.json",
+  "title": "Agenomic RMP Test Scenario",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "scenario_id",
+    "title",
+    "source",
+    "agent_id",
+    "severity",
+    "created_at"
+  ],
+  "properties": {
+    "spec_version": { "const": "agenomic.rmp.scenario/v0.1" },
+    "scenario_id": { "type": "string", "minLength": 1 },
+    "title": { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "source": {
+      "enum": [
+        "manual",
+        "generated",
+        "incident_derived",
+        "monitor_derived",
+        "protect_derived",
+        "user_provided"
+      ]
+    },
+    "agent_id": { "type": "string", "pattern": "^agent://" },
+    "genome_hash": { "type": ["string", "null"] },
+    "risk_ids": { "type": "array", "items": { "type": "string" } },
+    "workflow_step_ids": { "type": "array", "items": { "type": "string" } },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["input"],
+        "properties": {
+          "name": { "type": ["string", "null"] },
+          "input": {},
+          "input_hash": { "type": ["string", "null"], "pattern": "^blake3:[0-9a-f]{64}$" }
+        }
+      }
+    },
+    "expected_outputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["check"],
+        "properties": {
+          "check": {
+            "enum": ["equals", "contains", "json_field_present", "matches_hash"]
+          },
+          "value": {},
+          "field": { "type": ["string", "null"] },
+          "output_hash": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "expected_tool_calls": { "type": "array", "items": { "type": "string" } },
+    "expected_memory_behavior": { "type": ["string", "null"] },
+    "expected_intent": { "type": ["string", "null"] },
+    "forbidden_behaviors": { "type": "array", "items": { "type": "string" } },
+    "policy_expectations": { "type": "array", "items": { "type": "string" } },
+    "metrics_to_compute": { "type": "array", "items": { "type": "string" } },
+    "severity": { "enum": ["info", "low", "medium", "high", "critical"] },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "created_at": { "type": "string", "format": "date-time" },
+    "created_by": { "type": "string" },
+    "evidence_source_refs": { "type": "array", "items": { "type": "string" } },
+    "dataset_refs": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": true
+}

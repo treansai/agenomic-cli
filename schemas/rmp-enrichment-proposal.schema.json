@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agenomic.dev/schemas/v0.1/rmp-enrichment-proposal.schema.json",
+  "title": "Agenomic RMP Scenario Enrichment Proposal",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "proposal_id",
+    "source_finding_id",
+    "proposed_scenario",
+    "reason",
+    "severity",
+    "human_approval_required",
+    "status",
+    "created_at"
+  ],
+  "properties": {
+    "spec_version": { "const": "agenomic.rmp.enrichment/v0.1" },
+    "proposal_id": { "type": "string", "minLength": 1 },
+    "source_finding_id": { "type": "string", "minLength": 1 },
+    "source_event_ids": { "type": "array", "items": { "type": "string" } },
+    "proposed_scenario": {
+      "$ref": "https://agenomic.dev/schemas/v0.1/rmp-test-scenario.schema.json"
+    },
+    "risk_ids": { "type": "array", "items": { "type": "string" } },
+    "reason": { "type": "string", "minLength": 1 },
+    "expected_coverage_improvement": { "type": "number", "minimum": 0, "maximum": 1 },
+    "severity": { "enum": ["info", "low", "medium", "high", "critical"] },
+    "human_approval_required": { "type": "boolean" },
+    "status": { "enum": ["draft", "pending_review", "approved", "rejected", "applied"] },
+    "created_at": { "type": "string", "format": "date-time" },
+    "reviewed_by": { "type": ["string", "null"] },
+    "reviewed_at": { "type": ["string", "null"], "format": "date-time" }
+  },
+  "additionalProperties": true
+}

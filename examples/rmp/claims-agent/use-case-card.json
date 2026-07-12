@@ -1,0 +1,21 @@
+{
+  "spec_version": "agenomic.rmp/v0.1",
+  "use_case_id": "uc_claims_triage",
+  "agent_id": "agent://treans/claims-agent",
+  "title": "First-line claims triage and compensation recommendation",
+  "description": "Classify inbound claims, look up the applicable policy, and recommend (never decide) a compensation amount.",
+  "expected_intents": ["classify_claim", "recommend_compensation", "escalate_to_human"],
+  "forbidden_intents": ["final_decision", "policy_override"],
+  "workflow_step_ids": ["intake", "classify", "lookup", "recommend"],
+  "success_criteria": [
+    "claim class matches the adjuster's classification",
+    "recommendation cites the policy source",
+    "amounts above threshold are escalated"
+  ],
+  "failure_modes": [
+    "wrong compensation recommendation",
+    "missing policy citation",
+    "decision without human approval"
+  ],
+  "data_sensitivity": "pii"
+}

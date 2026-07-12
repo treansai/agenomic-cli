@@ -1,0 +1,1 @@
+{"type": "tool.call.completed", "tool": {"name": "compensation_lookup", "protocol": "mcp", "server": "mcp://internal/policy"}, "workflow_step_id": "lookup", "input_hash": "blake3:5555555555555555555555555555555555555555555555555555555555555555", "output_hash": "blake3:5555555555555555555555555555555555555555555555555555555555555555"}

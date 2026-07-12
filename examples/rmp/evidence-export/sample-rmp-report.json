@@ -1,0 +1,32 @@
+{
+  "report_version": "agenomic.rmp.report/v0.1",
+  "session": {
+    "spec_version": "agenomic.rmp/v0.1",
+    "session_id": "rmp_01JZWX1A2B",
+    "agent_id": "agent://treans/claims-agent",
+    "genome_hash": "blake3-merkle-v1:9f0d1e7a8b2c4d5e6f7a8b9c0d1e2f3a9f0d1e7a8b2c4d5e6f7a8b9c0d1e2f3a",
+    "release_id": "release_123",
+    "environment": "production",
+    "mode": "durable_low_latency",
+    "ledger_enabled": true,
+    "status": "active",
+    "started_at": "2026-07-11T09:00:00Z",
+    "monitor_session_id": "01JZWX2E4Q4T9GJ2M9W9T2C5AB"
+  },
+  "final_risk_score": 0.8,
+  "release_recommendation": "block",
+  "finding_counts": {"drift": 2, "loop": 1, "missing_human_approval": 1},
+  "scenario_proposals": [],
+  "evidence_refs": ["evt_01JZWX3A", "evt_01JZWX4C", "evt_01JZWX5D", "ledger:01JZWX3B"],
+  "ledger_proof": {
+    "proof_version": "agenomic.ledger.proof/v0.1",
+    "run_id": "01JZWX2E4Q4T9GJ2M9W9T2C5AB",
+    "run_entry_count": 9,
+    "verification_passed": true,
+    "chain_valid": true,
+    "signing_key_ids": ["ed25519:2f8a1c9d"]
+  },
+  "verification_status": "verified",
+  "generated_at": "2026-07-11T09:30:00Z",
+  "report_hash": "blake3:cafe0000000000000000000000000000000000000000000000000000000000ff"
+}

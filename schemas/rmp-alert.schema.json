@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agenomic.dev/schemas/v0.1/rmp-alert.schema.json",
+  "title": "Agenomic RMP Alert",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "alert_id",
+    "session_id",
+    "agent_id",
+    "severity",
+    "status",
+    "title",
+    "dedup_key",
+    "occurrence_count",
+    "created_at"
+  ],
+  "properties": {
+    "spec_version": { "const": "agenomic.rmp/v0.1" },
+    "alert_id": { "type": "string", "minLength": 1 },
+    "session_id": { "type": "string", "minLength": 1 },
+    "agent_id": { "type": "string", "pattern": "^agent://" },
+    "severity": { "enum": ["info", "low", "medium", "high", "critical"] },
+    "status": { "enum": ["open", "acknowledged", "resolved", "suppressed"] },
+    "title": { "type": "string", "minLength": 1 },
+    "message": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "finding_ids": { "type": "array", "items": { "type": "string" } },
+    "dedup_key": { "type": "string", "minLength": 1 },
+    "occurrence_count": { "type": "integer", "minimum": 1 },
+    "routes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["target", "channel"],
+        "properties": {
+          "target": { "type": "string", "minLength": 1 },
+          "channel": { "type": "string", "minLength": 1 },
+          "routed_at": { "type": ["string", "null"], "format": "date-time" }
+        }
+      }
+    },
+    "evidence_refs": { "type": "array", "items": { "type": "string" } },
+    "throttled": { "type": "boolean" },
+    "escalated": { "type": "boolean" }
+  },
+  "additionalProperties": true
+}

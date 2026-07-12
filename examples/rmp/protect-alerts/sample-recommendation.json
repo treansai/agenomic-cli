@@ -1,0 +1,16 @@
+{
+  "spec_version": "agenomic.rmp/v0.1",
+  "recommendation_id": "rec_01JZWX8A2M",
+  "session_id": "prt_01JZWX7P9A",
+  "agent_id": "agent://treans/claims-agent",
+  "kind": "workflow_guardrail",
+  "severity": "high",
+  "title": "Add loop guardrail for: Repeated tool call: compensation_lookup ×14",
+  "rationale": "bound repeated tool calls / iterations in the workflow configuration",
+  "proposal": {"loops": {"max_same_tool_calls": 3}},
+  "requires_human_approval": true,
+  "status": "proposed",
+  "created_at": "2026-07-11T09:20:00Z",
+  "source_finding_ids": ["fnd_loop_1"],
+  "evidence_refs": ["evt_01JZWX5D"]
+}

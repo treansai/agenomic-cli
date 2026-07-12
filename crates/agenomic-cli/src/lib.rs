@@ -7,6 +7,7 @@ pub mod huggingface;
 mod ledger;
 mod provider;
 mod render;
+mod rmp;
 mod track;
 
 use agenomic_core::CliError;
@@ -68,6 +69,10 @@ pub fn run() -> i32 {
         Commands::Trace(args) => commands::cmd_trace(args),
         Commands::Atep(args) => commands::cmd_atep(args),
         Commands::Track(args) => track::cmd_track(args, format, no_color),
+        Commands::Rmp(args) => rmp::cmd_rmp(args, format, no_color),
+        Commands::Review(args) => rmp::cmd_review(args, format, no_color),
+        Commands::Monitor(args) => rmp::cmd_monitor(args, format, no_color),
+        Commands::Protect(args) => rmp::cmd_protect(args, format, no_color),
         Commands::Ledger(args) => ledger::cmd_ledger(args, format, no_color),
         Commands::Evidence(args) => ledger::cmd_evidence(args, format, no_color),
         Commands::Cloud(args) => commands::cmd_cloud(args, cli.profile.as_deref()),
