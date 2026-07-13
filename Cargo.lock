@@ -19,7 +19,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agenomic-atep"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-core",
  "agenomic-fs",
@@ -40,7 +40,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-attestation"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-atep",
  "agenomic-bundle",
@@ -60,7 +60,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-bundle"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-core",
  "agenomic-fs",
@@ -77,7 +77,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-cli"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-atep",
  "agenomic-attestation",
@@ -132,7 +132,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-cloud-client"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-core",
  "async-trait",
@@ -147,7 +147,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-compile"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-core",
  "blake3",
@@ -162,7 +162,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-config"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-core",
  "agenomic-fs",
@@ -175,7 +175,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-contract"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-core",
  "serde",
@@ -185,7 +185,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-core"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "chrono",
  "miette",
@@ -196,7 +196,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-detect"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-core",
  "agenomic-fs",
@@ -214,7 +214,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-diagnostics"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-atep",
  "agenomic-config",
@@ -236,7 +236,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-diff"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-bundle",
  "agenomic-core",
@@ -249,7 +249,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-fs"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-core",
  "glob",
@@ -261,7 +261,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-gate"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-atep",
  "agenomic-core",
@@ -281,7 +281,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-governance"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-core",
  "blake3",
@@ -295,7 +295,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-hash"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-core",
  "agenomic-fs",
@@ -310,7 +310,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-ledger-local"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-atep",
  "agenomic-core",
@@ -332,7 +332,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-os"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-core",
  "agenomic-detect",
@@ -353,7 +353,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-policy"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-core",
  "glob",
@@ -367,7 +367,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-replay-local"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-atep",
  "agenomic-bundle",
@@ -386,7 +386,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-report"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-attestation",
  "agenomic-bundle",
@@ -404,7 +404,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-rmp"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-attestation",
  "agenomic-contract",
@@ -427,7 +427,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-spec"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-core",
  "jsonschema",
@@ -438,7 +438,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-track"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-contract",
  "agenomic-core",
@@ -456,7 +456,7 @@ dependencies = [
 
 [[package]]
 name = "agenomic-validate"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-bundle",
  "agenomic-core",
@@ -5123,7 +5123,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.2.0-rc.0"
+version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-spec",
  "anyhow",
