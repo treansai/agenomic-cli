@@ -198,6 +198,18 @@ pub fn validate_scenario(scenario: &TestScenario) -> CliResult<()> {
     if scenario.scenario_id.is_empty() {
         return Err(CliError::Schema("scenario_id must not be empty".into()));
     }
+    // The id is used as a file name in the scenario corpus: restrict it to a
+    // safe charset so a fixture can never escape the corpus directory.
+    if !scenario
+        .scenario_id
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return Err(CliError::Schema(format!(
+            "scenario_id may only contain [A-Za-z0-9_-], got {:?}",
+            scenario.scenario_id
+        )));
+    }
     if scenario.title.is_empty() {
         return Err(CliError::Schema("scenario title must not be empty".into()));
     }
@@ -254,6 +266,16 @@ pub fn parse_scenarios(text: &str) -> CliResult<Vec<TestScenario>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_rejects_path_traversal_ids() {
+        for bad in ["../../etc/passwd", "a/b", "a\\b", "sc one", "sc.1"] {
+            let mut s =
+                TestScenario::new("agent://a/b", "t", ScenarioSource::Manual, Severity::Low);
+            s.scenario_id = bad.into();
+            assert!(validate_scenario(&s).is_err(), "accepted {bad:?}");
+        }
+    }
 
     #[test]
     fn validate_rejects_bad_agent_id() {

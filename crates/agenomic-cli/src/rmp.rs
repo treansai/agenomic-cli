@@ -805,7 +805,14 @@ fn rmp_status(
         .and_then(|b| b.tracking_session_id.as_deref())
     {
         Some(tid) => {
-            let tstore = tracking_store(stores)?;
+            // An explicit --tracking-store flag wins; otherwise use the
+            // store recorded in the binding at `rmp start`, then the
+            // default location.
+            let recorded = binding.as_ref().and_then(|b| b.tracking_store.clone());
+            let tstore = match (&stores.tracking_store, recorded) {
+                (Some(_), _) | (None, None) => tracking_store(stores)?,
+                (None, Some(p)) => SessionStore::new(p),
+            };
             if tstore.exists(tid) {
                 let tsession = tstore.load_session(tid)?;
                 let events = tstore.load_events(tid)?;
@@ -1518,6 +1525,52 @@ fn monitor_event(
             .with_evidence(a.evidence_event_ids.iter().cloned())
         })
         .collect();
+
+    // Ledger-bound session: findings join the audit chain alongside the raw
+    // event, on the same run (same mapping as MonitorEngine's finding
+    // events).
+    if !findings.is_empty() {
+        if let Some(binding) = load_binding(&tstore, session_id).filter(|b| b.enabled) {
+            let drafts: Vec<_> = findings
+                .iter()
+                .map(|f| {
+                    let event_type = match f.kind {
+                        agenomic_rmp::FindingKind::Drift => {
+                            agenomic_rmp::event_types::MONITOR_DRIFT_DETECTED
+                        }
+                        agenomic_rmp::FindingKind::Loop => {
+                            agenomic_rmp::event_types::MONITOR_LOOP_DETECTED
+                        }
+                        agenomic_rmp::FindingKind::IntentShift => {
+                            agenomic_rmp::event_types::MONITOR_INTENT_SHIFTED
+                        }
+                        agenomic_rmp::FindingKind::Failure
+                        | agenomic_rmp::FindingKind::RepeatedFailure => {
+                            agenomic_rmp::event_types::MONITOR_FAILURE_DETECTED
+                        }
+                        _ => agenomic_rmp::event_types::MONITOR_FINDING_CREATED,
+                    };
+                    let mut ev = agenomic_rmp::RmpLedgerEvent::new(
+                        event_type,
+                        &msession.session_id,
+                        &msession.agent_id,
+                        serde_json::json!({
+                            "finding_id": f.finding_id,
+                            "kind": f.kind.label(),
+                            "severity": f.severity,
+                            "title": f.title,
+                            "evidence_refs": f.evidence_refs,
+                        }),
+                    );
+                    ev.genome_hash = msession.genome_hash.clone();
+                    ev.release_id = msession.release_id.clone();
+                    ev.run_id = session_id.to_string();
+                    ev.to_draft()
+                })
+                .collect();
+            crate::ledger::append_drafts(&binding.dirs(), drafts)?;
+        }
+    }
 
     let value = serde_json::json!({
         "session_id": session_id,

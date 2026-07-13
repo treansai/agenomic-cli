@@ -160,6 +160,32 @@ fn full_rmp_loop_via_cli() {
     assert_eq!(v["ingested"], true);
     assert!(!v["findings"].as_array().unwrap().is_empty());
 
+    // The raw event AND the derived finding are on the ledger run chain.
+    let export_file = tmp.path().join("ledger-export.jsonl");
+    let out = agenomic()
+        .args([
+            "ledger",
+            "export",
+            "--run",
+            &tracking_id,
+            "--output",
+            export_file.to_str().unwrap(),
+            "--store",
+            env.ledger_store.to_str().unwrap(),
+            "--keys",
+            env.ledger_keys.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let exported = std::fs::read_to_string(&export_file).unwrap();
+    assert!(exported.contains("tool.call.completed"));
+    assert!(exported.contains("monitor.drift.detected"));
+
     // ---- monitor findings + enrichment proposals --------------------------
     let mut args: Vec<String> = vec![
         "monitor".into(),
