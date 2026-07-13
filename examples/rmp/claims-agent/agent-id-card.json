@@ -1,0 +1,14 @@
+{
+  "spec_version": "agenomic.rmp/v0.1",
+  "agent_id": "agent://treans/claims-agent",
+  "display_name": "Claims Agent",
+  "description": "Triages and classifies insurance claims, recommending compensation per policy.",
+  "domain": "insurance",
+  "agent_type": "workflow",
+  "criticality": "high",
+  "allowed_tools": ["classify_claim", "compensation_lookup"],
+  "forbidden_actions": ["final_compensation_decision", "external_payment"],
+  "autonomous": false,
+  "human_approval_required_for": ["compensation_above_threshold", "claim_rejection"],
+  "owner_team": "claims-platform"
+}

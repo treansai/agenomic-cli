@@ -1,0 +1,49 @@
+[
+  {
+    "spec_version": "agenomic.rmp/v0.1",
+    "finding_id": "fnd_drift_1",
+    "loop_stage": "monitor",
+    "session_id": "mon_01JZWX2E4Q",
+    "agent_id": "agent://treans/claims-agent",
+    "kind": "drift",
+    "severity": "critical",
+    "title": "Tool outside release baseline: shell.exec",
+    "message": "tool.call.completed for shell.exec — not in the genome's allowed tools",
+    "created_at": "2026-07-11T09:14:02Z",
+    "risk_ids": ["risk_unapproved_decision"],
+    "evidence_refs": ["evt_01JZWX3A", "ledger:01JZWX3B"],
+    "blocks_release": true,
+    "requires_human_review": true
+  },
+  {
+    "spec_version": "agenomic.rmp/v0.1",
+    "finding_id": "fnd_drift_2",
+    "loop_stage": "monitor",
+    "session_id": "mon_01JZWX2E4Q",
+    "agent_id": "agent://treans/claims-agent",
+    "kind": "drift",
+    "severity": "critical",
+    "title": "Tool outside release baseline: shell.exec",
+    "message": "second occurrence in the same session",
+    "created_at": "2026-07-11T09:14:31Z",
+    "evidence_refs": ["evt_01JZWX4C"],
+    "blocks_release": true,
+    "requires_human_review": true
+  },
+  {
+    "spec_version": "agenomic.rmp/v0.1",
+    "finding_id": "fnd_loop_1",
+    "loop_stage": "monitor",
+    "session_id": "mon_01JZWX2E4Q",
+    "agent_id": "agent://treans/claims-agent",
+    "kind": "loop",
+    "severity": "high",
+    "title": "Repeated tool call: compensation_lookup ×14",
+    "message": "same input hash 14 consecutive times on step 'lookup'",
+    "created_at": "2026-07-11T09:16:05Z",
+    "risk_ids": ["risk_wrong_payout"],
+    "evidence_refs": ["evt_01JZWX5D"],
+    "blocks_release": false,
+    "requires_human_review": true
+  }
+]

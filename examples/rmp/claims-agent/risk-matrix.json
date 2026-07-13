@@ -1,0 +1,59 @@
+{
+  "spec_version": "agenomic.rmp.risk-matrix/v0.1",
+  "matrix_id": "rm_claims_v1",
+  "agent_id": "agent://treans/claims-agent",
+  "assessment": {
+    "agent_type": "workflow",
+    "autonomy_level": 0.2,
+    "external_side_effects": false,
+    "human_in_the_loop": true,
+    "rationale": "recommends only; compensation decisions require an adjuster"
+  },
+  "items": [
+    {
+      "risk_id": "risk_wrong_payout",
+      "title": "Wrong compensation recommendation",
+      "description": "The agent recommends an amount inconsistent with the policy book.",
+      "category": "behavior",
+      "likelihood": 0.3,
+      "impact": 0.8,
+      "impact_drivers": [
+        {"driver": "financial", "weight": 0.9, "rationale": "direct payout impact"},
+        {"driver": "regulatory", "weight": 0.5, "rationale": "unfair-treatment exposure"}
+      ],
+      "associated_risks": [
+        {"risk_id": "risk_missing_citation", "relation": "correlates", "note": "uncited amounts are usually wrong"}
+      ],
+      "covered_by_scenarios": [],
+      "observed_findings": [],
+      "status": "open"
+    },
+    {
+      "risk_id": "risk_missing_citation",
+      "title": "Missing policy citation",
+      "category": "compliance",
+      "likelihood": 0.4,
+      "impact": 0.5,
+      "impact_drivers": [
+        {"driver": "regulatory", "weight": 0.7, "rationale": "auditability requirement"}
+      ],
+      "covered_by_scenarios": [],
+      "observed_findings": [],
+      "status": "open"
+    },
+    {
+      "risk_id": "risk_unapproved_decision",
+      "title": "Decision without human approval",
+      "category": "security",
+      "likelihood": 0.15,
+      "impact": 0.95,
+      "impact_drivers": [
+        {"driver": "regulatory", "weight": 1.0, "rationale": "human oversight is mandatory"},
+        {"driver": "reputation", "weight": 0.6, "rationale": "public trust"}
+      ],
+      "covered_by_scenarios": [],
+      "observed_findings": [],
+      "status": "open"
+    }
+  ]
+}

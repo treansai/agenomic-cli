@@ -145,6 +145,14 @@ pub enum Commands {
     Atep(AtepCommand),
     /// Online tracking of production agents (drift / loops / intent / harness).
     Track(TrackCommand),
+    /// Review · Monitor · Protect — the continuous safety loop.
+    Rmp(RmpCommand),
+    /// Review: evaluate an agent with scenarios, risk matrix, and replay.
+    Review(ReviewCliCommand),
+    /// Monitor: observe live agent execution (RMP layer over tracking).
+    Monitor(MonitorCliCommand),
+    /// Protect: alerts, recommendations, and action plans from findings.
+    Protect(ProtectCliCommand),
     /// Append-only, tamper-evident cryptographic event ledger.
     Ledger(LedgerCommand),
     /// Offline-verifiable evidence proof bundles (ledger-backed).
@@ -892,6 +900,347 @@ pub enum TrackSub {
         status: SessionStatusArg,
         #[arg(long)]
         store: Option<PathBuf>,
+    },
+}
+
+/// Shared session-store flag for the RMP command family.
+#[derive(Debug, Parser, Clone)]
+pub struct RmpStoreArgs {
+    /// RMP store root (default `<cwd>/.agenomic/rmp`).
+    #[arg(long)]
+    pub store: Option<PathBuf>,
+    /// Tracking store root for the live path
+    /// (default `<cwd>/.agenomic/tracking`).
+    #[arg(long)]
+    pub tracking_store: Option<PathBuf>,
+}
+
+/// Shared ledger flags for the RMP command family.
+#[derive(Debug, Parser, Clone)]
+pub struct RmpLedgerArgs {
+    /// Record RMP lifecycle events and live events into the cryptographic
+    /// ledger.
+    #[arg(long)]
+    pub ledger: bool,
+    /// Ledger data root override (default `.agenomic/ledger`).
+    #[arg(long)]
+    pub ledger_store: Option<PathBuf>,
+    /// Ledger key store override (default `~/.config/agenomic/keys`).
+    #[arg(long)]
+    pub ledger_keys: Option<PathBuf>,
+}
+
+#[derive(Debug, Parser)]
+pub struct RmpCommand {
+    #[command(subcommand)]
+    pub command: RmpSub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RmpSub {
+    /// Start an RMP session for a bundle: creates the umbrella session and
+    /// the underlying live-monitoring (tracking) session.
+    Start {
+        /// Bundle directory.
+        #[arg(default_value = ".")]
+        bundle: PathBuf,
+        /// Release id to bind the session to.
+        #[arg(long)]
+        release: Option<String>,
+        /// Deployment environment.
+        #[arg(long, default_value = "production")]
+        env: String,
+        /// Override the agent id (default: read from the genome/lockfile).
+        #[arg(long)]
+        agent: Option<String>,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+        #[command(flatten)]
+        ledger: RmpLedgerArgs,
+    },
+    /// Show an RMP session's status and stage completion.
+    Status {
+        #[arg(long)]
+        session: String,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+    /// Build (and persist) the unified RMP report.
+    Report {
+        #[arg(long)]
+        session: String,
+        /// Write the JSON report to this path (in addition to rendering it).
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Attach the ledger proof (session must have been started with
+        /// `--ledger`).
+        #[arg(long)]
+        include_ledger_proof: bool,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+    /// Run the Review stage for a bundle inside an RMP session (or
+    /// standalone when --session is omitted).
+    Review {
+        /// Bundle directory.
+        #[arg(default_value = ".")]
+        bundle: PathBuf,
+        /// RMP session to attach the review to.
+        #[arg(long)]
+        session: Option<String>,
+        /// Scenario JSON file(s) (single object or array; repeatable).
+        #[arg(long = "scenario")]
+        scenarios: Vec<PathBuf>,
+        /// Risk matrix JSON file.
+        #[arg(long)]
+        risk_matrix: Option<PathBuf>,
+        /// Trace fixtures (JSONL) for deterministic replay.
+        #[arg(long)]
+        traces: Option<PathBuf>,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+    /// Show the Monitor stage status for an RMP session.
+    Monitor {
+        #[arg(long)]
+        session: String,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+    /// Run the Protect stage over the session's findings.
+    Protect {
+        #[arg(long)]
+        session: String,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+    /// Derive scenario enrichment proposals from a findings JSON file.
+    EnrichScenarios {
+        /// Findings JSON (array of findings, or an object with `findings`).
+        #[arg(long)]
+        from_findings: PathBuf,
+        /// Write the proposals JSON to this path.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Generate the action plan for one alert.
+    ActionPlan {
+        #[arg(long)]
+        alert: String,
+        #[arg(long)]
+        session: String,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+    /// Export the audit-ready evidence bundle for a session.
+    ExportEvidence {
+        #[arg(long)]
+        session: String,
+        /// Output directory for the evidence bundle.
+        #[arg(long)]
+        output: PathBuf,
+        /// Also export the offline-verifiable ledger proof bundle members.
+        #[arg(long)]
+        include_ledger: bool,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+}
+
+#[derive(Debug, Parser)]
+pub struct ReviewCliCommand {
+    #[command(subcommand)]
+    pub command: ReviewSub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ReviewSub {
+    /// Run a review pass over a bundle.
+    Run {
+        /// Bundle directory.
+        #[arg(default_value = ".")]
+        bundle: PathBuf,
+        /// Scenario JSON file(s) (repeatable).
+        #[arg(long = "scenario")]
+        scenarios: Vec<PathBuf>,
+        /// Risk matrix JSON file.
+        #[arg(long)]
+        risk_matrix: Option<PathBuf>,
+        /// Trace fixtures (JSONL) for deterministic replay.
+        #[arg(long)]
+        traces: Option<PathBuf>,
+        /// Write the review outcome JSON to this path.
+        #[arg(long)]
+        output: Option<PathBuf>,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+    /// Manage the persistent scenario corpus of a bundle.
+    Scenarios(ReviewScenariosCommand),
+    /// Show (or initialize) the bundle's risk matrix.
+    RiskMatrix {
+        /// Bundle directory.
+        #[arg(default_value = ".")]
+        bundle: PathBuf,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+    /// Show a stored review outcome.
+    Report {
+        #[arg(long)]
+        session: String,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+}
+
+#[derive(Debug, Parser)]
+pub struct ReviewScenariosCommand {
+    #[command(subcommand)]
+    pub command: ReviewScenariosSub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ReviewScenariosSub {
+    /// List the scenario corpus.
+    List {
+        /// Bundle directory.
+        #[arg(default_value = ".")]
+        bundle: PathBuf,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+    /// Validate and add a scenario file to the corpus.
+    Add {
+        /// Bundle directory.
+        #[arg(default_value = ".")]
+        bundle: PathBuf,
+        /// Scenario JSON file (single object or array).
+        #[arg(long)]
+        file: PathBuf,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+}
+
+#[derive(Debug, Parser)]
+pub struct MonitorCliCommand {
+    #[command(subcommand)]
+    pub command: MonitorSub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MonitorSub {
+    /// Start a live monitor session for a bundle (tracking + RMP layer).
+    Start {
+        /// Bundle directory.
+        #[arg(default_value = ".")]
+        bundle: PathBuf,
+        /// Release id to bind the session to.
+        #[arg(long)]
+        release: Option<String>,
+        /// Deployment environment.
+        #[arg(long, default_value = "production")]
+        env: String,
+        /// Tracking config (YAML/JSON).
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Override the agent id.
+        #[arg(long)]
+        agent: Option<String>,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+        #[command(flatten)]
+        ledger: RmpLedgerArgs,
+    },
+    /// Ingest a runtime event (idempotent; safe to retry).
+    Event {
+        #[arg(long)]
+        session: String,
+        /// Event JSON file, or `-` for stdin.
+        #[arg(long)]
+        file: PathBuf,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+    /// Print the session's recent events and alerts.
+    Tail {
+        #[arg(long)]
+        session: String,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+    /// List the monitor findings derived from the session so far.
+    Findings {
+        #[arg(long)]
+        session: String,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+    /// Derive scenario enrichment proposals from the session's findings
+    /// (the Monitor → Review feedback edge).
+    EnrichReview {
+        #[arg(long)]
+        session: String,
+        /// Write the proposals JSON to this path.
+        #[arg(long)]
+        output: Option<PathBuf>,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+    /// Stop the session: run the harness and persist the monitor outcome.
+    Stop {
+        #[arg(long)]
+        session: String,
+        #[arg(long, value_enum, default_value = "completed")]
+        status: SessionStatusArg,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+}
+
+#[derive(Debug, Parser)]
+pub struct ProtectCliCommand {
+    #[command(subcommand)]
+    pub command: ProtectSub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProtectSub {
+    /// List (generating if needed) the alerts for a session.
+    Alerts {
+        #[arg(long)]
+        session: String,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+    /// Generate the action plan for one alert.
+    ActionPlan {
+        #[arg(long)]
+        alert: String,
+        #[arg(long)]
+        session: String,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+    /// List the recommendations for a session.
+    Recommendations {
+        #[arg(long)]
+        session: String,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+    /// Show the resolved notification routes for one alert (dispatch is
+    /// integration-specific; the OSS CLI prints and records the routing).
+    Notify {
+        #[arg(long)]
+        alert: String,
+        #[arg(long)]
+        session: String,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
     },
 }
 

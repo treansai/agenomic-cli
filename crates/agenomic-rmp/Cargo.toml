@@ -1,0 +1,31 @@
+[package]
+name = "agenomic-rmp"
+description = "Review · Monitor · Protect engine — the continuous safety loop for production AI agents"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+agenomic-core = { workspace = true }
+agenomic-contract = { workspace = true }
+agenomic-policy = { workspace = true }
+agenomic-replay-local = { workspace = true }
+agenomic-track = { workspace = true }
+agenomic-ledger-local = { workspace = true }
+agenomic-governance = { workspace = true }
+agenomic-attestation = { workspace = true }
+agenomic-report = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+chrono = { workspace = true }
+ulid = { workspace = true }
+blake3 = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

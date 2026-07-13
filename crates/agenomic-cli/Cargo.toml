@@ -38,6 +38,7 @@ agenomic-policy = { workspace = true }
 agenomic-governance = { workspace = true }
 agenomic-gate = { workspace = true }
 agenomic-track = { workspace = true }
+agenomic-rmp = { workspace = true }
 agenomic-ledger-local = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }

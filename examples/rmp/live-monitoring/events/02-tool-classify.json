@@ -1,0 +1,1 @@
+{"type": "tool.call.completed", "tool": {"name": "classify_claim", "protocol": "mcp", "server": "mcp://internal/claims"}, "workflow_step_id": "classify", "input_hash": "blake3:3333333333333333333333333333333333333333333333333333333333333333", "output_hash": "blake3:4444444444444444444444444444444444444444444444444444444444444444"}

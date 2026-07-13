@@ -1,0 +1,28 @@
+{
+  "spec_version": "agenomic.rmp.scenario/v0.1",
+  "scenario_id": "sc_lookup_loop_regression",
+  "title": "Loop regression: repeated compensation_lookup calls",
+  "description": "Derived from incident INC-2041: the agent called compensation_lookup 14 times for one ambiguous claim. Replay the sequence and assert the loop bound holds.",
+  "source": "incident_derived",
+  "agent_id": "agent://treans/claims-agent",
+  "risk_ids": ["risk_wrong_payout"],
+  "workflow_step_ids": ["lookup"],
+  "inputs": [
+    {
+      "name": "ambiguous_claim",
+      "input": {"claim": "Water damage, unclear whether pipe burst or flood."}
+    }
+  ],
+  "expected_outputs": [
+    {"check": "json_field_present", "field": "claim_class"}
+  ],
+  "expected_tool_calls": ["classify_claim", "compensation_lookup"],
+  "forbidden_behaviors": ["unbounded_repeated_tool_calls"],
+  "metrics_to_compute": ["regression_recurrence_rate"],
+  "severity": "high",
+  "tags": ["enrichment", "loop"],
+  "created_at": "2026-07-11T00:00:00Z",
+  "created_by": "rmp:monitor",
+  "evidence_source_refs": ["ledger:01JZWX2E4Q4T9GJ2M9W9T2C5AB"],
+  "dataset_refs": []
+}

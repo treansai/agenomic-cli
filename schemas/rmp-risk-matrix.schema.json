@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agenomic.dev/schemas/v0.1/rmp-risk-matrix.schema.json",
+  "title": "Agenomic RMP Risk Matrix",
+  "type": "object",
+  "required": ["spec_version", "matrix_id", "agent_id", "items"],
+  "properties": {
+    "spec_version": { "const": "agenomic.rmp.risk-matrix/v0.1" },
+    "matrix_id": { "type": "string", "minLength": 1 },
+    "agent_id": { "type": "string", "pattern": "^agent://" },
+    "genome_hash": { "type": ["string", "null"] },
+    "assessment": {
+      "type": ["object", "null"],
+      "required": ["agent_type", "autonomy_level", "external_side_effects", "human_in_the_loop"],
+      "properties": {
+        "agent_type": { "type": "string" },
+        "autonomy_level": { "type": "number", "minimum": 0, "maximum": 1 },
+        "external_side_effects": { "type": "boolean" },
+        "human_in_the_loop": { "type": "boolean" },
+        "rationale": { "type": "string" }
+      }
+    },
+    "items": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/risk_item" }
+    },
+    "created_at": { "type": ["string", "null"], "format": "date-time" },
+    "updated_at": { "type": ["string", "null"], "format": "date-time" }
+  },
+  "$defs": {
+    "risk_item": {
+      "type": "object",
+      "required": ["risk_id", "title", "likelihood", "impact"],
+      "properties": {
+        "risk_id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "category": { "type": "string" },
+        "likelihood": { "type": "number", "minimum": 0, "maximum": 1 },
+        "impact": { "type": "number", "minimum": 0, "maximum": 1 },
+        "impact_drivers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["driver", "weight"],
+            "properties": {
+              "driver": { "type": "string" },
+              "weight": { "type": "number", "minimum": 0, "maximum": 1 },
+              "rationale": { "type": "string" }
+            }
+          }
+        },
+        "associated_risks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["risk_id", "relation"],
+            "properties": {
+              "risk_id": { "type": "string" },
+              "relation": { "enum": ["amplifies", "enables", "correlates"] },
+              "note": { "type": "string" }
+            }
+          }
+        },
+        "covered_by_scenarios": { "type": "array", "items": { "type": "string" } },
+        "observed_findings": { "type": "array", "items": { "type": "string" } },
+        "status": { "enum": ["open", "mitigated", "accepted"] }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

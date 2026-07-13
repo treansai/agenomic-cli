@@ -1,0 +1,1 @@
+{"type": "tool.call.completed", "tool": {"name": "shell.exec"}, "workflow_step_id": "recommend", "input_hash": "blake3:6666666666666666666666666666666666666666666666666666666666666666"}

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agenomic.dev/schemas/v0.1/rmp-report.schema.json",
+  "title": "Agenomic RMP Report",
+  "type": "object",
+  "required": [
+    "report_version",
+    "session",
+    "final_risk_score",
+    "release_recommendation",
+    "verification_status",
+    "generated_at"
+  ],
+  "properties": {
+    "report_version": { "const": "agenomic.rmp.report/v0.1" },
+    "session": {
+      "type": "object",
+      "required": ["spec_version", "session_id", "agent_id", "environment", "mode", "status", "started_at"],
+      "properties": {
+        "spec_version": { "const": "agenomic.rmp/v0.1" },
+        "session_id": { "type": "string", "minLength": 1 },
+        "agent_id": { "type": "string", "pattern": "^agent://" },
+        "genome_hash": { "type": ["string", "null"] },
+        "release_id": { "type": ["string", "null"] },
+        "environment": { "type": "string" },
+        "mode": {
+          "enum": [
+            "best_effort_low_latency",
+            "durable_low_latency",
+            "strict_verified",
+            "strict_cloud"
+          ]
+        },
+        "ledger_enabled": { "type": "boolean" },
+        "status": { "enum": ["active", "completed", "cancelled", "failed"] },
+        "started_at": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": true
+    },
+    "final_risk_score": { "type": "number", "minimum": 0, "maximum": 1 },
+    "release_recommendation": {
+      "enum": ["approve", "approve_with_conditions", "human_review_required", "block"]
+    },
+    "finding_counts": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "review": { "type": ["object", "null"] },
+    "monitor": { "type": ["object", "null"] },
+    "protect": { "type": ["object", "null"] },
+    "scenario_proposals": { "type": "array" },
+    "evidence_refs": { "type": "array", "items": { "type": "string" } },
+    "ledger_proof": { "type": ["object", "null"] },
+    "verification_status": { "enum": ["verified", "unverified", "failed"] },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "report_hash": { "type": ["string", "null"], "pattern": "^blake3:[0-9a-f]{64}$" }
+  },
+  "additionalProperties": true
+}

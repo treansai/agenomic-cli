@@ -99,6 +99,7 @@ dependencies = [
  "agenomic-policy",
  "agenomic-replay-local",
  "agenomic-report",
+ "agenomic-rmp",
  "agenomic-spec",
  "agenomic-track",
  "agenomic-validate",
@@ -399,6 +400,29 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+]
+
+[[package]]
+name = "agenomic-rmp"
+version = "0.2.0-rc.0"
+dependencies = [
+ "agenomic-attestation",
+ "agenomic-contract",
+ "agenomic-core",
+ "agenomic-governance",
+ "agenomic-ledger-local",
+ "agenomic-policy",
+ "agenomic-replay-local",
+ "agenomic-report",
+ "agenomic-track",
+ "blake3",
+ "chrono",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "tracing",
+ "ulid",
 ]
 
 [[package]]

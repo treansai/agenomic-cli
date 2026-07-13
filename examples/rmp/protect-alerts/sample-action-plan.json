@@ -1,0 +1,19 @@
+{
+  "spec_version": "agenomic.rmp/v0.1",
+  "plan_id": "plan_01JZWX9C4P",
+  "alert_id": "alr_01JZWX7Q3K",
+  "session_id": "prt_01JZWX7P9A",
+  "agent_id": "agent://treans/claims-agent",
+  "severity": "critical",
+  "title": "Action plan: Tool outside release baseline: shell.exec",
+  "created_at": "2026-07-11T09:21:00Z",
+  "steps": [
+    {"step_id": "aps_1", "order": 1, "title": "Triage: Tool outside release baseline: shell.exec", "description": "Review the alert evidence (3 reference(s)) and confirm the incident scope.", "phase": "investigate", "requires_human_approval": false, "recommendation_ids": [], "status": "pending"},
+    {"step_id": "aps_2", "order": 2, "title": "Contain: pause or constrain the agent", "description": "For critical incidents, gate the affected tools or pause the release while the incident is investigated.", "phase": "mitigate", "requires_human_approval": true, "recommendation_ids": [], "status": "pending"},
+    {"step_id": "aps_3", "order": 3, "title": "Apply recommendation: Tighten drift baseline after: Tool outside release baseline: shell.exec", "description": "confirm whether the drifted surface is intentional; if not, roll back, if yes, refresh the release baseline", "phase": "remediate", "requires_human_approval": false, "recommendation_ids": ["rec_01JZWX8B3N"], "status": "pending"},
+    {"step_id": "aps_4", "order": 4, "title": "Verify via replay", "description": "Re-run Review with the enriched scenario corpus and confirm the finding no longer reproduces.", "phase": "verify", "requires_human_approval": false, "recommendation_ids": [], "status": "pending"},
+    {"step_id": "aps_5", "order": 5, "title": "Document and export evidence", "description": "Export the RMP evidence bundle (including the ledger proof when enabled) for the audit trail.", "phase": "document", "requires_human_approval": false, "recommendation_ids": [], "status": "pending"}
+  ],
+  "scenario_proposal_ids": ["sep_01JZWXA1"],
+  "evidence_refs": ["evt_01JZWX3A", "evt_01JZWX4C", "ledger:01JZWX3B"]
+}

@@ -1,0 +1,1 @@
+{"type": "model.call.completed", "model": {"provider": "openai", "model": "gpt-4o-2024-08-06", "temperature": 0.0}, "input_hash": "blake3:1111111111111111111111111111111111111111111111111111111111111111", "output_hash": "blake3:2222222222222222222222222222222222222222222222222222222222222222", "intent": "classify_claim"}
