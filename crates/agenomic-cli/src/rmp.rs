@@ -973,13 +973,10 @@ fn rmp_review(
         }
     };
 
-    let corpus_store = bundle_store(
-        bundle,
-        &RmpStoreArgs {
-            store: None,
-            tracking_store: None,
-        },
-    );
+    // The corpus follows the user's --store like every other artifact;
+    // hardcoding defaults here used to leak .agenomic/rmp/corpus/ into the
+    // bundle directory even when a store was given.
+    let corpus_store = bundle_store(bundle, stores);
     let mut inputs = review_inputs(
         bundle,
         scenario_files,
