@@ -21,14 +21,33 @@ pub struct EnrichInput {
     pub system_text: Option<String>,
     /// `(relative path, text)` for every workflow manifest.
     pub workflows: Vec<(String, String)>,
+    /// `(relative path, text)` for supplementary project docs (`docs/*.md`)
+    /// that describe agents/architecture — the only evidence available when
+    /// the repository has no README.
+    pub extra_docs: Vec<(String, String)>,
     pub env_required: Vec<String>,
     pub env_optional: Vec<String>,
 }
 
 const MAX_DOC: usize = 6000;
+/// Architecture/agent docs get a larger window: they are the evidence for
+/// the multi-agent system manifest and truncating them drops agents.
+const MAX_EXTRA_DOC: usize = 16000;
 
 fn clip(s: &str) -> &str {
-    &s[..s.len().min(MAX_DOC)]
+    clip_to(s, MAX_DOC)
+}
+
+/// Byte-bounded, char-boundary-safe prefix.
+fn clip_to(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 /// Gather the on-disk context for the prompt.
@@ -59,12 +78,20 @@ pub fn gather(dir: &Path) -> CliResult<EnrichInput> {
             }
         }
     }
+    let mut extra_docs = Vec::new();
+    for name in ["agents.md", "overview.md", "architecture.md"] {
+        let p = dir.join("docs").join(name);
+        if let Ok(text) = std::fs::read_to_string(&p) {
+            extra_docs.push((format!("docs/{name}"), text));
+        }
+    }
     let orch = agenomic_detect::detect_orchestration(dir)?;
     Ok(EnrichInput {
         genome_text,
         readme,
         system_text,
         workflows,
+        extra_docs,
         env_required: orch.env.required,
         env_optional: orch.env.optional,
     })
@@ -83,6 +110,11 @@ pub struct Enrichment {
     /// Keyed by manifest path (`system.yaml`, `workflows/<x>.yaml`).
     #[serde(default)]
     pub manifest_updates: BTreeMap<String, ManifestPatch>,
+    /// A complete spec-0.2 `system.yaml` proposed by the model for
+    /// multi-agent systems static detection cannot recover (e.g. custom
+    /// runtimes). Only honored when the bundle has no `system.yaml` yet, and
+    /// only after full schema + semantic validation.
+    pub system_manifest: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -131,6 +163,37 @@ pub fn build_prompt(input: &EnrichInput) -> String {
          manifest_updates may only target the listed manifest paths; criticality reflects blast \
          radius (customer-facing/regulated/financial => high or critical).\n\n",
     );
+    if input.system_text.is_none() {
+        p.push_str(
+            "This bundle has NO system.yaml. If (and only if) the provided context shows the \
+             project is a MULTI-AGENT system — multiple named agents coordinated by an \
+             orchestrator, supervisor, pipeline, or graph — additionally return a \
+             \"system_manifest\" key whose value is the complete YAML text of a system.yaml \
+             (Agenomic spec 0.2 orchestration manifest). Declare every real agent named in the \
+             context; do not invent agents. Shape:\n\
+             spec_version: '0.2'\n\
+             system:\n\
+             \x20 id: 'system://<org>/<name>'\n\
+             \x20 name: '<name>'\n\
+             \x20 domain: '<domain>'\n\
+             \x20 criticality: 'low|medium|high|critical'\n\
+             \x20 description: '<factual summary>'\n\
+             agents:\n\
+             \x20 - role: '<unique_role>'\n\
+             \x20   id: 'agent://<org>/<kebab-name>'\n\
+             \x20   description: '<what it does>'\n\
+             orchestration:\n\
+             \x20 style: 'pipeline|graph|supervisor|swarm|custom'\n\
+             \x20 supervisor: '<role, required for supervisor style>'\n\
+             \x20 entrypoint: '<role>'\n\
+             \x20 edges:\n\
+             \x20 - { from: '<role>', to: '<role or END>' }\n\
+             Semantic rules the validator enforces: roles are unique; entrypoint, supervisor, \
+             and every edge endpoint must be a declared role ('END' is the only non-role \
+             target); do not declare a workflows list. If the project is a single agent, omit \
+             \"system_manifest\" entirely.\n\n",
+        );
+    }
     p.push_str("## genome.yaml\n");
     p.push_str(clip(&input.genome_text));
     if let Some(readme) = &input.readme {
@@ -144,6 +207,10 @@ pub fn build_prompt(input: &EnrichInput) -> String {
     for (rel, text) in &input.workflows {
         p.push_str(&format!("\n\n## {rel}\n"));
         p.push_str(clip(text));
+    }
+    for (rel, text) in &input.extra_docs {
+        p.push_str(&format!("\n\n## {rel}\n"));
+        p.push_str(clip_to(text, MAX_EXTRA_DOC));
     }
     if !input.env_required.is_empty() || !input.env_optional.is_empty() {
         p.push_str(&format!(
@@ -287,6 +354,36 @@ pub fn apply(dir: &Path, e: &Enrichment) -> CliResult<Vec<String>> {
         }
     }
 
+    // --- synthesized system.yaml ---------------------------------------------
+    // Absence is the placeholder: a proposed manifest is only written when the
+    // bundle has no system.yaml, and only if it passes the full spec-0.2
+    // schema + semantic validation. An existing file — detected or
+    // hand-written — is never touched.
+    if let Some(manifest) = e.system_manifest.as_deref().map(str::trim) {
+        let system_path = dir.join("system.yaml");
+        if !manifest.is_empty() && !system_path.exists() {
+            let body = manifest
+                .strip_prefix("```yaml")
+                .or_else(|| manifest.strip_prefix("```"))
+                .map(|s| s.trim_end_matches("```"))
+                .unwrap_or(manifest)
+                .trim();
+            let text = format!("{body}\n");
+            let report = agenomic_validate::validate_system(&text)?;
+            if report.valid {
+                agenomic_fs::write_atomic(&system_path, text.as_bytes())?;
+                changed.push("system.yaml".to_string());
+            } else {
+                eprintln!(
+                    "warning: proposed system.yaml failed validation and was discarded:"
+                );
+                for issue in &report.errors {
+                    eprintln!("  - {}", issue.message);
+                }
+            }
+        }
+    }
+
     // --- system.yaml / workflows/*.yaml -------------------------------------
     for (rel, patch) in &e.manifest_updates {
         let safe = rel == "system.yaml"
@@ -401,6 +498,61 @@ mod tests {
             serde_json::from_str(r#"{"domain": "other", "criticality": "medium"}"#).unwrap();
         let changed2 = apply(tmp.path(), &e2).unwrap();
         assert!(changed2.is_empty(), "{changed2:?}");
+    }
+
+    const VALID_SYSTEM: &str = "spec_version: '0.2'\nsystem:\n  id: 'system://acme/orchestra'\n  name: 'Orchestra'\nagents:\n  - role: 'planner'\n    id: 'agent://acme/planner'\n  - role: 'executor'\n    id: 'agent://acme/executor'\norchestration:\n  style: 'supervisor'\n  supervisor: 'planner'\n  entrypoint: 'planner'\n  edges:\n    - from: 'planner'\n      to: 'executor'\n    - from: 'executor'\n      to: 'END'\n";
+
+    #[test]
+    fn apply_writes_valid_system_manifest_when_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        scaffold(tmp.path());
+        let e = Enrichment {
+            system_manifest: Some(format!("```yaml\n{VALID_SYSTEM}```")),
+            ..Default::default()
+        };
+        let changed = apply(tmp.path(), &e).unwrap();
+        assert!(changed.contains(&"system.yaml".to_string()), "{changed:?}");
+        let written = std::fs::read_to_string(tmp.path().join("system.yaml")).unwrap();
+        assert!(written.contains("role: 'planner'"));
+        assert!(!written.contains("```"));
+    }
+
+    #[test]
+    fn apply_never_overwrites_existing_system_manifest() {
+        let tmp = tempfile::tempdir().unwrap();
+        scaffold(tmp.path());
+        std::fs::write(tmp.path().join("system.yaml"), "spec_version: '0.2'\n").unwrap();
+        let e = Enrichment {
+            system_manifest: Some(VALID_SYSTEM.to_string()),
+            ..Default::default()
+        };
+        let changed = apply(tmp.path(), &e).unwrap();
+        assert!(!changed.contains(&"system.yaml".to_string()), "{changed:?}");
+        let untouched = std::fs::read_to_string(tmp.path().join("system.yaml")).unwrap();
+        assert_eq!(untouched, "spec_version: '0.2'\n");
+    }
+
+    #[test]
+    fn apply_discards_invalid_system_manifest() {
+        let tmp = tempfile::tempdir().unwrap();
+        scaffold(tmp.path());
+        // Edge target 'ghost' is not a declared role — semantic check fails.
+        let bad = VALID_SYSTEM.replace("to: 'executor'", "to: 'ghost'");
+        let e = Enrichment {
+            system_manifest: Some(bad),
+            ..Default::default()
+        };
+        let changed = apply(tmp.path(), &e).unwrap();
+        assert!(!changed.contains(&"system.yaml".to_string()), "{changed:?}");
+        assert!(!tmp.path().join("system.yaml").exists());
+    }
+
+    #[test]
+    fn clip_to_respects_char_boundaries() {
+        let s = "aé".repeat(4000); // 'é' is 2 bytes; boundary can land mid-char
+        let clipped = clip_to(&s, MAX_DOC);
+        assert!(clipped.len() <= MAX_DOC);
+        assert!(s.starts_with(clipped));
     }
 
     #[test]
