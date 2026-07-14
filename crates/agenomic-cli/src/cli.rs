@@ -284,7 +284,8 @@ pub struct EnrichArgs {
     pub cloud: bool,
     /// Model to call in direct mode (defaults to the genome's `runtime.model_id`).
     /// In cloud mode it is an optional hint; the server selects the model.
-    #[arg(long)]
+    /// Falls back to AGENOMIC_ENRICH_MODEL when unset.
+    #[arg(long, env = "AGENOMIC_ENRICH_MODEL")]
     pub model: Option<String>,
     /// Print the proposed enrichment as JSON; write nothing; exit 0.
     #[arg(long)]
