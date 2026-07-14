@@ -20,9 +20,9 @@ use agenomic_rmp::{
 use agenomic_track::{SessionStatus, SessionStore, TrackingEngine};
 
 use crate::cli::{
-    MonitorCliCommand, MonitorSub, OutputFormat, ProtectCliCommand, ProtectSub, ReviewCliCommand,
-    ReviewScenariosSub, ReviewSub, RmpCommand, RmpLedgerArgs, RmpStoreArgs, RmpSub,
-    SessionStatusArg,
+    MonitorCliCommand, MonitorSub, OutputFormat, ProposalAction, ProtectCliCommand, ProtectSub,
+    ReviewCliCommand, ReviewScenariosSub, ReviewSub, RmpCommand, RmpLedgerArgs, RmpStoreArgs,
+    RmpSub, SessionStatusArg,
 };
 use crate::render::render;
 use crate::track::{
@@ -517,6 +517,213 @@ fn approved_proposals(
         .collect())
 }
 
+/// Record one enrichment-lifecycle event on the session's ledger when the
+/// session is bound with `--ledger`. No-op otherwise (the store is always
+/// the source of truth; the ledger is the tamper-evident audit trail).
+fn record_enrichment_event(
+    store: &RmpStore,
+    session: &RmpSession,
+    event_type: &str,
+    proposal: &ScenarioEnrichmentProposal,
+    extra: serde_json::Value,
+) -> CliResult<()> {
+    let Some(binding) = load_rmp_binding(store, &session.session_id) else {
+        return Ok(());
+    };
+    let Some(ledger) = binding.ledger.filter(|l| l.enabled) else {
+        return Ok(());
+    };
+    let mut payload = serde_json::json!({
+        "proposal_id": proposal.proposal_id,
+        "scenario_id": proposal.proposed_scenario.scenario_id,
+        "source_finding_id": proposal.source_finding_id,
+        "status": proposal.status.label(),
+    });
+    if let (Some(obj), Some(ex)) = (payload.as_object_mut(), extra.as_object()) {
+        for (k, v) in ex {
+            obj.insert(k.clone(), v.clone());
+        }
+    }
+    let mut ev = agenomic_rmp::RmpLedgerEvent::new(
+        event_type,
+        &session.session_id,
+        &session.agent_id,
+        payload,
+    );
+    ev.genome_hash = session.genome_hash.clone();
+    ev.release_id = session.release_id.clone();
+    ev.evidence_refs = proposal.source_event_ids.clone();
+    crate::ledger::append_drafts(&ledger.dirs(), vec![ev.to_draft()])?;
+    Ok(())
+}
+
+/// `agm rmp proposals <action>` — the human-approval surface that closes the
+/// continuous safety loop. Proposals are append-only in the session store
+/// (last record wins); each transition also lands on the ledger when bound.
+fn cmd_proposals(
+    action: &ProposalAction,
+    format: OutputFormat,
+    no_color: bool,
+) -> CliResult<ExitCode> {
+    match action {
+        ProposalAction::List { session, stores } => {
+            let store = rmp_store(stores)?;
+            require_rmp_session(&store, session)?;
+            let proposals = store.load_proposals(session)?;
+            render(&ProposalsView { proposals }, format, no_color)?;
+            Ok(ExitCode::Success)
+        }
+        ProposalAction::Approve {
+            proposal_id,
+            session,
+            reviewer,
+            stores,
+        } => proposal_transition(
+            session,
+            proposal_id,
+            reviewer.as_deref(),
+            stores,
+            ProposalOp::Approve,
+            format,
+            no_color,
+        ),
+        ProposalAction::Reject {
+            proposal_id,
+            session,
+            reviewer,
+            stores,
+        } => proposal_transition(
+            session,
+            proposal_id,
+            reviewer.as_deref(),
+            stores,
+            ProposalOp::Reject,
+            format,
+            no_color,
+        ),
+        ProposalAction::Apply {
+            proposal_id,
+            session,
+            stores,
+        } => proposal_apply(session, proposal_id, stores, format, no_color),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ProposalOp {
+    Approve,
+    Reject,
+}
+
+/// Load a session proposal by id, or a helpful error listing what exists.
+fn load_one_proposal(
+    store: &RmpStore,
+    session_id: &str,
+    proposal_id: &str,
+) -> CliResult<ScenarioEnrichmentProposal> {
+    store
+        .load_proposals(session_id)?
+        .into_iter()
+        .find(|p| p.proposal_id == proposal_id)
+        .ok_or_else(|| {
+            CliError::Schema(format!(
+                "no proposal '{proposal_id}' in session '{session_id}'"
+            ))
+        })
+}
+
+/// Approve/reject a proposal. A fresh draft is auto-submitted so a single
+/// command moves draft → approved/rejected; the state machine itself is
+/// unchanged (submit then approve).
+fn proposal_transition(
+    session_id: &str,
+    proposal_id: &str,
+    reviewer: Option<&str>,
+    stores: &RmpStoreArgs,
+    op: ProposalOp,
+    format: OutputFormat,
+    no_color: bool,
+) -> CliResult<ExitCode> {
+    let store = rmp_store(stores)?;
+    let session = require_rmp_session(&store, session_id)?;
+    let mut proposal = load_one_proposal(&store, session_id, proposal_id)?;
+    let reviewer = reviewer.unwrap_or("").to_string();
+
+    if proposal.status == agenomic_rmp::EnrichmentStatus::Draft {
+        proposal.submit()?;
+    }
+    match op {
+        ProposalOp::Approve => proposal.approve(&reviewer)?,
+        ProposalOp::Reject => proposal.reject(&reviewer)?,
+    }
+    store.append_proposals(session_id, std::slice::from_ref(&proposal))?;
+
+    if matches!(op, ProposalOp::Approve) {
+        record_enrichment_event(
+            &store,
+            &session,
+            agenomic_rmp::event_types::RMP_ENRICHMENT_APPROVED,
+            &proposal,
+            serde_json::json!({ "reviewed_by": proposal.reviewed_by }),
+        )?;
+    }
+    render(
+        &ProposalsView {
+            proposals: vec![proposal],
+        },
+        format,
+        no_color,
+    )?;
+    Ok(ExitCode::Success)
+}
+
+/// Apply an approved proposal: persist its scenario into the Review corpus
+/// (so the next review covers the incident) and mark it applied.
+fn proposal_apply(
+    session_id: &str,
+    proposal_id: &str,
+    stores: &RmpStoreArgs,
+    format: OutputFormat,
+    no_color: bool,
+) -> CliResult<ExitCode> {
+    let store = rmp_store(stores)?;
+    let session = require_rmp_session(&store, session_id)?;
+    let mut proposal = load_one_proposal(&store, session_id, proposal_id)?;
+
+    // Resolve the corpus store from the session's bundle binding, falling
+    // back to the session store root when the bundle path is unavailable.
+    let corpus_store = load_rmp_binding(&store, session_id)
+        .map(|b| bundle_store(&b.bundle, stores))
+        .unwrap_or_else(|| rmp_store(stores).unwrap_or_else(|_| store.clone()));
+
+    proposal.mark_applied()?; // errors unless status == approved
+    corpus_store.save_scenario(CORPUS, &proposal.proposed_scenario)?;
+    store.append_proposals(session_id, std::slice::from_ref(&proposal))?;
+
+    record_enrichment_event(
+        &store,
+        &session,
+        agenomic_rmp::event_types::REVIEW_TEST_SCENARIO_CREATED,
+        &proposal,
+        serde_json::json!({ "source": "scenario_enrichment" }),
+    )?;
+    record_enrichment_event(
+        &store,
+        &session,
+        agenomic_rmp::event_types::RMP_ENRICHMENT_APPLIED,
+        &proposal,
+        serde_json::json!({}),
+    )?;
+    render(
+        &ProposalsView {
+            proposals: vec![proposal],
+        },
+        format,
+        no_color,
+    )?;
+    Ok(ExitCode::Success)
+}
+
 /// Derive the monitor findings of a tracking session (resume, read-only).
 fn monitor_findings(
     tstore: &SessionStore,
@@ -615,6 +822,23 @@ fn run_protect(
                 ev.genome_hash = session.genome_hash.clone();
                 drafts.push(ev.to_draft());
             }
+            for proposal in &outcome.scenario_proposals {
+                let mut ev = agenomic_rmp::RmpLedgerEvent::new(
+                    agenomic_rmp::event_types::RMP_ENRICHMENT_PROPOSED,
+                    session_id,
+                    &session.agent_id,
+                    serde_json::json!({
+                        "proposal_id": proposal.proposal_id,
+                        "scenario_id": proposal.proposed_scenario.scenario_id,
+                        "source_finding_id": proposal.source_finding_id,
+                        "severity": proposal.severity,
+                        "human_approval_required": proposal.human_approval_required,
+                    }),
+                );
+                ev.genome_hash = session.genome_hash.clone();
+                ev.evidence_refs = proposal.source_event_ids.clone();
+                drafts.push(ev.to_draft());
+            }
             crate::ledger::append_drafts(&ledger.dirs(), drafts)?;
         }
     }
@@ -694,6 +918,7 @@ pub fn cmd_rmp(args: &RmpCommand, format: OutputFormat, no_color: bool) -> CliRe
             from_findings,
             output,
         } => enrich_from_file(from_findings, output, format, no_color),
+        RmpSub::Proposals { action } => cmd_proposals(action, format, no_color),
         RmpSub::ActionPlan {
             alert,
             session,

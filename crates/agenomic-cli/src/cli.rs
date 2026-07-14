@@ -1024,6 +1024,14 @@ pub enum RmpSub {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+    /// Review and act on a session's scenario-enrichment proposals — the
+    /// human-approval step that closes the Review → Monitor → Protect →
+    /// Review loop. Every transition is recorded on the ledger when the
+    /// session is bound with `--ledger`.
+    Proposals {
+        #[command(subcommand)]
+        action: ProposalAction,
+    },
     /// Generate the action plan for one alert.
     ActionPlan {
         #[arg(long)]
@@ -1043,6 +1051,47 @@ pub enum RmpSub {
         /// Also export the offline-verifiable ledger proof bundle members.
         #[arg(long)]
         include_ledger: bool,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProposalAction {
+    /// List a session's enrichment proposals with their approval status.
+    List {
+        #[arg(long)]
+        session: String,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+    /// Approve a proposal (draft/pending → approved). A reviewer identity is
+    /// mandatory for proposals that require human approval.
+    Approve {
+        proposal_id: String,
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        reviewer: Option<String>,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+    /// Reject a proposal (draft/pending → rejected).
+    Reject {
+        proposal_id: String,
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        reviewer: Option<String>,
+        #[command(flatten)]
+        stores: RmpStoreArgs,
+    },
+    /// Apply an approved proposal: add its scenario to the Review corpus so
+    /// the next `review` run covers the production incident that spawned it.
+    Apply {
+        proposal_id: String,
+        #[arg(long)]
+        session: String,
         #[command(flatten)]
         stores: RmpStoreArgs,
     },
