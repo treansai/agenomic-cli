@@ -1,10 +1,18 @@
 # RMP · SDKs and cloud
 
-The Python and TypeScript SDKs expose the RMP surface following their
-existing local-first conventions: without a `base_url`/`baseUrl` the
-client runs in local mode (sessions buffer events in memory / to JSONL);
-with one it targets Agenomic Cloud's `/v1/rmp|review|monitor|protect`
-APIs.
+> **Status.** The RMP surface is CLI-first today. The example client APIs
+> below are the **target** shape for the SDKs and the matching cloud
+> endpoints; they are not all wired up yet. What ships now: the CLI
+> (`agenomic rmp|review|monitor|protect`, documented in `cli.md`) and the
+> Monitor phase against Agenomic Cloud's live-tracking endpoints
+> (`/v1/tracking/*`). The `/v1/rmp`, `/v1/review`, and `/v1/protect`
+> endpoints these snippets imply are not implemented yet — treat this page
+> as the intended SDK contract, and drive RMP from the CLI in the meantime.
+
+The Python and TypeScript SDKs are intended to expose the RMP surface
+following their existing local-first conventions: without a
+`base_url`/`baseUrl` the client runs in local mode (sessions buffer events
+in memory / to JSONL); with one it targets Agenomic Cloud.
 
 ## Python
 
