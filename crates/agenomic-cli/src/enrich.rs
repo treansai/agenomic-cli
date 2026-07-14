@@ -173,24 +173,24 @@ pub fn build_prompt(input: &EnrichInput) -> String {
              context; do not invent agents. Shape:\n\
              spec_version: '0.2'\n\
              system:\n\
-             \x20 id: 'system://<org>/<name>'\n\
-             \x20 name: '<name>'\n\
-             \x20 domain: '<domain>'\n\
-             \x20 criticality: 'low|medium|high|critical'\n\
-             \x20 description: '<factual summary>'\n\
+             \x20\x20id: 'system://<org>/<name>'\n\
+             \x20\x20name: '<name>'\n\
+             \x20\x20domain: '<domain>'\n\
+             \x20\x20criticality: 'low|medium|high|critical'\n\
+             \x20\x20description: '<factual summary>'\n\
              agents:\n\
-             \x20 - role: '<unique_role>'\n\
-             \x20   id: 'agent://<org>/<kebab-name>'\n\
-             \x20   description: '<what it does>'\n\
+             \x20\x20- role: '<unique_role>'\n\
+             \x20\x20\x20\x20id: 'agent://<org>/<kebab-name>'\n\
+             \x20\x20\x20\x20description: '<what it does>'\n\
              orchestration:\n\
-             \x20 style: 'pipeline|graph|supervisor|swarm|custom'\n\
-             \x20 supervisor: '<role, required for supervisor style>'\n\
-             \x20 entrypoint: '<role>'\n\
-             \x20 edges:\n\
-             \x20 - { from: '<role>', to: '<role or END>' }\n\
+             \x20\x20style: 'pipeline|graph|supervisor|swarm|custom'\n\
+             \x20\x20supervisor: '<role, required for supervisor style>'\n\
+             \x20\x20entrypoint: '<role>'\n\
+             \x20\x20edges:\n\
+             \x20\x20\x20\x20- { from: '<role>', to: '<role or END>' }\n\
              Semantic rules the validator enforces: roles are unique; entrypoint, supervisor, \
              and every edge endpoint must be a declared role ('END' is the only non-role \
-             target); do not declare a workflows list. If the project is a single agent, omit \
+             target); use standard 2-space YAML indentation (sequence item keys aligned under the first key after '- '); do not declare a workflows list. If the project is a single agent, omit \
              \"system_manifest\" entirely.\n\n",
         );
     }
@@ -368,17 +368,31 @@ pub fn apply(dir: &Path, e: &Enrichment) -> CliResult<Vec<String>> {
                 .map(|s| s.trim_end_matches("```"))
                 .unwrap_or(manifest)
                 .trim();
-            let text = format!("{body}\n");
-            let report = agenomic_validate::validate_system(&text)?;
-            if report.valid {
-                agenomic_fs::write_atomic(&system_path, text.as_bytes())?;
-                changed.push("system.yaml".to_string());
-            } else {
-                eprintln!(
-                    "warning: proposed system.yaml failed validation and was discarded:"
-                );
-                for issue in &report.errors {
-                    eprintln!("  - {}", issue.message);
+            // Canonicalize through a parse → emit round-trip: model output
+            // sometimes uses indentation that lenient parsers accept but
+            // strict libyaml consumers (e.g. the cloud registry) reject.
+            let canonical = serde_yaml::from_str::<serde_yaml::Value>(body)
+                .map_err(|e| format!("not valid YAML: {e}"))
+                .and_then(|doc| {
+                    serde_yaml::to_string(&doc).map_err(|e| format!("re-serialize: {e}"))
+                });
+            match canonical {
+                Ok(text) => {
+                    let report = agenomic_validate::validate_system(&text)?;
+                    if report.valid {
+                        agenomic_fs::write_atomic(&system_path, text.as_bytes())?;
+                        changed.push("system.yaml".to_string());
+                    } else {
+                        eprintln!(
+                            "warning: proposed system.yaml failed validation and was discarded:"
+                        );
+                        for issue in &report.errors {
+                            eprintln!("  - {}", issue.message);
+                        }
+                    }
+                }
+                Err(err) => {
+                    eprintln!("warning: proposed system.yaml was discarded: {err}");
                 }
             }
         }
@@ -513,8 +527,26 @@ mod tests {
         let changed = apply(tmp.path(), &e).unwrap();
         assert!(changed.contains(&"system.yaml".to_string()), "{changed:?}");
         let written = std::fs::read_to_string(tmp.path().join("system.yaml")).unwrap();
-        assert!(written.contains("role: 'planner'"));
+        // Canonical re-emit: strict-parseable, fences stripped, quotes normalized.
+        assert!(written.contains("role: planner"), "{written}");
         assert!(!written.contains("```"));
+    }
+
+    #[test]
+    fn apply_discards_misaligned_model_yaml() {
+        let tmp = tempfile::tempdir().unwrap();
+        scaffold(tmp.path());
+        // 'id' at the same column as the '-' indicator: some lenient
+        // validators accept this, but strict libyaml consumers (the cloud
+        // registry) reject it — it must never reach the bundle.
+        let sloppy = "spec_version: '0.2'\nsystem:\n id: 'system://acme/orchestra'\n name: 'Orchestra'\nagents:\n - role: 'planner'\n id: 'agent://acme/planner'\norchestration:\n style: 'supervisor'\n supervisor: 'planner'\n entrypoint: 'planner'\n";
+        let e = Enrichment {
+            system_manifest: Some(sloppy.to_string()),
+            ..Default::default()
+        };
+        let changed = apply(tmp.path(), &e).unwrap();
+        assert!(!changed.contains(&"system.yaml".to_string()), "{changed:?}");
+        assert!(!tmp.path().join("system.yaml").exists());
     }
 
     #[test]
