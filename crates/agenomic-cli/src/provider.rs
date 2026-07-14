@@ -70,12 +70,45 @@ where
             client: cloud_client()?,
             model: model_flag.map(str::to_string),
         }),
-        ProviderKind::Direct => Ok(Provider::Direct {
-            vendor: direct_vendor(provider_flag, genome_provider),
-            model: model_flag
-                .map(str::to_string)
-                .unwrap_or_else(|| genome_model.to_string()),
-        }),
+        ProviderKind::Direct => {
+            let vendor = direct_vendor(provider_flag, genome_provider);
+            // Implicit-direct fallback: the user passed no --provider, the
+            // genome's vendor has no credentials on this machine, but they
+            // are logged in to Agenomic Cloud (AGENOMIC_API_KEY or `agm
+            // cloud login`) — route through cloud instead of erroring. An
+            // explicit vendor flag always stays direct.
+            if provider_flag.is_none() && !vendor_key_available(&vendor) {
+                if let Ok(client) = cloud_client() {
+                    return Ok(Provider::Cloud {
+                        client,
+                        model: model_flag.map(str::to_string),
+                    });
+                }
+            }
+            Ok(Provider::Direct {
+                vendor,
+                model: model_flag
+                    .map(str::to_string)
+                    .unwrap_or_else(|| genome_model.to_string()),
+            })
+        }
+    }
+}
+
+/// Whether the credentials a direct call to `vendor` needs are present.
+fn vendor_key_available(vendor: &str) -> bool {
+    fn set(key: &str) -> bool {
+        std::env::var(key).map(|v| !v.is_empty()).unwrap_or(false)
+    }
+    match vendor {
+        "anthropic" => set("ANTHROPIC_API_KEY"),
+        "openai" => set("OPENAI_API_KEY"),
+        v if crate::huggingface::is_huggingface(v) => {
+            set("HUGGINGFACE_API_TOKEN") || set("HF_TOKEN")
+        }
+        // Unknown vendors can't be called directly at all — treat as keyless
+        // so a logged-in user still gets the cloud route.
+        _ => false,
     }
 }
 
@@ -183,12 +216,16 @@ async fn huggingface_chat(model: &str, prompt: &str) -> CliResult<String> {
 async fn anthropic_chat(client: &reqwest::Client, model: &str, prompt: &str) -> CliResult<String> {
     let key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
         CliError::Schema(
-            "ANTHROPIC_API_KEY is not set (required by `agm enrich` for provider anthropic)".into(),
+            "ANTHROPIC_API_KEY is not set (required by `agm enrich` for provider anthropic); \
+             set it, or log in with `agm cloud login` to enrich via Agenomic Cloud"
+                .into(),
         )
     })?;
+    // 16K keeps headroom for models with adaptive thinking on by default
+    // (e.g. claude-sonnet-5), where thinking spend counts against max_tokens.
     let body = serde_json::json!({
         "model": model,
-        "max_tokens": 4000,
+        "max_tokens": 16000,
         "messages": [{"role": "user", "content": prompt}],
     });
     let resp = client
@@ -210,16 +247,26 @@ async fn anthropic_chat(client: &reqwest::Client, model: &str, prompt: &str) -> 
             v["error"]["message"].as_str().unwrap_or("unknown")
         )));
     }
-    Ok(v["content"][0]["text"]
-        .as_str()
-        .unwrap_or_default()
-        .to_string())
+    // Responses may carry thinking blocks before the text block — take the
+    // first block of type "text", not content[0].
+    let text = v["content"]
+        .as_array()
+        .and_then(|blocks| {
+            blocks
+                .iter()
+                .find(|b| b["type"].as_str() == Some("text"))
+                .and_then(|b| b["text"].as_str())
+        })
+        .unwrap_or_default();
+    Ok(text.to_string())
 }
 
 async fn openai_chat(client: &reqwest::Client, model: &str, prompt: &str) -> CliResult<String> {
     let key = std::env::var("OPENAI_API_KEY").map_err(|_| {
         CliError::Schema(
-            "OPENAI_API_KEY is not set (required by `agm enrich` for provider openai)".into(),
+            "OPENAI_API_KEY is not set (required by `agm enrich` for provider openai); \
+             set it, or log in with `agm cloud login` to enrich via Agenomic Cloud"
+                .into(),
         )
     })?;
     let body = serde_json::json!({
@@ -316,6 +363,27 @@ mod tests {
         .unwrap();
         assert_eq!(p.label(), "openai");
         assert_eq!(p.model(), "gpt-4o");
+    }
+
+    // 'glmx' is not a supported direct vendor, so vendor_key_available is
+    // deterministically false regardless of the test environment.
+    #[test]
+    fn implicit_direct_falls_back_to_cloud_when_logged_in() {
+        let p = select(None, false, None, "glmx", "glm-5", dummy_cloud).unwrap();
+        assert_eq!(p.label(), "cloud");
+    }
+
+    #[test]
+    fn implicit_direct_stays_direct_without_cloud_login() {
+        let p = select(None, false, None, "glmx", "glm-5", no_cloud).unwrap();
+        assert_eq!(p.label(), "glmx");
+        assert_eq!(p.model(), "glm-5");
+    }
+
+    #[test]
+    fn explicit_vendor_flag_never_falls_back() {
+        let p = select(Some("glmx"), false, None, "anthropic", "claude", dummy_cloud).unwrap();
+        assert_eq!(p.label(), "glmx");
     }
 
     #[test]
