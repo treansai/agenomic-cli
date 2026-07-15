@@ -500,7 +500,10 @@ fn review_inputs(
     })
 }
 
-/// Load the approved proposals of a session (feedback loop input).
+/// Load the approved-but-not-yet-applied proposals of a session (feedback
+/// loop input). Applied proposals are excluded: `proposals apply` already
+/// persisted their scenario into the Review corpus, so injecting them again
+/// would run the same scenario twice and inflate coverage counts.
 fn approved_proposals(
     store: &RmpStore,
     session_id: &str,
@@ -508,12 +511,7 @@ fn approved_proposals(
     Ok(store
         .load_proposals(session_id)?
         .into_iter()
-        .filter(|p| {
-            matches!(
-                p.status,
-                agenomic_rmp::EnrichmentStatus::Approved | agenomic_rmp::EnrichmentStatus::Applied
-            )
-        })
+        .filter(|p| p.status == agenomic_rmp::EnrichmentStatus::Approved)
         .collect())
 }
 
@@ -530,6 +528,7 @@ fn record_enrichment_event(
     let Some(binding) = load_rmp_binding(store, &session.session_id) else {
         return Ok(());
     };
+    let tracking_run = binding.tracking_session_id.clone();
     let Some(ledger) = binding.ledger.filter(|l| l.enabled) else {
         return Ok(());
     };
@@ -553,6 +552,11 @@ fn record_enrichment_event(
     ev.genome_hash = session.genome_hash.clone();
     ev.release_id = session.release_id.clone();
     ev.evidence_refs = proposal.source_event_ids.clone();
+    // The report proof and evidence export are built for the bound tracking
+    // run; keep the enrichment lifecycle inside that audit scope.
+    if let Some(run) = tracking_run {
+        ev.run_id = run;
+    }
     crate::ledger::append_drafts(&ledger.dirs(), vec![ev.to_draft()])?;
     Ok(())
 }
@@ -787,6 +791,7 @@ fn run_protect(
 
     // Record protect events on the ledger when the session is bound.
     if let Some(binding) = load_rmp_binding(store, session_id) {
+        let tracking_run = binding.tracking_session_id.clone();
         if let Some(ledger) = binding.ledger.filter(|l| l.enabled) {
             let mut drafts = Vec::new();
             for alert in &outcome.alerts {
@@ -837,6 +842,11 @@ fn run_protect(
                 );
                 ev.genome_hash = session.genome_hash.clone();
                 ev.evidence_refs = proposal.source_event_ids.clone();
+                // Same audit scope as the approval/apply events: the report
+                // proof is built for the bound tracking run.
+                if let Some(run) = &tracking_run {
+                    ev.run_id = run.clone();
+                }
                 drafts.push(ev.to_draft());
             }
             crate::ledger::append_drafts(&ledger.dirs(), drafts)?;

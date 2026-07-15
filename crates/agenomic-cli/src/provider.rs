@@ -382,7 +382,15 @@ mod tests {
 
     #[test]
     fn explicit_vendor_flag_never_falls_back() {
-        let p = select(Some("glmx"), false, None, "anthropic", "claude", dummy_cloud).unwrap();
+        let p = select(
+            Some("glmx"),
+            false,
+            None,
+            "anthropic",
+            "claude",
+            dummy_cloud,
+        )
+        .unwrap();
         assert_eq!(p.label(), "glmx");
     }
 

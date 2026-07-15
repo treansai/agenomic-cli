@@ -158,11 +158,20 @@ impl ReviewEngine {
         let mut metrics: BTreeMap<String, f64> = BTreeMap::new();
 
         // 1. Fold approved enrichment proposals into the scenario corpus.
+        // Skip scenarios already present (an applied proposal's scenario is
+        // persisted to the corpus) so nothing runs — or counts — twice.
         for proposal in &inputs.approved_proposals {
             if proposal.status == crate::enrich::EnrichmentStatus::Approved
                 || proposal.status == crate::enrich::EnrichmentStatus::Applied
             {
-                inputs.scenarios.push(proposal.proposed_scenario.clone());
+                let scenario = &proposal.proposed_scenario;
+                if !inputs
+                    .scenarios
+                    .iter()
+                    .any(|s| s.scenario_id == scenario.scenario_id)
+                {
+                    inputs.scenarios.push(scenario.clone());
+                }
             }
         }
 
