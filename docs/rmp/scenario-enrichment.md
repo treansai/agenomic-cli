@@ -40,7 +40,9 @@ trail. When Protect creates a proposal it writes
 `rmp.scenario_enrichment.proposed`; approval and application write
 `rmp.scenario_enrichment.approved` / `...applied`, and a successful
 apply also writes `review.test_scenario.created` — all to the session
-ledger when it was started with `--ledger`.
+ledger when it was started with `--ledger`. When the session is bound to
+a tracking run (`rmp start`), these events are recorded under that run,
+so the RMP report's embedded ledger proof covers the full lifecycle.
 
 `apply` folds the proposal's scenario into the Review corpus
 (`<store>/corpus/scenarios/<scenario_id>.json`) so the next

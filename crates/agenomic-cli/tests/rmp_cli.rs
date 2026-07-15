@@ -497,12 +497,23 @@ fn proposal_approval_closes_the_loop() {
     args.extend(env.store_args());
     run_json(&args.iter().map(String::as_str).collect::<Vec<_>>());
 
-    let mut args: Vec<String> = vec!["rmp".into(), "protect".into(), "--session".into(), session_id.clone()];
+    let mut args: Vec<String> = vec![
+        "rmp".into(),
+        "protect".into(),
+        "--session".into(),
+        session_id.clone(),
+    ];
     args.extend(env.store_args());
     run_json(&args.iter().map(String::as_str).collect::<Vec<_>>());
 
     // list -> exactly one proposal, draft, approval required
-    let mut args: Vec<String> = vec!["rmp".into(), "proposals".into(), "list".into(), "--session".into(), session_id.clone()];
+    let mut args: Vec<String> = vec![
+        "rmp".into(),
+        "proposals".into(),
+        "list".into(),
+        "--session".into(),
+        session_id.clone(),
+    ];
     args.extend(env.store_args());
     let v = run_json(&args.iter().map(String::as_str).collect::<Vec<_>>());
     let proposals = v["proposals"].as_array().unwrap();
@@ -516,19 +527,45 @@ fn proposal_approval_closes_the_loop() {
     assert_eq!(proposals[0]["human_approval_required"], true);
 
     // approve without a reviewer must be refused for a high-severity proposal
-    let mut args: Vec<String> = vec!["rmp".into(), "proposals".into(), "approve".into(), pid.clone(), "--session".into(), session_id.clone()];
+    let mut args: Vec<String> = vec![
+        "rmp".into(),
+        "proposals".into(),
+        "approve".into(),
+        pid.clone(),
+        "--session".into(),
+        session_id.clone(),
+    ];
     args.extend(env.store_args());
     let out = agenomic().args(&args).output().unwrap();
-    assert!(!out.status.success(), "approve without reviewer should fail");
+    assert!(
+        !out.status.success(),
+        "approve without reviewer should fail"
+    );
 
     // approve with a reviewer, then apply
-    let mut args: Vec<String> = vec!["rmp".into(), "proposals".into(), "approve".into(), pid.clone(), "--session".into(), session_id.clone(), "--reviewer".into(), "gabin".into()];
+    let mut args: Vec<String> = vec![
+        "rmp".into(),
+        "proposals".into(),
+        "approve".into(),
+        pid.clone(),
+        "--session".into(),
+        session_id.clone(),
+        "--reviewer".into(),
+        "gabin".into(),
+    ];
     args.extend(env.store_args());
     let v = run_json(&args.iter().map(String::as_str).collect::<Vec<_>>());
     assert_eq!(v["proposals"][0]["status"], "approved");
     assert_eq!(v["proposals"][0]["reviewed_by"], "gabin");
 
-    let mut args: Vec<String> = vec!["rmp".into(), "proposals".into(), "apply".into(), pid.clone(), "--session".into(), session_id.clone()];
+    let mut args: Vec<String> = vec![
+        "rmp".into(),
+        "proposals".into(),
+        "apply".into(),
+        pid.clone(),
+        "--session".into(),
+        session_id.clone(),
+    ];
     args.extend(env.store_args());
     let v = run_json(&args.iter().map(String::as_str).collect::<Vec<_>>());
     assert_eq!(v["proposals"][0]["status"], "applied");
@@ -539,15 +576,21 @@ fn proposal_approval_closes_the_loop() {
         .join("corpus")
         .join("scenarios")
         .join(format!("{scenario_id}.json"));
-    assert!(corpus.exists(), "scenario not persisted to corpus: {}", corpus.display());
+    assert!(
+        corpus.exists(),
+        "scenario not persisted to corpus: {}",
+        corpus.display()
+    );
 
-    // ledger carries the full enrichment lifecycle (previously dead events)
+    // The ledger carries the full enrichment lifecycle (previously dead
+    // events) under the bound tracking run — the run the RMP report proof
+    // and evidence export are built for.
     let export = tmp.path().join("ledger-export.jsonl");
     ok(&[
         "ledger",
         "export",
         "--run",
-        &session_id,
+        &tracking_id,
         "--output",
         export.to_str().unwrap(),
         "--store",
