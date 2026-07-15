@@ -36,18 +36,41 @@ loop back — they are already Review artifacts.
 Transitions are validated; skipping states is an error. Approving a
 proposal that requires human approval demands a non-empty reviewer
 identity, which is recorded (`reviewed_by`, `reviewed_at`) for the audit
-trail, and `rmp.scenario_enrichment.approved` / `...applied` events are
-written to the ledger when enabled.
+trail. When Protect creates a proposal it writes
+`rmp.scenario_enrichment.proposed`; approval and application write
+`rmp.scenario_enrichment.approved` / `...applied`, and a successful
+apply also writes `review.test_scenario.created` — all to the session
+ledger when it was started with `--ledger`. When the session is bound to
+a tracking run (`rmp start`), these events are recorded under that run,
+so the RMP report's embedded ledger proof covers the full lifecycle.
 
-Approved proposals are folded into the scenario corpus on the next
-`agenomic rmp review` pass of the same session, and the derived scenario's
-`evidence_source_refs` keep pointing at the original production events.
+`apply` folds the proposal's scenario into the Review corpus
+(`<store>/corpus/scenarios/<scenario_id>.json`) so the next
+`agenomic rmp review` of the same bundle covers the incident. The derived
+scenario's `evidence_source_refs` keep pointing at the original
+production events.
 
 ## CLI
 
+Derive proposals:
+
 ```bash
-# derive proposals from a live session
+# from a live monitor session
 agenomic monitor enrich-review --session <tracking-session> --output proposals.json
-# derive proposals from an exported findings file
+# from an exported findings file
 agenomic rmp enrich-scenarios --from-findings findings.json --output proposals.json
 ```
+
+Review and act on a bound session's proposals (the human-approval loop):
+
+```bash
+agenomic rmp proposals list    --session <rmp-session>
+agenomic rmp proposals approve <proposal_id> --session <rmp-session> --reviewer <name>
+agenomic rmp proposals reject  <proposal_id> --session <rmp-session> --reviewer <name>
+agenomic rmp proposals apply   <proposal_id> --session <rmp-session>
+```
+
+`--reviewer` is mandatory on `approve` when the proposal is flagged
+`human_approval_required` (high/critical severity). `apply` only accepts a
+proposal already in `approved` state. All four commands take the standard
+`--store` / `--tracking-store` flags.

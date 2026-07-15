@@ -144,17 +144,24 @@ pub fn cmd_enrich(
 /// Best-effort enrichment after `init`/`update --agent`: the bundle is
 /// already written, so a missing API key degrades to a hint, not a failure.
 fn run_agent_enrichment(dir: &Path, format: OutputFormat) {
+    // This path bypasses clap, so honor the documented env fallbacks by hand —
+    // `agm init --agent` should behave like `agm enrich` with no flags.
     let args = EnrichArgs {
         path: dir.to_path_buf(),
-        provider: None,
+        provider: std::env::var("AGENOMIC_ENRICH_PROVIDER")
+            .ok()
+            .filter(|v| !v.is_empty()),
         cloud: false,
-        model: None,
+        model: std::env::var("AGENOMIC_ENRICH_MODEL")
+            .ok()
+            .filter(|v| !v.is_empty()),
         dry_run: false,
     };
     if let Err(e) = cmd_enrich(&args, format, None) {
         eprintln!("warning: enrichment skipped: {e}");
         eprintln!(
-            "hint: set the provider API key and run `agm enrich {}`",
+            "hint: set the provider API key (or log in with `agm cloud login`) and run \
+             `agm enrich {}`",
             dir.display()
         );
     }
@@ -382,10 +389,20 @@ pub fn cmd_update(args: &UpdateArgs, format: OutputFormat) -> CliResult<ExitCode
             agenomic_detect::write_orchestration(dir, &orch, &result.merged.agent_id, false)?;
         if orch_written.is_empty() {
             render_update(&result, format, &UpdateOutcome::NoChange)?;
+            // An explicitly requested enrichment still runs on an up-to-date
+            // bundle: enrich is placeholder-guarded, so it either fills what
+            // detection could not know or reports nothing to do.
+            if args.agent {
+                run_agent_enrichment(dir, format);
+                return Ok(ExitCode::Success);
+            }
             return Ok(ExitCode::ValidationFailed); // exit 1 (§3.7)
         }
         render_update(&result, format, &UpdateOutcome::NoChange)?;
         render_orchestration(&orch, &orch_written, format, false);
+        if args.agent {
+            run_agent_enrichment(dir, format);
+        }
         return Ok(ExitCode::Success);
     }
 

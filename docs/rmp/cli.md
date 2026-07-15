@@ -15,6 +15,10 @@ agenomic rmp review ./my-agent [--session <rmp-session>] [--scenario file]...
 agenomic rmp monitor --session <rmp-session>
 agenomic rmp protect --session <rmp-session>
 agenomic rmp enrich-scenarios --from-findings findings.json [--output proposals.json]
+agenomic rmp proposals list --session <rmp-session>
+agenomic rmp proposals approve <proposal_id> --session <rmp-session> --reviewer <name>
+agenomic rmp proposals reject <proposal_id> --session <rmp-session> [--reviewer <name>]
+agenomic rmp proposals apply <proposal_id> --session <rmp-session>
 agenomic rmp action-plan --alert <alert-id> --session <rmp-session>
 agenomic rmp export-evidence --session <rmp-session> --output <dir> [--include-ledger]
 ```

@@ -422,3 +422,199 @@ fn enrich_scenarios_from_findings_file() {
     );
     assert!(out_file.exists());
 }
+
+/// The human-approval surface closes the loop: a Protect-derived proposal
+/// moves draft → approved (reviewer mandatory for high severity) → applied,
+/// the scenario lands in the Review corpus, and every transition — plus the
+/// previously-dead `rmp.scenario_enrichment.{proposed,approved,applied}` and
+/// `review.test_scenario.created` events — is recorded on the ledger.
+#[test]
+fn proposal_approval_closes_the_loop() {
+    let tmp = tempdir().unwrap();
+    let env = Env {
+        bundle: tmp.path().join("bundle"),
+        rmp_store: tmp.path().join("rmp"),
+        tracking_store: tmp.path().join("tracking"),
+        ledger_store: tmp.path().join("ledger"),
+        ledger_keys: tmp.path().join("keys"),
+    };
+    scaffold_bundle(&env.bundle);
+
+    let ok = |args: &[&str]| {
+        let out = agenomic().args(args).output().unwrap();
+        assert!(
+            out.status.success(),
+            "command {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        out
+    };
+
+    ok(&[
+        "ledger",
+        "init",
+        "--store",
+        env.ledger_store.to_str().unwrap(),
+        "--keys",
+        env.ledger_keys.to_str().unwrap(),
+    ]);
+
+    // rmp start (bound, ledger enabled)
+    let mut args: Vec<String> = vec![
+        "rmp".into(),
+        "start".into(),
+        env.bundle.display().to_string(),
+        "--ledger".into(),
+        "--ledger-store".into(),
+        env.ledger_store.display().to_string(),
+        "--ledger-keys".into(),
+        env.ledger_keys.display().to_string(),
+    ];
+    args.extend(env.store_args());
+    let v = run_json(&args.iter().map(String::as_str).collect::<Vec<_>>());
+    let session_id = v["session"]["session_id"].as_str().unwrap().to_string();
+    let tracking_id = v["session"]["monitor_session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // ingest a drift-triggering model call so Protect produces a proposal
+    let event = tmp.path().join("event.json");
+    std::fs::write(
+        &event,
+        r#"{"type": "model.call.completed", "model": {"provider": "openai", "model": "gpt-4o-2024-08-06"}, "input_hash": "blake3:1111111111111111111111111111111111111111111111111111111111111111", "output_hash": "blake3:2222222222222222222222222222222222222222222222222222222222222222"}"#,
+    )
+    .unwrap();
+    let mut args: Vec<String> = vec![
+        "monitor".into(),
+        "event".into(),
+        "--session".into(),
+        tracking_id.clone(),
+        "--file".into(),
+        event.display().to_string(),
+    ];
+    args.extend(env.store_args());
+    run_json(&args.iter().map(String::as_str).collect::<Vec<_>>());
+
+    let mut args: Vec<String> = vec![
+        "rmp".into(),
+        "protect".into(),
+        "--session".into(),
+        session_id.clone(),
+    ];
+    args.extend(env.store_args());
+    run_json(&args.iter().map(String::as_str).collect::<Vec<_>>());
+
+    // list -> exactly one proposal, draft, approval required
+    let mut args: Vec<String> = vec![
+        "rmp".into(),
+        "proposals".into(),
+        "list".into(),
+        "--session".into(),
+        session_id.clone(),
+    ];
+    args.extend(env.store_args());
+    let v = run_json(&args.iter().map(String::as_str).collect::<Vec<_>>());
+    let proposals = v["proposals"].as_array().unwrap();
+    assert_eq!(proposals.len(), 1, "one proposal expected: {v}");
+    let pid = proposals[0]["proposal_id"].as_str().unwrap().to_string();
+    let scenario_id = proposals[0]["proposed_scenario"]["scenario_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(proposals[0]["status"], "draft");
+    assert_eq!(proposals[0]["human_approval_required"], true);
+
+    // approve without a reviewer must be refused for a high-severity proposal
+    let mut args: Vec<String> = vec![
+        "rmp".into(),
+        "proposals".into(),
+        "approve".into(),
+        pid.clone(),
+        "--session".into(),
+        session_id.clone(),
+    ];
+    args.extend(env.store_args());
+    let out = agenomic().args(&args).output().unwrap();
+    assert!(
+        !out.status.success(),
+        "approve without reviewer should fail"
+    );
+
+    // approve with a reviewer, then apply
+    let mut args: Vec<String> = vec![
+        "rmp".into(),
+        "proposals".into(),
+        "approve".into(),
+        pid.clone(),
+        "--session".into(),
+        session_id.clone(),
+        "--reviewer".into(),
+        "gabin".into(),
+    ];
+    args.extend(env.store_args());
+    let v = run_json(&args.iter().map(String::as_str).collect::<Vec<_>>());
+    assert_eq!(v["proposals"][0]["status"], "approved");
+    assert_eq!(v["proposals"][0]["reviewed_by"], "gabin");
+
+    let mut args: Vec<String> = vec![
+        "rmp".into(),
+        "proposals".into(),
+        "apply".into(),
+        pid.clone(),
+        "--session".into(),
+        session_id.clone(),
+    ];
+    args.extend(env.store_args());
+    let v = run_json(&args.iter().map(String::as_str).collect::<Vec<_>>());
+    assert_eq!(v["proposals"][0]["status"], "applied");
+
+    // the scenario is now in the Review corpus
+    let corpus = env
+        .rmp_store
+        .join("corpus")
+        .join("scenarios")
+        .join(format!("{scenario_id}.json"));
+    assert!(
+        corpus.exists(),
+        "scenario not persisted to corpus: {}",
+        corpus.display()
+    );
+
+    // The ledger carries the full enrichment lifecycle (previously dead
+    // events) under the bound tracking run — the run the RMP report proof
+    // and evidence export are built for.
+    let export = tmp.path().join("ledger-export.jsonl");
+    ok(&[
+        "ledger",
+        "export",
+        "--run",
+        &tracking_id,
+        "--output",
+        export.to_str().unwrap(),
+        "--store",
+        env.ledger_store.to_str().unwrap(),
+        "--keys",
+        env.ledger_keys.to_str().unwrap(),
+    ]);
+    let text = std::fs::read_to_string(&export).unwrap();
+    for event_type in [
+        "rmp.scenario_enrichment.proposed",
+        "rmp.scenario_enrichment.approved",
+        "rmp.scenario_enrichment.applied",
+        "review.test_scenario.created",
+    ] {
+        assert!(text.contains(event_type), "ledger missing {event_type}");
+    }
+
+    // and the chain still verifies
+    ok(&[
+        "ledger",
+        "verify",
+        "--store",
+        env.ledger_store.to_str().unwrap(),
+        "--keys",
+        env.ledger_keys.to_str().unwrap(),
+    ]);
+}

@@ -6,6 +6,8 @@ All notable changes to `agenomic-cli` are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.3.0-alpha.0] - 2026-07-13
+
 ### Added
 
 - **Review · Monitor · Protect (RMP).** A new `agenomic-rmp` crate and the
