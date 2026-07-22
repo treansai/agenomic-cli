@@ -159,6 +159,8 @@ pub enum Commands {
     Evidence(EvidenceCommand),
     /// Cloud authentication.
     Cloud(CloudCommand),
+    /// Cloud administration (billing reconciliation, webhook events).
+    Admin(AdminCommand),
     /// Bucket selection for cloud pushes.
     Bucket(BucketCommand),
     /// Bundle utilities (extract, manifest, runtime compilation).
@@ -650,6 +652,65 @@ pub struct CloudCommand {
 pub struct BucketCommand {
     #[command(subcommand)]
     pub command: BucketSub,
+}
+
+/// Cloud administration commands. Require a Cloud profile whose API key
+/// belongs to a workspace owner; the server enforces authorization.
+#[derive(Debug, Parser)]
+pub struct AdminCommand {
+    #[command(subcommand)]
+    pub command: AdminSub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AdminSub {
+    /// Stripe billing administration.
+    Billing(AdminBillingCommand),
+}
+
+#[derive(Debug, Parser)]
+pub struct AdminBillingCommand {
+    #[command(subcommand)]
+    pub command: AdminBillingSub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AdminBillingSub {
+    /// Reconcile the workspace's local billing projection against live
+    /// Stripe state (repairs missed or out-of-order webhooks).
+    Reconcile {
+        /// Workspace (org) id. Defaults to the API key's workspace.
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// Inspect or replay journaled Stripe webhook events.
+    Event(AdminBillingEventCommand),
+}
+
+#[derive(Debug, Parser)]
+pub struct AdminBillingEventCommand {
+    #[command(subcommand)]
+    pub command: AdminBillingEventSub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AdminBillingEventSub {
+    /// Show one journaled webhook event (redacted; no raw payload).
+    Inspect {
+        /// Stripe event id (`evt_…`).
+        stripe_event_id: String,
+        /// Workspace (org) id. Defaults to the API key's workspace.
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// Re-run one journaled webhook event through the idempotent processor.
+    Retry {
+        /// Stripe event id (`evt_…`).
+        stripe_event_id: String,
+        /// Workspace (org) id. Defaults to the API key's workspace.
+        #[arg(long)]
+        workspace: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]

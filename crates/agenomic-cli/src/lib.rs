@@ -76,6 +76,7 @@ pub fn run() -> i32 {
         Commands::Ledger(args) => ledger::cmd_ledger(args, format, no_color),
         Commands::Evidence(args) => ledger::cmd_evidence(args, format, no_color),
         Commands::Cloud(args) => commands::cmd_cloud(args, cli.profile.as_deref()),
+        Commands::Admin(args) => commands::cmd_admin(args, cli.profile.as_deref()),
         Commands::Bucket(args) => commands::cmd_bucket(args, cli.profile.as_deref()),
         Commands::Bundle(args) => commands::cmd_bundle(args, format, no_color),
         Commands::Providers(args) => commands::cmd_providers(args, format, no_color),
