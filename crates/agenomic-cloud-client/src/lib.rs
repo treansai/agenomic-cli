@@ -528,7 +528,9 @@ impl CloudClient {
         org_id: &str,
         stripe_event_id: &str,
     ) -> CliResult<BillingEventRecord> {
-        let url = self.url(&format!("/v1/orgs/{org_id}/billing/events/{stripe_event_id}"));
+        let url = self.url(&format!(
+            "/v1/orgs/{org_id}/billing/events/{stripe_event_id}"
+        ));
         let resp = self
             .send_with_retry(|| async {
                 self.http
@@ -553,11 +555,7 @@ impl CloudClient {
 
     /// `POST /v1/orgs/:org_id/billing/events/:event_id/retry` — replay one
     /// journaled Stripe webhook event through the idempotent processor.
-    pub async fn billing_event_retry(
-        &self,
-        org_id: &str,
-        stripe_event_id: &str,
-    ) -> CliResult<()> {
+    pub async fn billing_event_retry(&self, org_id: &str, stripe_event_id: &str) -> CliResult<()> {
         let url = self.url(&format!(
             "/v1/orgs/{org_id}/billing/events/{stripe_event_id}/retry"
         ));
