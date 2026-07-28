@@ -17,6 +17,39 @@ pub struct CloudClient {
     api_key: SecretString,
 }
 
+/// `POST /v1/orgs/:org_id/billing/reconcile` response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BillingReconcileReport {
+    #[serde(default)]
+    pub org_id: Option<String>,
+    #[serde(default)]
+    pub subscriptions_checked: u64,
+    #[serde(default)]
+    pub corrections: Vec<String>,
+    #[serde(default)]
+    pub events_reprocessed: u64,
+}
+
+/// Redacted billing webhook event journal entry (no raw Stripe payload).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BillingEventRecord {
+    pub stripe_event_id: String,
+    pub event_type: String,
+    #[serde(default)]
+    pub stripe_created_at: Option<String>,
+    pub processing_status: String,
+    #[serde(default)]
+    pub processing_attempts: i64,
+    #[serde(default)]
+    pub processed_at: Option<String>,
+    #[serde(default)]
+    pub error_code: Option<String>,
+    #[serde(default)]
+    pub error_message: Option<String>,
+    #[serde(default)]
+    pub received_at: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WhoAmIResponse {
     /// Cloud's response shape: `{ org_id, user_id?, api_key_id?, api_key_name,
@@ -453,6 +486,103 @@ impl CloudClient {
                 body = truncate_for_error(&String::from_utf8_lossy(&bytes)),
             ))
         })
+    }
+
+    /// `POST /v1/orgs/:org_id/billing/reconcile` — compare the workspace's
+    /// local billing projection against live Stripe state and repair
+    /// discrepancies. Owner-only server-side.
+    pub async fn billing_reconcile(&self, org_id: &str) -> CliResult<BillingReconcileReport> {
+        let url = self.url(&format!("/v1/orgs/{org_id}/billing/reconcile"));
+        let idemp = Self::idempotency_key();
+        let resp = self
+            .send_with_retry(|| {
+                let url = url.clone();
+                let idemp = idemp.clone();
+                async move {
+                    self.http
+                        .post(&url)
+                        .header("x-api-key", self.api_key_header())
+                        .header("idempotency-key", idemp)
+                        .header("accept", "application/json")
+                }
+            })
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            let hint = endpoint_hint(status, &body);
+            return Err(CliError::Network(format!(
+                "billing_reconcile: HTTP {status} — {body}{hint}",
+                body = truncate_for_error(&body)
+            )));
+        }
+        resp.json()
+            .await
+            .map_err(|e| CliError::Network(format!("billing_reconcile parse: {e}")))
+    }
+
+    /// `GET /v1/orgs/:org_id/billing/events/:event_id` — inspect one
+    /// journaled Stripe webhook event (redacted: no raw payload).
+    pub async fn billing_event(
+        &self,
+        org_id: &str,
+        stripe_event_id: &str,
+    ) -> CliResult<BillingEventRecord> {
+        let url = self.url(&format!(
+            "/v1/orgs/{org_id}/billing/events/{stripe_event_id}"
+        ));
+        let resp = self
+            .send_with_retry(|| async {
+                self.http
+                    .get(&url)
+                    .header("x-api-key", self.api_key_header())
+                    .header("accept", "application/json")
+            })
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            let hint = endpoint_hint(status, &body);
+            return Err(CliError::Network(format!(
+                "billing_event: HTTP {status} — {body}{hint}",
+                body = truncate_for_error(&body)
+            )));
+        }
+        resp.json()
+            .await
+            .map_err(|e| CliError::Network(format!("billing_event parse: {e}")))
+    }
+
+    /// `POST /v1/orgs/:org_id/billing/events/:event_id/retry` — replay one
+    /// journaled Stripe webhook event through the idempotent processor.
+    pub async fn billing_event_retry(&self, org_id: &str, stripe_event_id: &str) -> CliResult<()> {
+        let url = self.url(&format!(
+            "/v1/orgs/{org_id}/billing/events/{stripe_event_id}/retry"
+        ));
+        let idemp = Self::idempotency_key();
+        let resp = self
+            .send_with_retry(|| {
+                let url = url.clone();
+                let idemp = idemp.clone();
+                async move {
+                    self.http
+                        .post(&url)
+                        .header("x-api-key", self.api_key_header())
+                        .header("idempotency-key", idemp)
+                        .header("accept", "application/json")
+                }
+            })
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            let hint = endpoint_hint(status, &body);
+            return Err(CliError::Network(format!(
+                "billing_event_retry: HTTP {status} — {body}{hint}",
+                body = truncate_for_error(&body)
+            )));
+        }
+        Ok(())
     }
 
     /// `GET /v1/buckets`
