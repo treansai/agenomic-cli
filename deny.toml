@@ -28,6 +28,109 @@ allow = [
 # is denied (so GPL-3.0 / AGPL / SSPL remain disallowed by omission).
 confidence-threshold = 0.8
 
+# The workspace crates are Agenomic Community code under AGPL-3.0-only.
+# They are listed as explicit exceptions rather than added to `allow`, so a
+# third-party AGPL dependency still fails the check.
+[[licenses.exceptions]]
+name = "agenomic-atep"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-attestation"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-bundle"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-cli"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-cloud-client"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-compile"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-config"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-contract"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-core"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-detect"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-diagnostics"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-diff"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-fs"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-gate"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-governance"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-hash"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-ledger-local"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-os"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-policy"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-replay-local"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-report"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-rmp"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-spec"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-track"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
+name = "agenomic-validate"
+allow = ["AGPL-3.0-only"]
+
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
@@ -37,3 +140,7 @@ highlight = "all"
 unknown-registry = "warn"
 unknown-git = "warn"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+[[licenses.exceptions]]
+name = "xtask"
+allow = ["AGPL-3.0-only"]

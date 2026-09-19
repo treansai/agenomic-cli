@@ -1,6 +1,6 @@
 # agenomic-cli — agent instructions
 
-This is the public open-source CLI for the Agenomic platform. Apache-2.0.
+This is the public open-source CLI for the Agenomic platform. AGPL-3.0-only.
 
 ## Product invariants
 
