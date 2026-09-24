@@ -17,7 +17,7 @@ The CLI is designed to be a deterministic gate in your CI.
 
 ```yaml
 agenomic:
-  image: rust:1.85
+  image: rust:1.98.1
   script:
     - curl -fsSL https://agenomic.io/install.sh | sh
     - agenomic validate ./agent --level ci
