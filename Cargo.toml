@@ -32,7 +32,7 @@ members = [
 [workspace.package]
 edition = "2021"
 license = "AGPL-3.0-only"
-rust-version = "1.85"
+rust-version = "1.98"
 version = "0.3.0-alpha.0"
 homepage = "https://agenomic.io"
 repository = "https://github.com/treansai/agenomic-cli"
