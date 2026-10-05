@@ -1099,6 +1099,369 @@ impl CloudClient {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PromptListQuery {
+    pub query: Option<String>,
+    pub tags: Vec<String>,
+    pub limit: Option<u32>,
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentSelector {
+    Channel(String),
+    Release(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MovePreview {
+    Promote { release_id: String },
+    Rollback { to_release_id: Option<String> },
+}
+
+#[derive(Debug, Clone)]
+pub struct CloudResponse {
+    pub status: reqwest::StatusCode,
+    pub headers: reqwest::header::HeaderMap,
+    pub bytes: Vec<u8>,
+}
+
+pub fn encode_component(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+pub fn path_with_query(path: &str, pairs: &[(&str, String)]) -> String {
+    if pairs.is_empty() {
+        return path.to_string();
+    }
+    let query: Vec<String> = pairs
+        .iter()
+        .map(|(key, value)| format!("{}={}", encode_component(key), encode_component(value)))
+        .collect();
+    format!("{path}?{}", query.join("&"))
+}
+
+fn refused(status: reqwest::StatusCode, body: &[u8]) -> CliError {
+    let parsed: Option<serde_json::Value> = serde_json::from_slice(body).ok();
+    let envelope = parsed.as_ref().and_then(|value| value.get("error"));
+    match envelope
+        .and_then(|error| error.get("code"))
+        .and_then(|code| code.as_str())
+    {
+        Some(code) => {
+            let mut message = envelope
+                .and_then(|error| error.get("message"))
+                .and_then(|message| message.as_str())
+                .unwrap_or_default()
+                .to_string();
+            if let Some(reason) = envelope
+                .and_then(|error| error.get("details"))
+                .and_then(|details| details.get("reason"))
+                .and_then(|reason| reason.as_str())
+            {
+                message.push_str(&format!(" [reason: {reason}]"));
+            }
+            CliError::CloudRefused {
+                code: code.to_string(),
+                status: status.as_u16(),
+                message,
+            }
+        }
+        None => {
+            let text = String::from_utf8_lossy(body);
+            CliError::CloudRefused {
+                code: "http_error".to_string(),
+                status: status.as_u16(),
+                message: format!("{}{}", excerpt(&text), endpoint_hint(status, &text)),
+            }
+        }
+    }
+}
+
+fn excerpt(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return "<empty body>".to_string();
+    }
+    let mut out: String = trimmed.chars().take(240).collect();
+    if out.len() < trimmed.len() {
+        out.push_str("...");
+    }
+    out
+}
+
+impl CloudClient {
+    pub async fn send_bytes(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&serde_json::Value>,
+        if_match: Option<u64>,
+        idempotency_key: Option<String>,
+    ) -> CliResult<CloudResponse> {
+        let url = self.url(path);
+        let resp = self
+            .send_with_retry(|| {
+                let mut request = self
+                    .http
+                    .request(method.clone(), &url)
+                    .header("x-api-key", self.api_key_header())
+                    .header("accept", "application/json");
+                if let Some(revision) = if_match {
+                    request = request.header("if-match", format!("\"{revision}\""));
+                }
+                if let Some(key) = &idempotency_key {
+                    request = request.header("idempotency-key", key.clone());
+                }
+                if let Some(body) = body {
+                    request = request.json(body);
+                }
+                async move { request }
+            })
+            .await?;
+        let status = resp.status();
+        let headers = resp.headers().clone();
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| CliError::Network(format!("{method} {path} read: {e}")))?
+            .to_vec();
+        if !status.is_success() {
+            return Err(refused(status, &bytes));
+        }
+        Ok(CloudResponse {
+            status,
+            headers,
+            bytes,
+        })
+    }
+
+    pub async fn send_json(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&serde_json::Value>,
+        if_match: Option<u64>,
+        idempotency_key: Option<String>,
+    ) -> CliResult<(
+        reqwest::StatusCode,
+        reqwest::header::HeaderMap,
+        serde_json::Value,
+    )> {
+        let response = self
+            .send_bytes(method.clone(), path, body, if_match, idempotency_key)
+            .await?;
+        let value = if response.bytes.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_slice(&response.bytes).map_err(|e| {
+                let text = String::from_utf8_lossy(&response.bytes);
+                CliError::Network(format!(
+                    "{method} {path} parse: {e} (body: {}){}",
+                    excerpt(&text),
+                    endpoint_hint(response.status, &text)
+                ))
+            })?
+        };
+        Ok((response.status, response.headers, value))
+    }
+
+    async fn get_json(&self, path: &str) -> CliResult<serde_json::Value> {
+        Ok(self
+            .send_json(reqwest::Method::GET, path, None, None, None)
+            .await?
+            .2)
+    }
+
+    async fn post_json(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> CliResult<(reqwest::StatusCode, serde_json::Value)> {
+        let (status, _, value) = self
+            .send_json(reqwest::Method::POST, path, Some(body), None, None)
+            .await?;
+        Ok((status, value))
+    }
+
+    pub async fn list_prompts(&self, query: &PromptListQuery) -> CliResult<serde_json::Value> {
+        let mut pairs = Vec::new();
+        if let Some(text) = &query.query {
+            pairs.push(("q", text.clone()));
+        }
+        if !query.tags.is_empty() {
+            pairs.push(("tags", query.tags.join(",")));
+        }
+        if let Some(limit) = query.limit {
+            pairs.push(("limit", limit.to_string()));
+        }
+        if let Some(cursor) = &query.cursor {
+            pairs.push(("cursor", cursor.clone()));
+        }
+        self.get_json(&path_with_query("/v1/prompts", &pairs)).await
+    }
+
+    pub async fn get_prompt(&self, prompt_id: &str) -> CliResult<serde_json::Value> {
+        self.get_json(&format!("/v1/prompts/{}", encode_component(prompt_id)))
+            .await
+    }
+
+    pub async fn get_prompt_version(
+        &self,
+        prompt_id: &str,
+        version: u32,
+        include_fragments: bool,
+    ) -> CliResult<serde_json::Value> {
+        let path = format!(
+            "/v1/prompts/{}/versions/{version}",
+            encode_component(prompt_id)
+        );
+        let pairs: Vec<(&str, String)> = if include_fragments {
+            vec![("include", "fragments".to_string())]
+        } else {
+            Vec::new()
+        };
+        self.get_json(&path_with_query(&path, &pairs)).await
+    }
+
+    pub async fn list_prompt_versions(
+        &self,
+        prompt_id: &str,
+        include_content: bool,
+        cursor: Option<&str>,
+    ) -> CliResult<serde_json::Value> {
+        let path = format!("/v1/prompts/{}/versions", encode_component(prompt_id));
+        let mut pairs = Vec::new();
+        if include_content {
+            pairs.push(("include", "content".to_string()));
+        }
+        if let Some(cursor) = cursor {
+            pairs.push(("cursor", cursor.to_string()));
+        }
+        self.get_json(&path_with_query(&path, &pairs)).await
+    }
+
+    pub async fn resolve_prompt_ref(&self, reference: &str) -> CliResult<serde_json::Value> {
+        Ok(self
+            .post_json(
+                "/v1/prompts/resolve",
+                &serde_json::json!({ "ref": reference }),
+            )
+            .await?
+            .1)
+    }
+
+    pub async fn create_prompt(&self, body: &serde_json::Value) -> CliResult<serde_json::Value> {
+        Ok(self.post_json("/v1/prompts", body).await?.1)
+    }
+
+    pub async fn publish_prompt_version(
+        &self,
+        prompt_id: &str,
+        body: &serde_json::Value,
+    ) -> CliResult<(reqwest::StatusCode, serde_json::Value)> {
+        self.post_json(
+            &format!("/v1/prompts/{}/versions", encode_component(prompt_id)),
+            body,
+        )
+        .await
+    }
+
+    pub async fn render_prompt(&self, body: &serde_json::Value) -> CliResult<serde_json::Value> {
+        Ok(self.post_json("/v1/prompts/render", body).await?.1)
+    }
+
+    pub async fn export_prompt_bundle(
+        &self,
+        agent_id: &str,
+        selector: &AgentSelector,
+        expires_in_days: Option<u32>,
+    ) -> CliResult<(serde_json::Value, Vec<u8>)> {
+        let mut pairs = vec![match selector {
+            AgentSelector::Channel(name) => ("channel", name.clone()),
+            AgentSelector::Release(release_id) => ("release_id", release_id.clone()),
+        }];
+        if let Some(days) = expires_in_days {
+            pairs.push(("expires_in_days", days.to_string()));
+        }
+        let path = path_with_query(
+            &format!("/v1/agents/{}/prompt-bundle", encode_component(agent_id)),
+            &pairs,
+        );
+        let response = self
+            .send_bytes(reqwest::Method::GET, &path, None, None, None)
+            .await?;
+        let value = serde_json::from_slice(&response.bytes)
+            .map_err(|e| CliError::Network(format!("export_prompt_bundle parse: {e}")))?;
+        Ok((value, response.bytes))
+    }
+
+    pub async fn list_channels(&self, agent_id: &str) -> CliResult<serde_json::Value> {
+        self.get_json(&format!(
+            "/v1/agents/{}/channels",
+            encode_component(agent_id)
+        ))
+        .await
+    }
+
+    pub async fn channel_history(
+        &self,
+        agent_id: &str,
+        channel: &str,
+        after: Option<i64>,
+        limit: Option<u32>,
+    ) -> CliResult<serde_json::Value> {
+        let mut pairs = Vec::new();
+        if let Some(after) = after {
+            pairs.push(("after", after.to_string()));
+        }
+        if let Some(limit) = limit {
+            pairs.push(("limit", limit.to_string()));
+        }
+        let path = format!(
+            "/v1/agents/{}/channels/{}/history",
+            encode_component(agent_id),
+            encode_component(channel)
+        );
+        self.get_json(&path_with_query(&path, &pairs)).await
+    }
+
+    pub async fn channel_move_preview(
+        &self,
+        agent_id: &str,
+        channel: &str,
+        preview: &MovePreview,
+    ) -> CliResult<serde_json::Value> {
+        let pairs = match preview {
+            MovePreview::Promote { release_id } => vec![
+                ("action", "promote".to_string()),
+                ("release_id", release_id.clone()),
+            ],
+            MovePreview::Rollback { to_release_id } => {
+                let mut pairs = vec![("action", "rollback".to_string())];
+                if let Some(release_id) = to_release_id {
+                    pairs.push(("to_release_id", release_id.clone()));
+                }
+                pairs
+            }
+        };
+        let path = format!(
+            "/v1/agents/{}/channels/{}/move-preview",
+            encode_component(agent_id),
+            encode_component(channel)
+        );
+        self.get_json(&path_with_query(&path, &pairs)).await
+    }
+}
+
 /// Trim long bodies for inclusion in error strings. We keep enough to
 /// identify the response shape (HTML doctype, JSON error envelope, plain
 /// text), but not so much that a streamed HTML login page floods the
@@ -1298,5 +1661,112 @@ mod tests {
             .unwrap();
         assert_eq!(r.version, "v1");
         assert_eq!(r.status, "pending_approval");
+    }
+
+    #[tokio::test]
+    async fn send_json_sends_the_key_and_a_quoted_if_match() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/v1/things/1"))
+            .and(header("x-api-key", "s"))
+            .and(header("if-match", "\"7\""))
+            .and(header("idempotency-key", "k1"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("etag", "\"8\"")
+                    .set_body_json(serde_json::json!({ "revision": 8 })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let c = CloudClient::new(server.uri(), SecretString::new("s".into()));
+        let (status, headers, body) = c
+            .send_json(
+                reqwest::Method::PUT,
+                "/v1/things/1",
+                Some(&serde_json::json!({})),
+                Some(7),
+                Some("k1".into()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status, reqwest::StatusCode::OK);
+        assert_eq!(headers.get("etag").unwrap(), "\"8\"");
+        assert_eq!(body["revision"], 8);
+    }
+
+    #[tokio::test]
+    async fn coded_error_envelope_becomes_cloud_refused() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/prompts/prm_x/versions"))
+            .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
+                "error": {
+                    "code": "prompt_version_conflict",
+                    "message": "parent_version is stale",
+                    "details": { "reason": "stale_parent", "latest_version": 4 }
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let c = CloudClient::new(server.uri(), SecretString::new("s".into()));
+        let error = c
+            .publish_prompt_version("prm_x", &serde_json::json!({}))
+            .await
+            .unwrap_err();
+        match &error {
+            CliError::CloudRefused {
+                code,
+                status,
+                message,
+            } => {
+                assert_eq!(code, "prompt_version_conflict");
+                assert_eq!(*status, 409);
+                assert!(message.contains("stale_parent"), "{message}");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        assert_eq!(error.exit_code().as_i32(), 21);
+    }
+
+    #[tokio::test]
+    async fn move_preview_is_a_get_with_the_action_query() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/agents/a1/channels/production/move-preview"))
+            .and(wiremock::matchers::query_param("action", "rollback"))
+            .and(wiremock::matchers::query_param("to_release_id", "r0"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "action": "rollback" })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let c = CloudClient::new(server.uri(), SecretString::new("s".into()));
+        let preview = c
+            .channel_move_preview(
+                "a1",
+                "production",
+                &MovePreview::Rollback {
+                    to_release_id: Some("r0".into()),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(preview["action"], "rollback");
+    }
+
+    #[test]
+    fn query_values_are_percent_encoded() {
+        assert_eq!(
+            path_with_query(
+                "/v1/prompts",
+                &[("q", "a b&c".into()), ("tags", "x,y".into())]
+            ),
+            "/v1/prompts?q=a%20b%26c&tags=x%2Cy"
+        );
+        assert_eq!(path_with_query("/v1/prompts", &[]), "/v1/prompts");
     }
 }

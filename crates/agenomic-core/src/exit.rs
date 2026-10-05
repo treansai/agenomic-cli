@@ -36,6 +36,7 @@ pub enum ExitCode {
     /// `docs/plans/atep-ledger-plan.md`. Distinct from ATEP integrity (10):
     /// the ledger is the cross-producer event chain, not the ATEP stream.
     LedgerIntegrityFailed = 19,
+    CloudConflict = 21,
 }
 
 impl ExitCode {
@@ -79,5 +80,6 @@ mod tests {
         assert_eq!(ExitCode::OsPortFailed.as_i32(), 17);
         assert_eq!(ExitCode::ToolBoundaryReviewRequired.as_i32(), 18);
         assert_eq!(ExitCode::LedgerIntegrityFailed.as_i32(), 19);
+        assert_eq!(ExitCode::CloudConflict.as_i32(), 21);
     }
 }

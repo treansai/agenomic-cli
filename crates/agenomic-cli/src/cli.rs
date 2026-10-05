@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum OutputFormat {
@@ -163,6 +163,10 @@ pub enum Commands {
     Admin(AdminCommand),
     /// Bucket selection for cloud pushes.
     Bucket(BucketCommand),
+    #[command(about = "Managed prompts: list, get, push, pull, render and export")]
+    Prompts(PromptsCommand),
+    #[command(about = "Release channels: list, history and the promotion hand-off")]
+    Channels(ChannelsCommand),
     /// Bundle utilities (extract, manifest, runtime compilation).
     Bundle(BundleCommand),
     /// Model provider utilities (list providers, test connectivity).
@@ -1581,5 +1585,198 @@ pub enum EvidenceSub {
     Verify {
         /// Bundle directory.
         bundle: PathBuf,
+    },
+}
+
+#[derive(Debug, Parser)]
+pub struct PromptsCommand {
+    #[command(subcommand)]
+    pub command: PromptsSub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PromptsSub {
+    #[command(about = "List the managed prompts of the workspace")]
+    List(PromptsListArgs),
+    #[command(about = "Download one prompt version as an agenomic.prompt_file/v1 document")]
+    Get(PromptsGetArgs),
+    #[command(about = "Publish a local prompt file as a new immutable version")]
+    Push(PromptsPushArgs),
+    #[command(about = "Download prompt versions into <DIR>/<prompt_id>/<n>.prompt.json")]
+    Pull(PromptsPullArgs),
+    #[command(
+        about = "Render a prompt locally (offline for a file or a bundle)",
+        group(ArgGroup::new("source").required(true).args(["target", "bundle"]))
+    )]
+    Render(PromptsRenderArgs),
+    #[command(
+        about = "Export a signed prompt bundle and print its digests for pinning",
+        group(ArgGroup::new("selector").required(true).args(["channel", "release"]))
+    )]
+    Export(PromptsExportArgs),
+}
+
+#[derive(Debug, Parser)]
+pub struct PromptsListArgs {
+    #[arg(long, help = "Substring over prompt id, name, description and tags")]
+    pub query: Option<String>,
+    #[arg(long = "tag", help = "Tag filter; repeat for several (all must match)")]
+    pub tags: Vec<String>,
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..=200), help = "Page size (1 to 200)")]
+    pub limit: Option<u32>,
+    #[arg(long, help = "Cursor returned by a previous page")]
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Parser)]
+pub struct PromptsGetArgs {
+    #[arg(help = "Prompt reference: prm_x, prm_x:7, prm_x@alias or agenomic:// URI")]
+    pub reference: String,
+    #[arg(
+        short = 'o',
+        long = "output",
+        help = "Write the prompt file here instead of stdout"
+    )]
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Debug, Parser)]
+pub struct PromptsPushArgs {
+    #[arg(help = "agenomic.prompt_file/v1 JSON file")]
+    pub file: PathBuf,
+    #[arg(long, help = "Change message (overrides the file's change_message)")]
+    pub message: Option<String>,
+    #[arg(long, help = "Validate and digest locally; send nothing")]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Parser)]
+pub struct PromptsPullArgs {
+    #[arg(help = "Prompt id or reference (prm_x, prm_x:7, prm_x@alias)")]
+    pub reference: String,
+    #[arg(long, help = "Download every version of the prompt")]
+    pub all: bool,
+    #[arg(long, default_value = ".", help = "Destination directory")]
+    pub dir: PathBuf,
+}
+
+#[derive(Debug, Parser)]
+pub struct PromptsRenderArgs {
+    #[arg(help = "Prompt file, or a version, alias or URI reference")]
+    pub target: Option<String>,
+    #[arg(
+        long = "var",
+        value_name = "NAME=VALUE",
+        help = "String variable; repeat for several"
+    )]
+    pub vars: Vec<String>,
+    #[arg(long = "vars", value_name = "FILE", help = "JSON object of variables")]
+    pub vars_file: Option<PathBuf>,
+    #[arg(long, value_name = "FILE", requires_all = ["slot", "workspace", "agent"], help = "Offline prompt bundle to render from")]
+    pub bundle: Option<PathBuf>,
+    #[arg(long, requires = "bundle", help = "Slot path of the bundle manifest")]
+    pub slot: Option<String>,
+    #[arg(
+        long,
+        requires = "bundle",
+        help = "Expected workspace id of the bundle"
+    )]
+    pub workspace: Option<String>,
+    #[arg(long, requires = "bundle", help = "Expected agent id of the bundle")]
+    pub agent: Option<String>,
+    #[arg(
+        long,
+        requires = "bundle",
+        help = "Pinned prompt_bundle_digest (from `prompts export`)"
+    )]
+    pub expect_bundle_digest: Option<String>,
+    #[arg(
+        long,
+        value_name = "PEM",
+        requires = "bundle",
+        help = "Trusted ed25519 public key that signed the bundle"
+    )]
+    pub trust_key: Option<PathBuf>,
+    #[arg(long, help = "Also render on the server and compare the rendered hash")]
+    pub server: bool,
+}
+
+#[derive(Debug, Parser)]
+pub struct PromptsExportArgs {
+    #[arg(long, help = "Agent id (uuid)")]
+    pub agent: String,
+    #[arg(long, help = "Channel to export (for example production)")]
+    pub channel: Option<String>,
+    #[arg(long, help = "Release id (uuid) to export")]
+    pub release: Option<String>,
+    #[arg(short = 'o', long = "output", help = "Bundle file to write")]
+    pub output: PathBuf,
+    #[arg(
+        long,
+        value_name = "PEM",
+        help = "Verify the signature with this trusted ed25519 public key"
+    )]
+    pub trust_key: Option<PathBuf>,
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..=365), help = "Bundle availability in days (1 to 365, server default 30)")]
+    pub expires_in_days: Option<u32>,
+}
+
+#[derive(Debug, Parser)]
+pub struct ChannelsCommand {
+    #[command(subcommand)]
+    pub command: ChannelsSub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ChannelsSub {
+    #[command(about = "List the release channels of an agent")]
+    List {
+        #[arg(long, help = "Agent id (uuid)")]
+        agent: String,
+    },
+    #[command(about = "Show the move history of one channel")]
+    History {
+        #[arg(long, help = "Agent id (uuid)")]
+        agent: String,
+        #[arg(help = "Channel name")]
+        channel: String,
+        #[arg(long, help = "Only events after this generation")]
+        after: Option<i64>,
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..=200), help = "Page size (1 to 200)")]
+        limit: Option<u32>,
+    },
+    #[command(
+        about = "Preview a promotion and print where to complete it; never moves the channel"
+    )]
+    Promote {
+        #[arg(long, help = "Agent id (uuid)")]
+        agent: String,
+        #[arg(help = "Channel name")]
+        channel: String,
+        #[arg(long, help = "Candidate release id (uuid)")]
+        release: String,
+        #[arg(
+            long,
+            env = "AGENOMIC_WEB_URL",
+            help = "Web app address used to print an absolute move URL"
+        )]
+        web_url: Option<String>,
+    },
+    #[command(
+        about = "Preview a rollback and print where to complete it; never moves the channel"
+    )]
+    Rollback {
+        #[arg(long, help = "Agent id (uuid)")]
+        agent: String,
+        #[arg(help = "Channel name")]
+        channel: String,
+        #[arg(long, help = "Explicit rollback target release id (uuid)")]
+        to_release: Option<String>,
+        #[arg(
+            long,
+            env = "AGENOMIC_WEB_URL",
+            help = "Web app address used to print an absolute move URL"
+        )]
+        web_url: Option<String>,
     },
 }

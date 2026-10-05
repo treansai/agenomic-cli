@@ -61,7 +61,7 @@ pub enum CliError {
     #[diagnostic(code(agenomic::atep::signature_invalid))]
     AtepSignatureInvalid { event_id: String },
 
-    #[error("hash mismatch — expected {expected}, got {actual}")]
+    #[error("hash mismatch: expected {expected}, got {actual}")]
     #[diagnostic(code(agenomic::hash::mismatch))]
     HashMismatch { expected: String, actual: String },
 
@@ -179,6 +179,14 @@ pub enum CliError {
         help("strict_cloud / cloud_sync require cloud ledger ingestion APIs that do not exist yet — see docs/BACKEND_GAPS.md; strict modes fail closed and are never silently downgraded")
     )]
     LedgerCloudUnavailable { reason: String },
+
+    #[error("cloud refused the request: {code} (HTTP {status}): {message}")]
+    #[diagnostic(code(agenomic::cloud::refused))]
+    CloudRefused {
+        code: String,
+        status: u16,
+        message: String,
+    },
 }
 
 impl CliError {
@@ -220,6 +228,12 @@ impl CliError {
             | Self::LedgerConflict { .. } => ExitCode::LedgerIntegrityFailed,
             Self::LedgerKeyStore(_) | Self::LedgerBusy { .. } => ExitCode::InternalError,
             Self::LedgerCloudUnavailable { .. } => ExitCode::InvalidUsage,
+            Self::CloudRefused { status, .. } => match status {
+                409 => ExitCode::CloudConflict,
+                401 | 403 => ExitCode::CloudAuthFailed,
+                400 | 404 | 422 => ExitCode::ValidationFailed,
+                _ => ExitCode::NetworkError,
+            },
         }
     }
 }
@@ -292,5 +306,22 @@ mod tests {
         assert_eq!(e.exit_code().as_i32(), 19);
         let e = CliError::LedgerConflict { reason: "x".into() };
         assert_eq!(e.exit_code().as_i32(), 19);
+    }
+
+    #[test]
+    fn cloud_refused_maps_by_status() {
+        let refused = |status| CliError::CloudRefused {
+            code: "x".into(),
+            status,
+            message: "m".into(),
+        };
+        assert_eq!(refused(409).exit_code().as_i32(), 21);
+        assert_eq!(refused(401).exit_code().as_i32(), 5);
+        assert_eq!(refused(403).exit_code().as_i32(), 5);
+        assert_eq!(refused(400).exit_code().as_i32(), 1);
+        assert_eq!(refused(404).exit_code().as_i32(), 1);
+        assert_eq!(refused(422).exit_code().as_i32(), 1);
+        assert_eq!(refused(500).exit_code().as_i32(), 6);
+        assert_eq!(refused(503).exit_code().as_i32(), 6);
     }
 }

@@ -5,6 +5,7 @@ mod commands;
 mod enrich;
 pub mod huggingface;
 mod ledger;
+mod prompts;
 mod provider;
 mod render;
 mod rmp;
@@ -78,6 +79,8 @@ pub fn run() -> i32 {
         Commands::Cloud(args) => commands::cmd_cloud(args, cli.profile.as_deref()),
         Commands::Admin(args) => commands::cmd_admin(args, cli.profile.as_deref()),
         Commands::Bucket(args) => commands::cmd_bucket(args, cli.profile.as_deref()),
+        Commands::Prompts(args) => prompts::cmd_prompts(args, format, cli.profile.as_deref()),
+        Commands::Channels(args) => prompts::cmd_channels(args, format, cli.profile.as_deref()),
         Commands::Bundle(args) => commands::cmd_bundle(args, format, no_color),
         Commands::Providers(args) => commands::cmd_providers(args, format, no_color),
         Commands::Doctor => commands::cmd_doctor(),

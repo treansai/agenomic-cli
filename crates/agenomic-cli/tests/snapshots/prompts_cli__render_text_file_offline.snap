@@ -1,0 +1,5 @@
+---
+source: crates/agenomic-cli/tests/prompts_cli.rs
+expression: stdout(&output)
+---
+Hello Ada, you have 3 tasks.

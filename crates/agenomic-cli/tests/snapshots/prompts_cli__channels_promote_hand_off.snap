@@ -1,0 +1,16 @@
+---
+source: crates/agenomic-cli/tests/prompts_cli.rs
+expression: stdout(&output)
+---
+promote preview for channel production of agent 2b1e5c3a-8d4f-4e6a-9b0c-1d2e3f4a5b6c
+channel:   generation 12, protected true
+current:   av_0042 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d (production) genome sha256:3333333333333333333333333333333333333333333333333333333333333333 manifest sha256:4444444444444444444444444444444444444444444444444444444444444444
+candidate: av_0043 8f0c2d4e-6a1b-4c3d-9e5f-7a8b9c0d1e2f (approved) genome sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb manifest sha256:5555555555555555555555555555555555555555555555555555555555555555
+gates:
+  signing: passed (1 of 1 signatures)
+  prompt_experiment: not_required (floor flag off)
+approvals: {"author_user_id":null,"progress":{"approved":1},"requirement":{"required":1}}
+actions for this credential: promote=false rollback=false reasons=["session_required"]
+
+This command never moves a channel: an authorized person completes the promotion in the Agenomic web app, with a session.
+open: https://app.example.test/agents/2b1e5c3a-8d4f-4e6a-9b0c-1d2e3f4a5b6c/channels/production?candidate=8f0c2d4e-6a1b-4c3d-9e5f-7a8b9c0d1e2f

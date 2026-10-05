@@ -1,0 +1,8 @@
+---
+source: crates/agenomic-cli/tests/prompts_cli.rs
+expression: stdout(&output)
+---
+GENERATION  ACTION    FROM                                  TO                                    ACTOR                                      REASON
+11          promote   0f9e8d7c-6b5a-4f3e-8d2c-1b0a9f8e7d6c  1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d  user:5d0b0e7c-3c1a-4b0e-9d77-1f2e3a4b5c6d  planner asks for the order id
+12          rollback  1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d  0f9e8d7c-6b5a-4f3e-8d2c-1b0a9f8e7d6c  user:5d0b0e7c-3c1a-4b0e-9d77-1f2e3a4b5c6d  -
+next page: --after 12

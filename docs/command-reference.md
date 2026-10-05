@@ -29,6 +29,11 @@ Every `agenomic` command, their flags, and exit codes.
 | 16 | OsPolicyViolation | A Rego policy gate denied `run`/`policy eval`, or the Tool Boundary Gate blocked a tool call |
 | 18 | ToolBoundaryReviewRequired | `agenomic gate check` held a tool call for human review |
 | 19 | LedgerIntegrityFailed | `agenomic ledger verify` found tampering, a chain break, or a conflict |
+| 21 | CloudConflict | The cloud answered 409 (for example `prompt_version_conflict` on `agenomic prompts push`) |
+
+A coded cloud refusal (`{"error": {"code", "message"}}`) maps by HTTP
+status: 409 gives 21, 401 and 403 give 5, 400, 404 and 422 give 1, and
+5xx gives 6.
 
 ## Commands
 
@@ -270,6 +275,69 @@ Enqueue a cloud replay job.
 ### `agenomic cloud push-attestation --release-id UUID --replay-job-id UUID`
 
 Create a cloud attestation from an existing release + replay job.
+
+### Managed prompts
+
+The `prompts` and `channels` commands are documented in
+[prompts.md](prompts.md). Offline commands need no profile; the others
+use the active cloud profile and send `x-api-key`.
+
+#### `agenomic prompts list [--query Q] [--tag T]... [--limit N] [--cursor C]`
+
+`GET /v1/prompts`. Table by default, the raw page with `--format json`.
+
+#### `agenomic prompts get <REF> [-o FILE]`
+
+Downloads one version as an `agenomic.prompt_file/v1` document. `REF`
+is `prm_x` (latest version), `prm_x:7`, `prm_x@alias` (resolved once
+through `POST /v1/prompts/resolve`) or an `agenomic://` URI of the
+current workspace. The content digest of the version and of every
+fragment is recomputed locally; a mismatch exits 1.
+
+#### `agenomic prompts push <FILE> [--message M] [--dry-run]`
+
+Validates the file against `schemas/prompt-file.schema.json`, checks
+its `content_digest` when present, validates the template locally and
+computes the digest. Without `--dry-run` it publishes with
+`POST /v1/prompts/{id}/versions` (creating the prompt first when the
+cloud answers `prompt_not_found`) and requires the server digest to
+equal the local one. A stale `parent_version` exits 21.
+
+#### `agenomic prompts pull <PROMPT_ID|REF> [--all] [--dir DIR]`
+
+Writes `DIR/<prompt_id>/<n>.prompt.json`. `--all` takes a bare prompt
+id and downloads every version.
+
+#### `agenomic prompts render <FILE|REF> [--var NAME=VALUE]... [--vars FILE] [--server]`
+#### `agenomic prompts render --bundle FILE --slot SLOT --workspace UUID --agent UUID (--expect-bundle-digest D | --trust-key PEM)`
+
+Renders with the `agenomic-fstring/v1` renderer, version `"1"`. A file
+or a bundle renders offline; a reference downloads the version first.
+`--server` also calls `POST /v1/prompts/render` and exits 1 when the
+`rendered_hash` differs. Render errors exit 1 before anything else
+happens.
+
+#### `agenomic prompts export --agent UUID (--channel NAME | --release UUID) -o FILE [--trust-key PEM] [--expires-in-days N]`
+
+`GET /v1/agents/{id}/prompt-bundle`. Verifies every digest, the closure
+and the scope (and the signature with `--trust-key`, exit 9 when it
+fails) before writing the file, then prints `prompt_bundle_digest` to
+pin offline loads.
+
+#### `agenomic channels list --agent UUID`
+
+#### `agenomic channels history --agent UUID <CHANNEL> [--after N] [--limit N]`
+
+#### `agenomic channels promote --agent UUID <CHANNEL> --release UUID [--web-url URL]`
+
+#### `agenomic channels rollback --agent UUID <CHANNEL> [--to-release UUID] [--web-url URL]`
+
+Hand-off commands. They call only the read-only move preview
+(`GET /v1/agents/{id}/channels/{name}/move-preview`), print the
+candidate digests, the gates, the approvals and the web address where
+an authorized person completes the move with a session, and exit 0.
+They never move a channel: channel moves are session only and the CLI
+authenticates with an API key.
 
 ### `agenomic bundle extract <ARCHIVE> <DIR>`
 

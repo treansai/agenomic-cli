@@ -97,6 +97,7 @@ dependencies = [
  "agenomic-ledger-local",
  "agenomic-os",
  "agenomic-policy",
+ "agenomic-prompt",
  "agenomic-replay-local",
  "agenomic-report",
  "agenomic-rmp",
@@ -112,6 +113,7 @@ dependencies = [
  "clap_complete",
  "console 0.15.11",
  "directories",
+ "ed25519-dalek",
  "git-version",
  "hex",
  "insta",
@@ -127,6 +129,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ulid",
+ "uuid",
  "wiremock",
 ]
 
@@ -363,6 +366,23 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "agenomic-prompt"
+version = "0.3.0-alpha.0"
+dependencies = [
+ "base64",
+ "blake3",
+ "chrono",
+ "ed25519-dalek",
+ "hex",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "uuid",
 ]
 
 [[package]]
@@ -4481,7 +4501,9 @@ version = "1.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ddd74a9687298c6858e9b88ec8935ec45d22e8fd5e6394fa1bd4e99a87789c76"
 dependencies = [
+ "getrandom 0.4.2",
  "js-sys",
+ "serde_core",
  "wasm-bindgen",
 ]
 

@@ -25,6 +25,7 @@ members = [
     "crates/agenomic-track",
     "crates/agenomic-ledger-local",
     "crates/agenomic-rmp",
+    "crates/agenomic-prompt",
     "crates/agenomic-cli",
     "xtask",
 ]
@@ -63,6 +64,7 @@ agenomic-gate = { path = "crates/agenomic-gate", version = "0.3.0-alpha.0" }
 agenomic-track = { path = "crates/agenomic-track", version = "0.3.0-alpha.0" }
 agenomic-ledger-local = { path = "crates/agenomic-ledger-local", version = "0.3.0-alpha.0" }
 agenomic-rmp = { path = "crates/agenomic-rmp", version = "0.3.0-alpha.0" }
+agenomic-prompt = { path = "crates/agenomic-prompt", version = "0.3.0-alpha.0" }
 
 # CLI / parsing
 clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
@@ -136,6 +138,7 @@ zerocopy = "0.7"
 indicatif = "0.17"
 console = "0.15"
 glob = "0.3"
+regex = "1"
 directories = "5"
 tera = "1"
 pulldown-cmark = "0.12"

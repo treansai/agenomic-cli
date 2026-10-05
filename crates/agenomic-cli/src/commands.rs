@@ -741,7 +741,7 @@ fn os_inspect(args: &InspectArgs, format: OutputFormat, no_color: bool) -> CliRe
     Ok(ExitCode::Success)
 }
 
-fn print_value(value: &serde_json::Value, format: OutputFormat) -> CliResult<()> {
+pub(crate) fn print_value(value: &serde_json::Value, format: OutputFormat) -> CliResult<()> {
     use std::io::Write;
     let mut out = std::io::stdout().lock();
     match format {
@@ -2342,7 +2342,7 @@ pub fn cmd_cloud(args: &CloudCommand, profile: Option<&str>) -> CliResult<ExitCo
 /// canonical error if no key is configured. The endpoint falls back to
 /// the hosted cloud (`agenomic_config::DEFAULT_ENDPOINT`) so pushes work
 /// without ever specifying a URL.
-fn cloud_client_from_profile(
+pub(crate) fn cloud_client_from_profile(
     profile: Option<&str>,
 ) -> CliResult<agenomic_cloud_client::CloudClient> {
     let cfg = agenomic_config::load(profile)?;
