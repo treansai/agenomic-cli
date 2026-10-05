@@ -54,3 +54,18 @@ jobs:
         with:
           tool: cargo-deny
       - run: cargo deny check
+
+  connector:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: connector
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.22"
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      # The end to end suite skips without AGENOMIC_E2E_ENDPOINT.
+      - run: npm test

@@ -110,3 +110,11 @@ New code for managed prompts carries no comments; the reasons live here.
   of each pattern instead of recounting the prefix for every hit, which
   was quadratic in the number of findings
   (`many_findings_keep_exact_offsets_in_linear_time`).
+
+## Coding connector (`connector/`, TypeScript)
+
+- The machine connector is a Node package, not a Rust crate: the Claude Agent SDK is the supported way to drive Claude Code programmatically and ships for TypeScript; `codex app-server` is spoken over stdio from the same process. It is optional and network bound by nature, so it lives outside the offline `agenomic` binary and does not change its invariants.
+- Sources ship as `.ts` and run with Node's type stripping (Node >= 22.18): no parameter properties, enums or namespaces (`erasableSyntaxOnly`). `npm run typecheck` is `tsc --noEmit`.
+- Never forces an allow: a PreToolUse answer is either an explicit deny or no output, so native permission rules still apply. Fail-closed hooks answer an explicit deny within a deadline below the native timeout.
+- Capabilities are announced in `src/capabilities.ts` and validated per machine and runtime version by `doctor --probe`; `unknown` is never usable.
+- Unit tests: `npm test`. End to end against a real gateway: `test/e2e.test.ts` (see its header).

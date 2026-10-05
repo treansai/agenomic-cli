@@ -1,0 +1,214 @@
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { RunnerApi } from './api.ts';
+import { saveProbe, type CapName, type ProbeResult } from './capabilities.ts';
+import { sdkVersion } from './claude.ts';
+import { codexVersion } from './codex.ts';
+import { defaultConfig, type ConnectorConfig } from './config.ts';
+import { Daemon } from './daemon.ts';
+import { codexProviderToml, fakeAnthropic, fakeResponses, script, type FakeServer } from './fakes.ts';
+import { sleep, ulid } from './util.ts';
+
+/**
+ * An in-memory stand-in for the Agenomic runner API used only by the
+ * probe: it decides deterministically (inputs containing `deny-me` are
+ * refused, `approve-me` needs one approval, granted after a delay) and
+ * records everything the connector sent.
+ */
+export class ProbeApi extends RunnerApi {
+  events: any[] = [];
+  authorizations: any[] = [];
+  results = new Map<string, any>();
+  states: any[] = [];
+  private approvals = new Map<string, string>();
+  private actions = new Map<string, { approved: boolean }>();
+
+  constructor() {
+    super('http://127.0.0.1:9', { access_token: 'probe', refresh_token: 'probe', access_expires_at: new Date(Date.now() + 3600e3).toISOString(), refresh_expires_at: new Date(Date.now() + 3600e3).toISOString() }, false);
+  }
+
+  override async request<T = any>(method: string, p: string, opts: { body?: any } = {}): Promise<T> {
+    const b = opts.body ?? {};
+    if (p.endsWith('/events')) {
+      this.events.push(...b.events);
+      return { accepted: b.events.length, duplicates: 0 } as T;
+    }
+    if (p.endsWith('/authorize')) {
+      this.authorizations.push(b);
+      const text = JSON.stringify(b.input);
+      const id = `${b.native_request_id}`;
+      if (text.includes('deny-me')) return { action_id: ulid(), decision: 'deny', reason: 'probe deny', classification: {} } as T;
+      if (text.includes('approve-me')) {
+        // Same native request: the same pending action until approved,
+        // exactly as the gateway answers.
+        let action = this.approvals.get(id);
+        if (!action) {
+          action = ulid();
+          this.approvals.set(id, action);
+          this.actions.set(action, { approved: false });
+          setTimeout(() => (this.actions.get(action!)!.approved = true), 500);
+        }
+        if (!this.actions.get(action)!.approved) {
+          return { action_id: action, decision: 'pending', approval_id: action, approval_expires_at: new Date(Date.now() + 60000).toISOString(), classification: {} } as T;
+        }
+        return { action_id: action, decision: 'allow', reason: 'approved', classification: {} } as T;
+      }
+      return { action_id: ulid(), decision: 'allow', reason: 'probe allow', classification: {} } as T;
+    }
+    if (method === 'GET' && p.includes('/actions/')) {
+      const action = p.split('/').pop()!;
+      return { approval_status: this.actions.get(action)?.approved ? 'approved' : 'pending' } as T;
+    }
+    if (p.includes('/commands/') && p.endsWith('/result')) {
+      this.results.set(p.split('/')[5]!, b);
+      return {} as T;
+    }
+    if (p.endsWith('/state')) {
+      this.states.push(b);
+      return { session: {} } as T;
+    }
+    if (p.endsWith('/runner/sessions')) return { session: { id: b.coding_session_id ?? ulid() } } as T;
+    if (method === 'GET' && p.startsWith('/v1/coding/runner/commands')) {
+      await sleep(1000);
+      return { commands: [] } as T;
+    }
+    return {} as T;
+  }
+
+  has(type: string, pred: (e: any) => boolean = () => true): boolean {
+    return this.events.some((e) => e.type === type && pred(e));
+  }
+}
+
+async function until(pred: () => boolean, ms: number): Promise<boolean> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (pred()) return true;
+    await sleep(100);
+  }
+  return pred();
+}
+
+export function tempRepo(): string {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'agn-probe-repo-')));
+  const git = (...a: string[]) => execFileSync('git', ['-C', dir, ...a], { stdio: 'ignore' });
+  git('init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(dir, 'README.md'), 'probe\n');
+  fs.writeFileSync(path.join(dir, 'slow.mjs'), 'setTimeout(() => {}, 60000);\n');
+  fs.writeFileSync(path.join(dir, 'human-wip.txt'), 'uncommitted human work\n');
+  git('add', 'README.md', 'slow.mjs');
+  git('-c', 'user.email=probe@agenomic.invalid', '-c', 'user.name=probe', 'commit', '-q', '-m', 'init');
+  return dir;
+}
+
+async function command(d: Daemon, api: ProbeApi, kind: string, session: string, payload: unknown): Promise<string> {
+  const id = ulid();
+  await d.handleCommand({ id, kind, coding_session_id: session, payload });
+  return api.results.get(id)?.status ?? 'missing';
+}
+
+export async function probeRuntime(runtime: 'claude_code' | 'codex', fake: FakeServer, home: string): Promise<ProbeResult> {
+  process.env.AGENOMIC_CONNECTOR_HOME = home;
+  const repo = tempRepo();
+  const cfg: ConnectorConfig = defaultConfig('http://127.0.0.1:9', 'probe');
+  cfg.workspaces = [{ id: 'probe', name: 'probe', path: repo }];
+  if (runtime === 'claude_code') cfg.runtimes.claude_code.extra_env = { ANTHROPIC_BASE_URL: fake.url, ANTHROPIC_API_KEY: 'probe-not-a-key' };
+  else {
+    cfg.runtimes.codex.extra_config_toml = codexProviderToml(fake.url);
+    cfg.runtimes.codex.extra_env = { AGENOMIC_SCRIPTED_KEY: 'probe-not-a-key' };
+  }
+  const api = new ProbeApi();
+  const d = new Daemon(cfg, api);
+  await d.start();
+  const results: ProbeResult['results'] = {};
+  const set = (k: CapName, ok: boolean, detail: string) => (results[k] = { ok, detail });
+  const session = ulid();
+  const outside = path.join(os.tmpdir(), `agn-probe-outside-${Date.now()}.txt`);
+  const shell = runtime === 'claude_code'
+    ? (cmd: string) => ({ tool: 'Bash', input: { command: cmd, description: 'probe' } })
+    : (cmd: string) => ({ tool: 'exec_command', input: { cmd } });
+  const steps = [
+    shell(`echo in > inside.txt; echo out > ${outside}; true`),
+    runtime === 'claude_code' ? { tool: 'Write', input: { file_path: path.join('WORKTREE', 'deny-me.txt'), content: 'x' } } : shell('echo deny-me > deny-me.txt'),
+    shell('echo approve-me > approved.txt'),
+    ...(runtime === 'claude_code'
+      ? [{ tool: 'AskUserQuestion', input: { questions: [{ question: 'Which option?', header: 'Probe', multiSelect: false, options: [{ label: 'a', description: 'first' }, { label: 'b', description: 'second' }] }] } }]
+      : [{ tool: 'apply_patch', custom: true, input: '*** Begin Patch\n*** Add File: patched.txt\n+hello\n*** End Patch\n' }]),
+  ];
+  const worktree = path.join(home, 'state', 'worktrees', session);
+  const prompt = script(steps).replace(/WORKTREE/g, worktree);
+  try {
+    const launch = await command(d, api, 'launch', session, { runtime, workspace_id: 'probe', branch: `agenomic/probe-${Date.now()}`, mode: 'enforce', prompt, capture: { conversation: true, commands: true, diffs: true, outputs: false } });
+    set('observe', launch === 'applied' && (await until(() => api.has('session.started'), 30000)), `launch ${launch}`);
+    if (runtime === 'claude_code') {
+      const asked = await until(() => api.has('question.asked'), 60000);
+      const q = api.events.find((e) => e.type === 'question.asked');
+      const answered = asked ? await command(d, api, 'answer_question', session, { question_id: q.payload.question_id, text: 'b' }) : 'missing';
+      set('user_questions', answered === 'applied' && (await until(() => api.has('question.answered'), 10000)), `answer ${answered}`);
+    }
+    const idle1 = await until(() => api.has('turn.completed'), 90000);
+    const inside = fs.existsSync(path.join(worktree, 'inside.txt'));
+    const denied = !fs.existsSync(path.join(worktree, 'deny-me.txt'));
+    const outsideBlocked = !fs.existsSync(outside);
+    const approved = fs.existsSync(path.join(worktree, 'approved.txt'));
+    set('pre_tool_control', idle1 && inside && denied && outsideBlocked, `allowed write ${inside}, denied write absent ${denied}, outside write blocked by sandbox ${outsideBlocked}`);
+    set('remote_approval', approved, `approved action executed after the approval: ${approved}`);
+    const humanSafe = fs.readFileSync(path.join(repo, 'human-wip.txt'), 'utf8') === 'uncommitted human work\n';
+    set('file_diffs', api.has('diff.snapshot', (e) => (e.payload.files ?? []).some((f: any) => f.path === 'inside.txt')) && humanSafe, `diff snapshot lists inside.txt; human checkout untouched ${humanSafe}`);
+    if (runtime === 'codex') {
+      // Codex offers apply_patch only for some model families; when it is
+      // not offered, the fileChange approval path is not validated here.
+      const offered = api.has('file.changed') || fs.existsSync(path.join(worktree, 'patched.txt'));
+      results.pre_tool_control!.detail += offered ? ', apply_patch via fileChange approval ok' : ', apply_patch not offered by this Codex model configuration: fileChange approval not validated';
+    }
+    const before = api.events.filter((e) => e.type === 'turn.completed').length;
+    const sent = await command(d, api, 'send_message', session, { text: script([shell('echo two > two.txt')], 'second turn') });
+    const two = await until(() => fs.existsSync(path.join(worktree, 'two.txt')) && api.events.filter((e) => e.type === 'turn.completed').length > before, 60000);
+    set('converse', sent === 'applied' && two, `second message ${sent}, executed ${two}`);
+    // A turn that is still running when the interrupt arrives: the long
+    // command started and has not completed.
+    const endedBefore = () => api.events.filter((e) => e.type === 'turn.completed' || e.type === 'turn.interrupted').length;
+    await command(d, api, 'send_message', session, { text: script([shell('node slow.mjs')], 'long turn') });
+    await until(() => api.authorizations.some((a) => JSON.stringify(a.input).includes('slow.mjs')), 30000);
+    await sleep(2000);
+    const runningAtInterrupt = !api.events.some((e) => (e.type === 'tool.completed' || e.type === 'tool.failed') && JSON.stringify(e.payload).includes('slow.mjs'));
+    const ended0 = endedBefore();
+    const t0 = Date.now();
+    const intr = await command(d, api, 'interrupt_turn', session, {});
+    const interrupted = await until(() => endedBefore() > ended0, 20000);
+    const elapsed = Date.now() - t0;
+    set('interrupt_turn', intr === 'applied' && runningAtInterrupt && interrupted && elapsed < 20000, `turn running at interrupt ${runningAtInterrupt}; interrupt ${intr}; turn ended ${interrupted} after ${elapsed} ms (command would run 60 s)`);
+    const stop = await command(d, api, 'stop_process', session, {});
+    set('stop_process', stop === 'applied', `stop ${stop} (process exit verified)`);
+    const nativeBefore = api.events.find((e) => e.type === 'session.started')?.payload;
+    const resumed = await command(d, api, 'resume_session', session, { prompt: script([shell('echo three > three.txt')], 'resumed') });
+    const three = await until(() => fs.existsSync(path.join(worktree, 'three.txt')), 60000);
+    set('resume', resumed === 'applied' && three && !!nativeBefore, `resume ${resumed}, executed in the same worktree ${three}`);
+    await command(d, api, 'stop_process', session, {});
+  } finally {
+    await d.stop();
+  }
+  const version = runtime === 'claude_code' ? (d.runtimes().find((r) => r.runtime === 'claude_code')?.version ?? sdkVersion() ?? 'unknown') : codexVersion(cfg.runtimes.codex) ?? 'unknown';
+  return { runtime, surface: runtime === 'claude_code' ? 'sdk' : 'app_server', version, at: new Date().toISOString(), results };
+}
+
+/** `doctor --probe`: validates the launched surfaces on this machine and records the result. */
+export async function runProbe(): Promise<ProbeResult[]> {
+  const realHome = process.env.AGENOMIC_CONNECTOR_HOME;
+  const out: ProbeResult[] = [];
+  for (const runtime of ['claude_code', 'codex'] as const) {
+    const fake = runtime === 'claude_code' ? await fakeAnthropic() : await fakeResponses();
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agn-probe-home-'));
+    try {
+      out.push(await probeRuntime(runtime, fake, home));
+    } finally {
+      await fake.close();
+      if (realHome) process.env.AGENOMIC_CONNECTOR_HOME = realHome;
+      else delete process.env.AGENOMIC_CONNECTOR_HOME;
+    }
+  }
+  for (const r of out) saveProbe(r);
+  return out;
+}

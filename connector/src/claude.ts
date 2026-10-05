@@ -1,0 +1,397 @@
+import { spawn, type ChildProcess } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { createRequire } from 'node:module';
+import { paths, type RuntimeConfig } from './config.ts';
+import { clean } from './redact.ts';
+import { commandText, isTestCommand, type SessionContext, type Verdict } from './session.ts';
+import { errorMessage, log, realPathEscapes } from './util.ts';
+import * as ws from './workspace.ts';
+
+// Pinned in package.json; imported lazily so `hooks install` and `enroll`
+// work on a machine without the SDK.
+type Sdk = typeof import('@anthropic-ai/claude-agent-sdk');
+let sdk: Sdk | undefined;
+async function loadSdk(): Promise<Sdk> {
+  sdk ??= await import('@anthropic-ai/claude-agent-sdk');
+  return sdk;
+}
+
+/** The SDK's package.json (its `exports` hide the file from require). */
+export function sdkPackage(): { version: string; claudeCodeVersion?: string } | null {
+  try {
+    const req = createRequire(import.meta.url);
+    let dir = path.dirname(req.resolve('@anthropic-ai/claude-agent-sdk'));
+    for (let i = 0; i < 4; i++) {
+      const file = path.join(dir, 'package.json');
+      if (fs.existsSync(file)) {
+        const pkg = JSON.parse(fs.readFileSync(file, 'utf8'));
+        if (pkg.name === '@anthropic-ai/claude-agent-sdk') return pkg;
+      }
+      dir = path.dirname(dir);
+    }
+  } catch {
+    /* not installed */
+  }
+  return null;
+}
+
+export function sdkVersion(): string | null {
+  return sdkPackage()?.version ?? null;
+}
+
+class Inbox<T> implements AsyncIterable<T> {
+  private items: T[] = [];
+  private waiters: ((r: IteratorResult<T>) => void)[] = [];
+  private closed = false;
+  push(item: T): void {
+    const w = this.waiters.shift();
+    if (w) w({ value: item, done: false });
+    else this.items.push(item);
+  }
+  close(): void {
+    this.closed = true;
+    for (const w of this.waiters.splice(0)) w({ value: undefined as never, done: true });
+  }
+  [Symbol.asyncIterator](): AsyncIterator<T> {
+    return {
+      next: () => {
+        const item = this.items.shift();
+        if (item !== undefined) return Promise.resolve({ value: item, done: false });
+        if (this.closed) return Promise.resolve({ value: undefined as never, done: true });
+        return new Promise((resolve) => this.waiters.push(resolve));
+      },
+    };
+  }
+}
+
+export interface LaunchOptions {
+  ctx: SessionContext;
+  cwd: string;
+  model?: string | null;
+  prompt?: string | null;
+  resume?: string | null;
+  runtime: RuntimeConfig;
+  onNativeSession: (nativeId: string) => Promise<void>;
+  onStatus: (status: string) => void;
+}
+
+/** A Claude Code session driven through the Claude Agent SDK. */
+export class ClaudeSession {
+  private readonly inbox = new Inbox<any>();
+  private query: any;
+  private child: ChildProcess | undefined;
+  private nativeId: string | null = null;
+  private turnId = 0;
+  private readonly questions = new Map<string, (answer: string) => void>();
+  private readonly toolStart = new Map<string, number>();
+  private ended = false;
+  readonly done: Promise<void>;
+  private resolveDone!: () => void;
+
+  private readonly o: LaunchOptions;
+
+  constructor(o: LaunchOptions) {
+    this.o = o;
+    this.done = new Promise((r) => (this.resolveDone = r));
+  }
+
+  private secrets(): string[] {
+    return this.o.runtime.env_passthrough.map((k) => process.env[k] ?? '').filter(Boolean);
+  }
+
+  private env(): Record<string, string> {
+    const home = paths.runtimeHome('claude_code');
+    fs.mkdirSync(path.join(home, 'config'), { recursive: true, mode: 0o700 });
+    const env: Record<string, string> = {
+      PATH: process.env.PATH ?? '/usr/bin:/bin',
+      HOME: home,
+      CLAUDE_CONFIG_DIR: path.join(home, 'config'),
+      DISABLE_AUTOUPDATER: '1',
+      // Telemetry stays opt-in: no prompt or tool detail export by default.
+      CLAUDE_CODE_ENABLE_TELEMETRY: '0',
+    };
+    for (const k of this.o.runtime.env_passthrough) if (process.env[k]) env[k] = process.env[k]!;
+    Object.assign(env, this.o.runtime.extra_env);
+    return env;
+  }
+
+  private context(input: Record<string, unknown>, tool: string): Record<string, unknown> {
+    const cwd = this.o.cwd;
+    const candidates = [input.file_path, input.notebook_path, input.path].filter((p): p is string => typeof p === 'string');
+    const escapes = candidates.filter((p) => realPathEscapes(p, cwd, cwd)).map((p) => `${p} (symlink leaves the workspace)`);
+    return {
+      cwd,
+      workspace_root: cwd,
+      base_revision: this.o.ctx.baseRevision,
+      sandbox: 'claude-sandbox',
+      permission_mode: this.o.ctx.mode === 'enforce' ? 'default' : 'acceptEdits',
+      symlink_escapes: escapes,
+      paths: candidates,
+      ...(tool === 'Bash' ? {} : {}),
+    };
+  }
+
+  async start(): Promise<void> {
+    const { query } = await loadSdk();
+    const ctx = this.o.ctx;
+    const enforce = ctx.mode === 'enforce';
+    const self = this;
+    const preToolUse = async (input: any) => {
+      if (input.tool_name === 'AskUserQuestion') return {};
+      const v = await ctx.authorize({
+        nativeId: input.tool_use_id,
+        tool: input.tool_name,
+        input: input.tool_input,
+        context: self.context(input.tool_input ?? {}, input.tool_name),
+        phase: 'pre_tool',
+        turnId: String(self.turnId),
+        waitForApproval: false,
+        timeoutMs: 20000,
+      });
+      self.toolStart.set(input.tool_use_id, Date.now());
+      if (v.decision === 'deny' && v.reason.startsWith('Waiting for approval')) {
+        // Hand the wait to canUseTool, which may block until the decision.
+        return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: v.reason } };
+      }
+      if (v.decision === 'deny') {
+        return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: `Agenomic: ${v.reason}` } };
+      }
+      // allow and defer: never force an allow; native rules still apply.
+      return {};
+    };
+    const canUseTool = async (toolName: string, input: Record<string, unknown>, opts: { signal: AbortSignal; toolUseID?: string }) => {
+      const id = opts.toolUseID ?? `nohook-${Date.now()}`;
+      if (toolName === 'AskUserQuestion') return self.ask(id, input, opts.signal);
+      let v: Verdict | undefined = ctx.known(id);
+      if (!v || v.reason.startsWith('Waiting for approval')) {
+        v = await ctx.authorize({
+          nativeId: id,
+          tool: toolName,
+          input,
+          context: self.context(input, toolName),
+          phase: 'native_approval',
+          turnId: String(self.turnId),
+          waitForApproval: true,
+          signal: opts.signal,
+        });
+      }
+      if (v.decision === 'allow') return { behavior: 'allow', updatedInput: input };
+      if (v.decision === 'defer' && !enforce) {
+        // Observe and shadow sessions have no Agenomic approver: a native
+        // prompt that reaches here is declined, the native safe default.
+        return { behavior: 'deny', message: 'No interactive approver for this native permission prompt (observe/shadow session).' };
+      }
+      return { behavior: 'deny', message: `Agenomic: ${v.reason}` };
+    };
+    const post = (failed: boolean) => async (input: any) => {
+      const verdict = ctx.known(input.tool_use_id);
+      const started = self.toolStart.get(input.tool_use_id);
+      const duration = started ? Date.now() - started : undefined;
+      const cmd = commandText(input.tool_name, input.tool_input);
+      ctx.sink.emit(failed ? 'tool.failed' : 'tool.completed', 'runtime', 'native', {
+        native_request_id: input.tool_use_id,
+        native_tool: input.tool_name,
+        duration_ms: duration,
+        ...(ctx.capture.commands && cmd ? { command: cmd } : {}),
+        ...(ctx.capture.outputs ? { output: clean(JSON.stringify(input.tool_response ?? input.error ?? ''), 4000, self.secrets()) } : {}),
+      }, { action_id: verdict?.actionId, runtime_turn_id: String(self.turnId) });
+      if (input.tool_name === 'Bash' && isTestCommand(cmd)) {
+        ctx.sink.emit('test.result', 'adapter', 'derived', { command: ctx.capture.commands ? cmd : undefined, passed: !failed, basis: 'tool_outcome' });
+      }
+      if (['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(input.tool_name) && !failed) {
+        ctx.sink.emit('file.changed', 'runtime', 'native', { path: input.tool_input?.file_path ?? input.tool_input?.notebook_path, tool: input.tool_name });
+      }
+      await ctx.report(verdict?.actionId, failed ? 'failed' : 'completed', { duration_ms: duration });
+      return {};
+    };
+    const lifecycle = (type: 'subagent.started' | 'subagent.stopped') => async (input: any) => {
+      ctx.sink.emit(type, 'runtime', 'native', { agent_id: input.agent_id, agent_type: input.agent_type });
+      return {};
+    };
+    if (this.o.prompt) this.pushUser(this.o.prompt);
+    this.query = query({
+      prompt: this.inbox,
+      options: {
+        cwd: this.o.cwd,
+        env: this.env(),
+        model: this.o.model ?? undefined,
+        resume: this.o.resume ?? undefined,
+        // Repository settings (hooks, permissions, MCP) are not loaded: a
+        // repository cannot change the session's governance.
+        settingSources: [],
+        permissionMode: enforce ? 'default' : 'acceptEdits',
+        sandbox: {
+          enabled: true,
+          failIfUnavailable: true,
+          autoAllowBashIfSandboxed: !enforce,
+          allowUnsandboxedCommands: false,
+          filesystem: { denyRead: [paths.state(), path.dirname(paths.credentials())] },
+          network: { allowedDomains: this.o.runtime.allowed_domains },
+        },
+        canUseTool,
+        hooks: {
+          PreToolUse: [{ hooks: [preToolUse], timeout: 900 }],
+          PostToolUse: [{ hooks: [post(false)] }],
+          PostToolUseFailure: [{ hooks: [post(true)] }],
+          SubagentStart: [{ hooks: [lifecycle('subagent.started')] }],
+          SubagentStop: [{ hooks: [lifecycle('subagent.stopped')] }],
+        },
+        pathToClaudeCodeExecutable: this.o.runtime.executable,
+        spawnClaudeCodeProcess: (opts: any) => {
+          const child = spawn(opts.command, opts.args, { cwd: opts.cwd, env: opts.env, signal: opts.signal, stdio: ['pipe', 'pipe', 'pipe'] });
+          child.stderr?.on('data', (d) => log('debug', 'claude stderr', { line: clean(String(d), 500) }));
+          this.child = child;
+          return child as any;
+        },
+      } as any,
+    });
+    void this.pump();
+  }
+
+  private pushUser(text: string): void {
+    this.turnId++;
+    this.o.ctx.sink.emit('message.user', 'adapter', 'native', this.o.ctx.capture.conversation ? { text: clean(text, 16000) } : { length: text.length }, { runtime_turn_id: String(this.turnId) });
+    this.o.ctx.sink.emit('turn.started', 'adapter', 'native', {}, { runtime_turn_id: String(this.turnId) });
+    this.inbox.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null });
+  }
+
+  private async pump(): Promise<void> {
+    const ctx = this.o.ctx;
+    try {
+      for await (const m of this.query) {
+        if (m.type === 'system' && m.subtype === 'init' && m.session_id && m.session_id !== this.nativeId) {
+          this.nativeId = m.session_id;
+          await this.o.onNativeSession(m.session_id);
+          ctx.sink.emit('session.started', 'runtime', 'native', { model: m.model, permission_mode: m.permissionMode, tools: (m.tools ?? []).length });
+          this.o.onStatus('running');
+        } else if (m.type === 'assistant') {
+          const text = (m.message?.content ?? []).filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n');
+          if (text) ctx.sink.emit('message.assistant', 'runtime', 'native', ctx.capture.conversation ? { text: clean(text, 16000) } : { length: text.length }, { runtime_turn_id: String(this.turnId) });
+        } else if (m.type === 'result') {
+          ctx.sink.emit(m.subtype === 'error_during_execution' ? 'turn.interrupted' : 'turn.completed', 'runtime', 'native', {
+            subtype: m.subtype, is_error: m.is_error, num_turns: m.num_turns, duration_ms: m.duration_ms,
+          }, { runtime_turn_id: String(this.turnId) });
+          ctx.sink.emit('usage', 'runtime', 'native', {
+            input_tokens: m.usage?.input_tokens ?? null,
+            output_tokens: m.usage?.output_tokens ?? null,
+            basis: m.usage ? 'measured' : 'unavailable',
+            // The SDK's cost is computed client side from its price table.
+            cost_usd: typeof m.total_cost_usd === 'number' ? m.total_cost_usd : null,
+            cost_basis: 'estimated',
+          });
+          this.snapshotDiff();
+          this.o.onStatus('idle');
+        }
+      }
+    } catch (error) {
+      ctx.sink.emit('error', 'adapter', 'native', { code: 'runtime_error', message: clean(errorMessage(error), 500) });
+      log('warn', 'claude session ended with an error', { session: ctx.id, error: errorMessage(error) });
+    } finally {
+      this.ended = true;
+      ctx.sink.emit('session.ended', 'supervisor', 'native', { exit_code: this.child?.exitCode ?? null });
+      this.resolveDone();
+    }
+  }
+
+  private snapshotDiff(): void {
+    const ctx = this.o.ctx;
+    if (!ctx.baseRevision) return;
+    try {
+      const files = ws.changes(this.o.cwd, ctx.baseRevision);
+      const payload: Record<string, unknown> = { base_revision: ctx.baseRevision, files };
+      if (ctx.capture.diffs) {
+        const d = ws.diff(this.o.cwd, ctx.baseRevision);
+        payload.diff = d.text;
+        payload.truncated = d.truncated;
+      }
+      ctx.sink.emit('diff.snapshot', 'filesystem', 'observed', payload, { runtime_turn_id: String(this.turnId) });
+    } catch (error) {
+      log('warn', 'diff snapshot failed', { error: errorMessage(error) });
+    }
+  }
+
+  private async ask(id: string, input: Record<string, unknown>, signal: AbortSignal) {
+    const ctx = this.o.ctx;
+    const questions = (input.questions ?? []) as { question: string; options?: { label: string }[] }[];
+    ctx.sink.emit('question.asked', 'runtime', 'native', {
+      question_id: id,
+      ...(ctx.capture.conversation ? { questions: questions.map((q) => ({ question: clean(q.question, 1000), options: (q.options ?? []).map((o) => clean(o.label, 200)) })) } : { count: questions.length }),
+    });
+    this.o.onStatus('waiting_input');
+    const answer = await new Promise<string | null>((resolve) => {
+      this.questions.set(id, resolve);
+      signal.addEventListener('abort', () => resolve(null), { once: true });
+    });
+    this.questions.delete(id);
+    this.o.onStatus('running');
+    if (answer === null) return { behavior: 'deny', message: 'The question was cancelled.' };
+    let answers: Record<string, string> = {};
+    try {
+      const parsed = JSON.parse(answer);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) answers = parsed;
+    } catch {
+      for (const q of questions) answers[q.question] = answer;
+    }
+    ctx.sink.emit('question.answered', 'adapter', 'native', { question_id: id, ...(ctx.capture.conversation ? { text: clean(answer, 4000) } : {}) });
+    return { behavior: 'allow', updatedInput: { ...input, answers } };
+  }
+
+  // ── Commands ──────────────────────────────────────────────────────────
+
+  send(text: string): 'applied' | 'refused' {
+    if (this.ended) return 'refused';
+    this.pushUser(text);
+    return 'applied';
+  }
+
+  answer(questionId: string, text: string): 'applied' | 'refused' {
+    const resolve = this.questions.get(questionId);
+    if (!resolve) return 'refused';
+    resolve(text);
+    return 'applied';
+  }
+
+  /** Interrupts the current turn; the process and session stay alive. */
+  async interrupt(): Promise<'applied' | 'unknown'> {
+    try {
+      await this.query.interrupt();
+      this.o.ctx.sink.emit('turn.interrupted', 'adapter', 'native', { requested_by: 'agenomic' }, { runtime_turn_id: String(this.turnId) });
+      return 'applied';
+    } catch (error) {
+      log('warn', 'interrupt failed', { error: errorMessage(error) });
+      return 'unknown';
+    }
+  }
+
+  /** Stops the runtime process and reports `applied` only once it exited. */
+  async stop(): Promise<'applied' | 'unknown'> {
+    this.inbox.close();
+    try {
+      this.query.close?.();
+    } catch {
+      /* already closed */
+    }
+    const child = this.child;
+    if (!child || child.exitCode !== null || child.signalCode !== null) return 'applied';
+    const exited = await new Promise<boolean>((resolve) => {
+      const t = setTimeout(() => {
+        child.kill('SIGKILL');
+        setTimeout(() => resolve(child.exitCode !== null || child.signalCode !== null), 2000);
+      }, 5000);
+      child.once('exit', () => {
+        clearTimeout(t);
+        resolve(true);
+      });
+    });
+    return exited ? 'applied' : 'unknown';
+  }
+
+  alive(): boolean {
+    return !this.ended && !!this.child && this.child.exitCode === null && this.child.signalCode === null;
+  }
+
+  native(): string | null {
+    return this.nativeId;
+  }
+}
