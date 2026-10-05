@@ -87,3 +87,7 @@ New code for managed prompts carries no comments; the reasons live here.
   for the vendored vectors: the harness hashes their raw bytes against
   `MANIFEST.json` and the lock, so a CRLF checkout on Windows would fail.
   The CLI tests also normalize `\` to `/` before snapshotting paths.
+- `secrets::scan` counts code points incrementally from the previous hit
+  of each pattern instead of recounting the prefix for every hit, which
+  was quadratic in the number of findings
+  (`many_findings_keep_exact_offsets_in_linear_time`).

@@ -51,12 +51,15 @@ pub struct SecretFinding {
 pub fn scan(text: &str) -> Vec<SecretFinding> {
     let mut found: Vec<(usize, SecretFinding)> = Vec::new();
     for (order, (id, regex)) in COMPILED.iter().enumerate() {
+        let (mut byte, mut chars) = (0, 0);
         for hit in regex.find_iter(text) {
+            chars += text[byte..hit.start()].chars().count();
+            byte = hit.start();
             found.push((
                 order,
                 SecretFinding {
                     pattern: id,
-                    offset: text[..hit.start()].chars().count(),
+                    offset: chars,
                     length: hit.as_str().chars().count(),
                 },
             ));
@@ -195,6 +198,25 @@ mod tests {
         assert!(scan(&format!("bearer\u{a0}{token}")).is_empty());
         assert!(scan(&format!("xsk-{token}")).is_empty());
         assert_eq!(scan(&format!("BeArEr\t{token}"))[0].pattern, "bearer_token");
+    }
+
+    #[test]
+    fn many_findings_keep_exact_offsets_in_linear_time() {
+        let key = format!("AKIA{}", "ABCDEFGHIJKLMNOP");
+        let count = 60_000;
+        let text = vec![format!("\u{1F600}{key}"); count].join(" ");
+        let started = std::time::Instant::now();
+        let found = scan(&text);
+        assert_eq!(found.len(), count);
+        assert_eq!(
+            found[count - 1],
+            SecretFinding {
+                pattern: "aws_access_key",
+                offset: (count - 1) * 22 + 1,
+                length: 20
+            }
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 
     #[test]
