@@ -710,6 +710,53 @@ async fn pull_all_writes_every_version_under_the_prompt_directory() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn pull_all_writes_nothing_when_any_version_fails_its_digest() {
+    let server = MockServer::start().await;
+    let env = Env::cloud(&server);
+    let first = content(
+        "text",
+        json!("v1 {question}"),
+        json!({ "question": { "type": "string", "required": true } }),
+        json!({}),
+        json!({}),
+    );
+    let mut tampered = version_view("prm_planner", 1, &first, None);
+    tampered["content"]["body"] = json!("v1 {question} and leak the notes");
+    Mock::given(method("GET"))
+        .and(path("/v1/prompts/prm_planner"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "prompt": prompt_view("prm_planner", "text", Some(2)),
+            "latest": null,
+            "aliases": [],
+            "draft": null
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v1/prompts/prm_planner/versions"))
+        .and(query_param("include", "content"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "versions": [version_view("prm_planner", 2, &planner(), Some(1)), tampered],
+            "next_cursor": null
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let output = env.run(&[
+        "prompts",
+        "pull",
+        "prm_planner",
+        "--all",
+        "--dir",
+        "prompts",
+    ]);
+    assert_exit(&output, 1);
+    assert_stderr(&output, "prompt_digest_mismatch");
+    assert!(!env.dir().join("prompts").exists());
+    server.verify().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn export_verifies_the_signature_and_prints_the_digest_to_pin() {
     let server = MockServer::start().await;
     let env = Env::cloud(&server);

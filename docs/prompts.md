@@ -68,8 +68,12 @@ agenomic prompts pull prm_support_planner --all --dir prompts
 ```
 
 A bare `prm_x` means the latest version. Every download recomputes the
-content digest of the version and of its fragments; a mismatch exits 1
-and nothing is written.
+content digest of each version before anything is written; a mismatch
+exits 1 and nothing is written. `get` and a single-version `pull` also
+download and verify the fragments the version includes. `pull --all`
+verifies every version of every page first and writes the files only
+then; it does not download fragments (each content digest already
+covers its fragment pins).
 
 ## Publishing a version
 

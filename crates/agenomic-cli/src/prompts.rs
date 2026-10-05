@@ -593,7 +593,7 @@ fn prompts_pull(
     let detail = cloud.block(cloud.client.get_prompt(prompt_id))?;
     let prompt = detail.get("prompt").cloned().unwrap_or(Value::Null);
     let mut cursor: Option<String> = None;
-    let mut entries = Vec::new();
+    let mut verified = Vec::new();
     for _ in 0..MAX_PAGES {
         let page = cloud.block(cloud.client.list_prompt_versions(
             prompt_id,
@@ -612,10 +612,7 @@ fn prompts_pull(
                     "the version list of {prompt_id} returned {returned_id}"
                 )));
             }
-            let file = prompt_file(&prompt, version);
-            let path = pulled_path(&args.dir, prompt_id, number);
-            write_json_file(&path, &file)?;
-            entries.push(written(prompt_id, number, &file, &path));
+            verified.push((number, prompt_file(&prompt, version)));
         }
         cursor = page
             .get("next_cursor")
@@ -624,6 +621,12 @@ fn prompts_pull(
         if cursor.is_none() {
             break;
         }
+    }
+    let mut entries = Vec::with_capacity(verified.len());
+    for (number, file) in &verified {
+        let path = pulled_path(&args.dir, prompt_id, *number);
+        write_json_file(&path, file)?;
+        entries.push(written(prompt_id, *number, file, &path));
     }
     report_written(&entries, format)?;
     Ok(ExitCode::Success)

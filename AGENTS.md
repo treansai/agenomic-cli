@@ -66,6 +66,10 @@ New code for managed prompts carries no comments; the reasons live here.
 - `agenomic prompts get` also reads the prompt metadata route, because the
   version document carries no prompt-level kind (`fragment` and `text`
   share text content) and the prompt file needs it.
+- `agenomic prompts pull --all` verifies the digest of every version on
+  every page before it writes the first file, so a bad version never
+  leaves a partial directory behind
+  (`pull_all_writes_nothing_when_any_version_fails_its_digest`).
 - `agenomic channels promote` and `rollback` are hand-off commands
   (amendment AM4): channel moves are session only and the CLI holds an API
   key, so they call only the read-only move preview and print where a
