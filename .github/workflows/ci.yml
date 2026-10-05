@@ -57,6 +57,8 @@ jobs:
 
   connector:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: connector
