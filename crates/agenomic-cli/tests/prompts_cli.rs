@@ -79,7 +79,7 @@ impl Env {
         if let Some(endpoint) = &self.endpoint {
             text = text.replace(endpoint, "[SERVER]");
         }
-        text
+        text.replace('\\', "/")
     }
 }
 

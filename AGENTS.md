@@ -83,3 +83,7 @@ New code for managed prompts carries no comments; the reasons live here.
 - `crates/agenomic-cli/tests/prompts_cli.rs` removes every `AGENOMIC_*`
   variable from the child environment so a developer profile cannot leak
   into the snapshots.
+- `crates/agenomic-prompt/.gitattributes` turns off line-ending conversion
+  for the vendored vectors: the harness hashes their raw bytes against
+  `MANIFEST.json` and the lock, so a CRLF checkout on Windows would fail.
+  The CLI tests also normalize `\` to `/` before snapshotting paths.
