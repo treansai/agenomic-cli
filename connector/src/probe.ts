@@ -4,9 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { RunnerApi } from './api.ts';
 import { saveProbe, type CapName, type ProbeResult } from './capabilities.ts';
-import { sdkVersion } from './claude.ts';
+import { claudeCodeVersion } from './claude.ts';
 import { codexVersion } from './codex.ts';
-import { defaultConfig, type ConnectorConfig } from './config.ts';
+import { defaultConfig, loadConfig, type ConnectorConfig } from './config.ts';
 import { Daemon } from './daemon.ts';
 import { codexProviderToml, fakeAnthropic, fakeResponses, script, type FakeServer } from './fakes.ts';
 import { sleep, ulid } from './util.ts';
@@ -109,16 +109,39 @@ async function command(d: Daemon, api: ProbeApi, kind: string, session: string, 
   return api.results.get(id)?.status ?? 'missing';
 }
 
-export async function probeRuntime(runtime: 'claude_code' | 'codex', fake: FakeServer, home: string): Promise<ProbeResult> {
-  process.env.AGENOMIC_CONNECTOR_HOME = home;
-  const repo = tempRepo();
+/**
+ * The configuration a probe runs with: the enrolled machine's own runtime
+ * (its executable and sandbox domains), with the provider settings
+ * replaced by the scripted model, so that no credential is used and no
+ * request leaves the machine. The other runtime is disabled.
+ */
+export function probeConfig(machine: ConnectorConfig, runtime: 'claude_code' | 'codex', fakeUrl: string, repo: string): ConnectorConfig {
   const cfg: ConnectorConfig = defaultConfig('http://127.0.0.1:9', 'probe');
   cfg.workspaces = [{ id: 'probe', name: 'probe', path: repo }];
-  if (runtime === 'claude_code') cfg.runtimes.claude_code.extra_env = { ANTHROPIC_BASE_URL: fake.url, ANTHROPIC_API_KEY: 'probe-not-a-key' };
-  else {
-    cfg.runtimes.codex.extra_config_toml = codexProviderToml(fake.url);
-    cfg.runtimes.codex.extra_env = { AGENOMIC_SCRIPTED_KEY: 'probe-not-a-key' };
-  }
+  cfg.runtimes.claude_code.enabled = false;
+  cfg.runtimes.codex.enabled = false;
+  const own = machine.runtimes[runtime];
+  cfg.runtimes[runtime] = {
+    enabled: true,
+    ...(own.executable ? { executable: own.executable } : {}),
+    allowed_domains: [...own.allowed_domains],
+    env_passthrough: [],
+    ...(runtime === 'claude_code'
+      ? { extra_env: { ANTHROPIC_BASE_URL: fakeUrl, ANTHROPIC_API_KEY: 'probe-not-a-key' } }
+      : { extra_env: { AGENOMIC_SCRIPTED_KEY: 'probe-not-a-key' }, extra_config_toml: codexProviderToml(fakeUrl) }),
+  };
+  return cfg;
+}
+
+/** Version of the binary the probe runs, read from the binary as the daemon does. */
+export function probedVersion(cfg: ConnectorConfig, runtime: 'claude_code' | 'codex'): string {
+  return (runtime === 'claude_code' ? claudeCodeVersion(cfg.runtimes.claude_code) : codexVersion(cfg.runtimes.codex)) ?? 'unknown';
+}
+
+export async function probeRuntime(runtime: 'claude_code' | 'codex', fake: FakeServer, home: string, machine: ConnectorConfig): Promise<ProbeResult> {
+  process.env.AGENOMIC_CONNECTOR_HOME = home;
+  const repo = tempRepo();
+  const cfg = probeConfig(machine, runtime, fake.url, repo);
   const api = new ProbeApi();
   const d = new Daemon(cfg, api);
   await d.start();
@@ -190,19 +213,24 @@ export async function probeRuntime(runtime: 'claude_code' | 'codex', fake: FakeS
   } finally {
     await d.stop();
   }
-  const version = runtime === 'claude_code' ? (d.runtimes().find((r) => r.runtime === 'claude_code')?.version ?? sdkVersion() ?? 'unknown') : codexVersion(cfg.runtimes.codex) ?? 'unknown';
-  return { runtime, surface: runtime === 'claude_code' ? 'sdk' : 'app_server', version, at: new Date().toISOString(), results };
+  return { runtime, surface: runtime === 'claude_code' ? 'sdk' : 'app_server', version: probedVersion(cfg, runtime), at: new Date().toISOString(), results };
 }
 
-/** `doctor --probe`: validates the launched surfaces on this machine and records the result. */
-export async function runProbe(): Promise<ProbeResult[]> {
+/**
+ * `doctor --probe`: validates the launched surfaces of the runtimes this
+ * machine is configured with (enabled ones only, with their configured
+ * executable) and records the result under the version of the binary
+ * that ran.
+ */
+export async function runProbe(machine: ConnectorConfig = loadConfig()): Promise<ProbeResult[]> {
   const realHome = process.env.AGENOMIC_CONNECTOR_HOME;
   const out: ProbeResult[] = [];
   for (const runtime of ['claude_code', 'codex'] as const) {
+    if (!machine.runtimes[runtime].enabled) continue;
     const fake = runtime === 'claude_code' ? await fakeAnthropic() : await fakeResponses();
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agn-probe-home-'));
     try {
-      out.push(await probeRuntime(runtime, fake, home));
+      out.push(await probeRuntime(runtime, fake, home, machine));
     } finally {
       await fake.close();
       if (realHome) process.env.AGENOMIC_CONNECTOR_HOME = realHome;

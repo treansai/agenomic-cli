@@ -169,7 +169,13 @@ export async function main(argv: string[]): Promise<number> {
       const sb = sandboxAvailable();
       out(`sandbox: ${sb.ok ? 'available' : 'unavailable'} (${sb.detail})`);
       if (one(f, 'probe') === 'true') {
-        for (const r of await runProbe()) {
+        // The runtimes this machine runs: its configuration once enrolled.
+        const cfg = fs.existsSync(paths.config()) ? loadConfig() : defaultConfig('http://127.0.0.1:9', os.hostname());
+        if (!fs.existsSync(paths.config())) out('not enrolled: probing the default runtime configuration');
+        for (const runtime of ['claude_code', 'codex'] as const) {
+          if (!cfg.runtimes[runtime].enabled) out(`${runtime}: disabled in ${paths.config()}, not probed`);
+        }
+        for (const r of await runProbe(cfg)) {
           out(`${r.runtime}/${r.surface} ${r.version}:`);
           for (const [k, v] of Object.entries(r.results)) out(`  ${v!.ok ? 'ok  ' : 'FAIL'} ${k}: ${v!.detail}`);
         }

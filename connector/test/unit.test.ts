@@ -14,6 +14,7 @@ import { EventSink } from '../src/events.ts';
 import { eventOf } from '../src/hook.ts';
 import { apply, codexBlock, hookCommand, planClaude, planCodex } from '../src/hooks-install.ts';
 import { clean, redact } from '../src/redact.ts';
+import { probeConfig, probedVersion, runProbe } from '../src/probe.ts';
 import { isTestCommand } from '../src/session.ts';
 import { realPathEscapes } from '../src/util.ts';
 import * as ws from '../src/workspace.ts';
@@ -281,4 +282,27 @@ test('a configured runtime executable reports its own version; a probe of anothe
     if (prev === undefined) delete process.env.AGENOMIC_CONNECTOR_HOME;
     else process.env.AGENOMIC_CONNECTOR_HOME = prev;
   }
+});
+
+test('doctor --probe runs the machine\'s configured runtimes: enabled ones, their executable, its version', async () => {
+  const machine = defaultConfig('https://api.example.test', 'unit');
+  machine.runtimes.codex.executable = fakeBinary('codex-cli 4.5.6');
+  machine.runtimes.codex.env_passthrough = ['OPENAI_API_KEY'];
+  machine.runtimes.codex.extra_config_toml = 'model_provider = "corp"';
+  machine.runtimes.claude_code.allowed_domains = ['registry.npmjs.org'];
+  const codex = probeConfig(machine, 'codex', 'http://127.0.0.1:1', '/tmp/repo');
+  assert.equal(codex.runtimes.codex.executable, machine.runtimes.codex.executable);
+  assert.deepEqual(codex.runtimes.codex.env_passthrough, [], 'no provider credential reaches the scripted model');
+  assert.match(codex.runtimes.codex.extra_config_toml!, /agenomic_scripted/);
+  assert.doesNotMatch(codex.runtimes.codex.extra_config_toml!, /corp/);
+  assert.equal(codex.runtimes.claude_code.enabled, false);
+  assert.equal(probedVersion(codex, 'codex'), '4.5.6', 'recorded under the version of the binary that ran');
+  const claude = probeConfig(machine, 'claude_code', 'http://127.0.0.1:1', '/tmp/repo');
+  assert.equal(claude.runtimes.claude_code.executable, undefined);
+  assert.deepEqual(claude.runtimes.claude_code.allowed_domains, ['registry.npmjs.org']);
+  assert.equal(probedVersion(claude, 'claude_code'), sdkPackage()!.claudeCodeVersion);
+  // Disabled runtimes are not probed at all.
+  machine.runtimes.codex.enabled = false;
+  machine.runtimes.claude_code.enabled = false;
+  assert.deepEqual(await runProbe(machine), []);
 });

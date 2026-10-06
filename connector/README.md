@@ -52,15 +52,18 @@ Local hooks are cooperative, not a security boundary (see
 
 ## What is validated
 
-`doctor --probe` runs Claude Code and Codex on this machine against local
-scripted model endpoints (no provider, no network) through the same
-adapters the daemon uses, and checks effects on disk: a denied write is
+`doctor --probe` runs the runtimes this machine is configured with (the
+enabled ones, with their configured `executable`) against local scripted
+model endpoints (no provider, no network) through the same adapters the
+daemon uses, and checks effects on disk: a denied write is
 absent, a write outside the worktree is blocked by the sandbox even when
 allowed, an approved action runs only after its approval, a second message
 runs, an interrupt cuts a 60 s command short, a stop is verified, a resume
 continues in the same worktree, and the developer's uncommitted files are
-untouched. Results are stored per runtime version; the cockpit only offers
-an operation validated on the machine.
+untouched. Results are stored under the version the probed binary
+reports (`--version` for a configured executable); the daemon reports the
+same version, so a probe of one binary never validates another. The
+cockpit only offers an operation validated on the machine.
 
 ## Tests
 
