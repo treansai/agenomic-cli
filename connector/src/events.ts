@@ -17,6 +17,8 @@ export type Trust = 'native' | 'derived' | 'observed';
 
 export interface CodingEvent {
   event_id: string;
+  /** The Agenomic session the event belongs to, always set by this producer. */
+  coding_session_id: string;
   schema_version: 'agenomic.coding.event/v1';
   type: EventType;
   source: Source;
@@ -95,6 +97,7 @@ export class EventSink {
       producer_seq: ++this.seq,
       occurred_at: new Date().toISOString(),
       ...extra,
+      coding_session_id: this.sessionId,
       payload: redactValue(payload, this.secrets()) as Record<string, unknown>,
     };
     if (this.queue.length >= this.opts.maxBuffered) {
@@ -139,7 +142,7 @@ export class EventSink {
       const n = this.dropped;
       this.dropped = 0;
       this.queue.unshift({
-        event_id: ulid(), schema_version: 'agenomic.coding.event/v1', type: 'error', source: 'supervisor', trust: 'native',
+        event_id: ulid(), coding_session_id: this.sessionId, schema_version: 'agenomic.coding.event/v1', type: 'error', source: 'supervisor', trust: 'native',
         producer_epoch: this.epoch, producer_seq: ++this.seq, occurred_at: new Date().toISOString(),
         payload: { code: 'events_dropped', count: n },
       });
@@ -147,7 +150,9 @@ export class EventSink {
     // Spooled evidence first, in order.
     if (fs.existsSync(this.spoolFile)) {
       const lines = fs.readFileSync(this.spoolFile, 'utf8').split('\n').filter(Boolean);
-      const spooled = lines.map((l) => JSON.parse(l) as CodingEvent);
+      // One spool file per session: an event spooled by an earlier
+      // version without the session id gets it here.
+      const spooled = lines.map((l) => ({ ...(JSON.parse(l) as CodingEvent), coding_session_id: this.sessionId }));
       try {
         for (let i = 0; i < spooled.length; i += this.opts.batchSize) {
           await this.send(spooled.slice(i, i + this.opts.batchSize));

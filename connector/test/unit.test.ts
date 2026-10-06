@@ -17,7 +17,7 @@ import { apply, codexBlock, hookCommand, planClaude, planCodex } from '../src/ho
 import { clean, redact } from '../src/redact.ts';
 import { ProbeApi, probeConfig, probedVersion, runProbe, tempRepo } from '../src/probe.ts';
 import { isTestCommand, type SessionContext } from '../src/session.ts';
-import { realPathEscapes } from '../src/util.ts';
+import { realPathEscapes, ulid } from '../src/util.ts';
 import * as ws from '../src/workspace.ts';
 
 const tmp = (p: string) => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), p)));
@@ -385,4 +385,22 @@ test('a local Codex terminal session reports the codex:cli_hooks capabilities, v
     assert.equal(state.capabilities.pre_tool_control.validated, 'partial');
     assert.equal(state.capabilities.converse.validated, 'unsupported');
   });
+});
+
+test('every event envelope carries its coding_session_id, spooled and synthesized ones included', async () => {
+  const api = new FlakyApi();
+  const spool = tmp('agn-spool-');
+  const id = randomUUID();
+  // An event spooled by an earlier version, without the session id.
+  fs.writeFileSync(path.join(spool, `${id}.jsonl`), JSON.stringify({ event_id: ulid(), schema_version: 'agenomic.coding.event/v1', type: 'tool.started', source: 'runtime', trust: 'native', producer_epoch: 'old', producer_seq: 1, occurred_at: new Date().toISOString(), payload: {} }) + '\n');
+  const sink = new EventSink(api, id, () => [], spool, { maxBuffered: 4, maxSpoolBytes: 1 << 20, batchSize: 2, flushIntervalMs: 60000 });
+  for (let i = 0; i < 8; i++) sink.emit('message.assistant', 'runtime', 'native', { i });
+  sink.emit('tool.requested', 'gateway', 'native', { native_request_id: 'x' }, { coding_session_id: 'another' } as any);
+  await sink.flush();
+  api.up = true;
+  await sink.flush();
+  await sink.close();
+  assert.ok(api.sent.some((e) => e.producer_epoch === 'old'));
+  assert.ok(api.sent.some((e) => e.type === 'error' && e.payload.code === 'events_dropped'));
+  for (const e of api.sent) assert.equal(e.coding_session_id, id, JSON.stringify(e));
 });

@@ -1,4 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -41,13 +42,13 @@ export class ProbeApi extends RunnerApi {
       this.authorizations.push(b);
       const text = JSON.stringify(b.input);
       const id = `${b.native_request_id}`;
-      if (text.includes('deny-me')) return { action_id: ulid(), decision: 'deny', reason: 'probe deny', classification: {} } as T;
+      if (text.includes('deny-me')) return { action_id: randomUUID(), decision: 'deny', reason: 'probe deny', classification: {} } as T;
       if (text.includes('approve-me')) {
         // Same native request: the same pending action until approved,
         // exactly as the gateway answers.
         let action = this.approvals.get(id);
         if (!action) {
-          action = ulid();
+          action = randomUUID();
           this.approvals.set(id, action);
           this.actions.set(action, { approved: false });
           setTimeout(() => (this.actions.get(action!)!.approved = true), 500);
@@ -57,7 +58,7 @@ export class ProbeApi extends RunnerApi {
         }
         return { action_id: action, decision: 'allow', reason: 'approved', classification: {} } as T;
       }
-      return { action_id: ulid(), decision: 'allow', reason: 'probe allow', classification: {} } as T;
+      return { action_id: randomUUID(), decision: 'allow', reason: 'probe allow', classification: {} } as T;
     }
     if (method === 'GET' && p.includes('/actions/')) {
       const action = p.split('/').pop()!;
@@ -71,7 +72,7 @@ export class ProbeApi extends RunnerApi {
       this.states.push(b);
       return { session: {} } as T;
     }
-    if (p.endsWith('/runner/sessions')) return { session: { id: b.coding_session_id ?? ulid() } } as T;
+    if (p.endsWith('/runner/sessions')) return { session: { id: b.coding_session_id ?? randomUUID() } } as T;
     if (method === 'GET' && p.startsWith('/v1/coding/runner/commands')) {
       await sleep(1000);
       return { commands: [] } as T;
@@ -149,7 +150,7 @@ export async function probeRuntime(runtime: 'claude_code' | 'codex', fake: FakeS
   await d.start();
   const results: ProbeResult['results'] = {};
   const set = (k: CapName, ok: boolean, detail: string) => (results[k] = { ok, detail });
-  const session = ulid();
+  const session = randomUUID();
   const outside = path.join(os.tmpdir(), `agn-probe-outside-${Date.now()}.txt`);
   const shell = runtime === 'claude_code'
     ? (cmd: string) => ({ tool: 'Bash', input: { command: cmd, description: 'probe' } })
