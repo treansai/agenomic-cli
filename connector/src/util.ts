@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -81,4 +82,49 @@ export function realPathEscapes(p: string, cwd: string, root: string): boolean {
   const lexicalInside = abs === root || abs.startsWith(root + path.sep);
   const realInside = real === realRoot || real.startsWith(realRoot + path.sep);
   return lexicalInside && !realInside;
+}
+
+/** Path of an executable, looked up on PATH when it is a bare command name. */
+export function resolveExecutable(exe: string): string | null {
+  if (exe.includes('/')) return fs.existsSync(exe) ? path.resolve(exe) : null;
+  for (const dir of (process.env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
+    const candidate = path.join(dir, exe);
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      if (fs.statSync(candidate).isFile()) return candidate;
+    } catch {
+      /* not here */
+    }
+  }
+  return null;
+}
+
+const versions = new Map<string, string | null>();
+
+/**
+ * The version a runtime executable reports (first x.y.z of `--version`),
+ * cached per file revision. Null when it cannot be run or prints no
+ * version: nothing is then validated for it.
+ */
+export function executableVersion(exe: string): string | null {
+  const file = resolveExecutable(exe);
+  if (!file) return null;
+  let key: string;
+  try {
+    const st = fs.statSync(file);
+    key = `${file}\0${st.size}\0${st.mtimeMs}`;
+  } catch {
+    return null;
+  }
+  if (versions.has(key)) return versions.get(key)!;
+  let version: string | null = null;
+  try {
+    const script = /\.[cm]?js$/.test(file);
+    const out = execFileSync(script ? process.execPath : file, script ? [file, '--version'] : ['--version'], { encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'ignore'] });
+    version = /\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/.exec(out)?.[0] ?? null;
+  } catch {
+    version = null;
+  }
+  versions.set(key, version);
+  return version;
 }

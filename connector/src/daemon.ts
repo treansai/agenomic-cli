@@ -5,13 +5,13 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { RunnerApi } from './api.ts';
 import { manifest } from './capabilities.ts';
-import { ClaudeSession, sdkPackage, sdkVersion } from './claude.ts';
+import { ClaudeSession, claudeCodeVersion, sdkVersion } from './claude.ts';
 import { CodexSession, codexVersion } from './codex.ts';
 import { DEFAULT_CAPTURE, paths, type Capture, type ConnectorConfig, type Mode, type WorkspaceConfig } from './config.ts';
 import { EventSink } from './events.ts';
 import { clean } from './redact.ts';
 import { SessionContext, type Runtime, type Verdict } from './session.ts';
-import { errorMessage, log, readJson, sleep, ulid, writeSecretFile } from './util.ts';
+import { errorMessage, log, readJson, resolveExecutable, sleep, ulid, writeSecretFile } from './util.ts';
 import * as ws from './workspace.ts';
 
 const VERSION = '0.1.0';
@@ -32,11 +32,6 @@ interface Managed {
 
 interface Persisted {
   [codingSessionId: string]: { runtime: Runtime; cwd: string; base_revision: string | null; native_id?: string; mode: Mode; capture: Capture; workspace_id?: string };
-}
-
-/** Version of the Claude Code binary the pinned SDK bundles. */
-function claudeVersion(): string | null {
-  return sdkPackage()?.claudeCodeVersion ?? null;
 }
 
 export function sandboxAvailable(): { ok: boolean; detail: string } {
@@ -82,18 +77,26 @@ export class Daemon {
   runtimes(): any[] {
     const out: any[] = [];
     const sb = sandboxAvailable();
-    if (this.cfg.runtimes.claude_code.enabled) {
+    // The version is the one of the binary sessions run (a configured
+    // executable reports its own): a probe of another binary never
+    // validates it. One that cannot tell its version stays listed, with
+    // nothing validated.
+    const cc = this.cfg.runtimes.claude_code;
+    if (cc.enabled) {
       const sdk = sdkVersion();
-      const version = claudeVersion() ?? sdk ?? 'unknown';
       if (sdk) {
+        const version = claudeCodeVersion(cc);
         const caps = manifest('claude_code', 'sdk', version);
         if (!sb.ok) caps.pre_tool_control = { ...caps.pre_tool_control!, validated: 'unsupported', detail: `sandbox unavailable: ${sb.detail}` };
-        out.push({ runtime: 'claude_code', version, sdk_version: sdk, surfaces: ['sdk', 'cli_hooks'], capabilities: caps });
+        out.push({ runtime: 'claude_code', version: version ?? 'unknown', sdk_version: sdk, surfaces: ['sdk', 'cli_hooks'], capabilities: caps });
       }
     }
-    if (this.cfg.runtimes.codex.enabled) {
-      const version = codexVersion(this.cfg.runtimes.codex);
-      if (version) out.push({ runtime: 'codex', version, surfaces: ['app_server'], capabilities: manifest('codex', 'app_server', version) });
+    const cx = this.cfg.runtimes.codex;
+    if (cx.enabled) {
+      const version = codexVersion(cx);
+      if (version || (cx.executable && resolveExecutable(cx.executable))) {
+        out.push({ runtime: 'codex', version: version ?? 'unknown', surfaces: ['app_server'], capabilities: manifest('codex', 'app_server', version) });
+      }
     }
     return out;
   }

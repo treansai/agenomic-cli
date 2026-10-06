@@ -8,7 +8,7 @@ import { paths, type RuntimeConfig } from './config.ts';
 import { clean } from './redact.ts';
 import { installCodex } from './hooks-install.ts';
 import { isTestCommand, type SessionContext } from './session.ts';
-import { errorMessage, log } from './util.ts';
+import { errorMessage, executableVersion, log } from './util.ts';
 import * as ws from './workspace.ts';
 
 /** Methods this adapter calls. Nothing else of the App Server is reachable from Agenomic. */
@@ -21,14 +21,15 @@ export function codexExecutable(runtime: RuntimeConfig): string {
   return path.join(pkg, 'bin', 'codex.js');
 }
 
+/** Version of the Codex binary a session runs: a configured executable's own, or the pinned package's. */
 export function codexVersion(runtime: RuntimeConfig): string | null {
+  if (runtime.executable) return executableVersion(runtime.executable);
   try {
     const req = createRequire(import.meta.url);
-    if (!runtime.executable) return (req('@openai/codex/package.json') as { version: string }).version;
+    return (req('@openai/codex/package.json') as { version: string }).version;
   } catch {
-    /* fall through */
+    return null;
   }
-  return null;
 }
 
 interface Pending {

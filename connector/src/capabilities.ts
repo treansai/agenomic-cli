@@ -90,7 +90,8 @@ export function saveProbe(p: ProbeResult): void {
 export function manifest(runtime: string, surface: string, version: string | null): Record<string, CapEntry> {
   const announced = ANNOUNCED[`${runtime}:${surface}`];
   if (!announced) return {};
-  const probe = loadProbes().find((p) => p.runtime === runtime && p.surface === surface && p.version === version);
+  // A binary whose version is unknown is never matched with a probe.
+  const probe = version && version !== 'unknown' ? loadProbes().find((p) => p.runtime === runtime && p.surface === surface && p.version === version) : undefined;
   const out: Record<string, CapEntry> = {};
   for (const name of ORDER) {
     const [state, detail] = announced[name];

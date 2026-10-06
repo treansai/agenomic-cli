@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { paths, type RuntimeConfig } from './config.ts';
 import { clean } from './redact.ts';
 import { commandText, isTestCommand, type SessionContext, type Verdict } from './session.ts';
-import { errorMessage, log, realPathEscapes } from './util.ts';
+import { errorMessage, executableVersion, log, realPathEscapes } from './util.ts';
 import * as ws from './workspace.ts';
 
 // Pinned in package.json; imported lazily so `hooks install` and `enroll`
@@ -38,6 +38,16 @@ export function sdkPackage(): { version: string; claudeCodeVersion?: string } | 
 
 export function sdkVersion(): string | null {
   return sdkPackage()?.version ?? null;
+}
+
+/**
+ * Version of the Claude Code binary a session runs: what a configured
+ * executable reports itself, otherwise the version the pinned SDK
+ * bundles. Never the bundled version for a custom executable.
+ */
+export function claudeCodeVersion(runtime: RuntimeConfig): string | null {
+  if (runtime.executable) return executableVersion(runtime.executable);
+  return sdkPackage()?.claudeCodeVersion ?? null;
 }
 
 class Inbox<T> implements AsyncIterable<T> {

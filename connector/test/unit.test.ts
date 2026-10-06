@@ -5,7 +5,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { RunnerApi } from '../src/api.ts';
+import { saveProbe } from '../src/capabilities.ts';
+import { claudeCodeVersion, sdkPackage } from '../src/claude.ts';
+import { codexVersion } from '../src/codex.ts';
 import { defaultConfig, localFailMode, paths, saveConfig } from '../src/config.ts';
+import { Daemon } from '../src/daemon.ts';
 import { EventSink } from '../src/events.ts';
 import { eventOf } from '../src/hook.ts';
 import { apply, codexBlock, hookCommand, planClaude, planCodex } from '../src/hooks-install.ts';
@@ -222,4 +226,59 @@ test('test commands are recognised, quoted or not; the signal stays derived', ()
   assert.ok(isTestCommand("/bin/bash -lc 'node --test'"));
   assert.ok(isTestCommand('cargo test -p x'));
   assert.ok(!isTestCommand('echo testing'));
+});
+
+/** An executable that prints `line` for `--version`. */
+function fakeBinary(line: string): string {
+  const file = path.join(tmp('agn-bin-'), 'runtime');
+  fs.writeFileSync(file, `#!/bin/sh\necho '${line}'\n`, { mode: 0o755 });
+  return file;
+}
+
+test('a configured runtime executable reports its own version; a probe of another binary does not validate it', () => {
+  const home = tmp('agn-home-');
+  const prev = process.env.AGENOMIC_CONNECTOR_HOME;
+  process.env.AGENOMIC_CONNECTOR_HOME = home;
+  try {
+    const claude = fakeBinary('9.8.7 (Claude Code)');
+    const codex = fakeBinary('codex-cli 1.2.3');
+    const rt = (executable?: string) => ({ enabled: true, executable, env_passthrough: [], extra_env: {}, allowed_domains: [] });
+    assert.equal(claudeCodeVersion(rt(claude)), '9.8.7');
+    assert.equal(claudeCodeVersion(rt()), sdkPackage()!.claudeCodeVersion, 'the bundled binary: the version the SDK pins');
+    assert.equal(codexVersion(rt(codex)), '1.2.3');
+    assert.equal(codexVersion(rt(path.join(home, 'missing'))), null);
+    assert.equal(codexVersion(rt(fakeBinary('no version here'))), null);
+
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    const api = new RunnerApi('http://127.0.0.1:9', { access_token: 'a', refresh_token: 'r', access_expires_at: new Date(Date.now() + 3600e3).toISOString(), refresh_expires_at: new Date(Date.now() + 3600e3).toISOString() }, false);
+    // Probes of the bundled binaries, as `doctor --probe` with the default configuration records them.
+    const ok = { ok: true, detail: 'probe' };
+    saveProbe({ runtime: 'claude_code', surface: 'sdk', version: sdkPackage()!.claudeCodeVersion!, at: '', results: { observe: ok } });
+    saveProbe({ runtime: 'codex', surface: 'app_server', version: codexVersion(rt())!, at: '', results: { observe: ok } });
+    const bundled = new Daemon(cfg, api).runtimes();
+    assert.equal(bundled.find((r) => r.runtime === 'claude_code').capabilities.observe.validated, 'supported_tested');
+    assert.equal(bundled.find((r) => r.runtime === 'codex').capabilities.observe.validated, 'supported_tested');
+
+    cfg.runtimes.claude_code.executable = claude;
+    cfg.runtimes.codex.executable = codex;
+    const custom = new Daemon(cfg, api).runtimes();
+    const cc = custom.find((r) => r.runtime === 'claude_code');
+    const cx = custom.find((r) => r.runtime === 'codex');
+    assert.equal(cc.version, '9.8.7');
+    assert.equal(cc.capabilities.observe.validated, 'unknown', 'the bundled binary probe does not validate a custom one');
+    assert.ok(cx, 'a custom Codex executable stays in the heartbeat');
+    assert.equal(cx.version, '1.2.3');
+    assert.equal(cx.capabilities.observe.validated, 'unknown');
+    saveProbe({ runtime: 'claude_code', surface: 'sdk', version: '9.8.7', at: '', results: { observe: ok } });
+    assert.equal(new Daemon(cfg, api).runtimes().find((r) => r.runtime === 'claude_code').capabilities.observe.validated, 'supported_tested');
+
+    // A binary that cannot tell its version is listed, with nothing validated.
+    cfg.runtimes.codex.executable = fakeBinary('no version here');
+    const unknown = new Daemon(cfg, api).runtimes().find((r) => r.runtime === 'codex');
+    assert.equal(unknown.version, 'unknown');
+    assert.equal(unknown.capabilities.observe.validated, 'unknown');
+  } finally {
+    if (prev === undefined) delete process.env.AGENOMIC_CONNECTOR_HOME;
+    else process.env.AGENOMIC_CONNECTOR_HOME = prev;
+  }
 });
