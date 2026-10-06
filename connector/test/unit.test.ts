@@ -19,7 +19,7 @@ import { clean, redact } from '../src/redact.ts';
 import { protection, TOOL_IDS } from '../src/protection.ts';
 import { ProbeApi, probeConfig, probedVersion, runProbe, tempRepo } from '../src/probe.ts';
 import { isTestCommand, type SessionContext } from '../src/session.ts';
-import { realPathEscapes, ulid } from '../src/util.ts';
+import { realPathEscapes, sleep, ulid } from '../src/util.ts';
 import * as ws from '../src/workspace.ts';
 
 const tmp = (p: string) => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), p)));
@@ -268,6 +268,70 @@ test('event sink: bounded memory, evidence spooled to disk while offline, then d
   assert.ok(!JSON.stringify(api.sent).includes('secretsecret'), 'redacted before buffering');
   const seqs = api.sent.map((e) => e.producer_seq);
   assert.equal(new Set(seqs).size, seqs.length, 'producer sequence numbers are unique');
+});
+
+/** A runner API whose event sends wait until the test settles them. */
+class GatedApi extends RunnerApi {
+  hold = true;
+  sent: any[] = [];
+  /** The batches whose send is waiting. */
+  waiting: any[][] = [];
+  private readonly gates: ((ok: boolean) => void)[] = [];
+  constructor() {
+    super('http://127.0.0.1:9', { access_token: 'a', refresh_token: 'r', access_expires_at: new Date(Date.now() + 3600e3).toISOString(), refresh_expires_at: new Date(Date.now() + 3600e3).toISOString() }, false);
+  }
+  override async request<T>(_m: string, _p: string, opts: { body?: any } = {}): Promise<T> {
+    if (this.hold) this.waiting.push(opts.body.events);
+    if (this.hold && !(await new Promise<boolean>((resolve) => this.gates.push(resolve)))) throw new Error('offline');
+    this.sent.push(...opts.body.events);
+    return {} as T;
+  }
+  async inFlight(): Promise<void> {
+    while (this.gates.length === 0) await sleep(5);
+  }
+  /** Lets the send in flight succeed or fail; later sends no longer wait. */
+  settle(ok: boolean): void {
+    this.hold = false;
+    this.gates.shift()!(ok);
+  }
+}
+
+test('event sink: a burst during a slow send neither loses nor duplicates evidence', async () => {
+  for (const inFlight of ['queue batch', 'spool batch'] as const) {
+    for (const ok of [true, false]) {
+      const at = `${inFlight}, send ${ok ? 'succeeds' : 'fails'}`;
+      const api = new GatedApi();
+      const sink = new EventSink(api, randomUUID(), () => [], tmp('agn-spool-'), { maxBuffered: 6, maxSpoolBytes: 1 << 20, batchSize: 3, flushIntervalMs: 60000 });
+      const emitted: any[] = [];
+      // Evidence (tool.started) and droppable telemetry (message.assistant).
+      const burst = (n: number) => {
+        for (let i = 0; i < n; i++) emitted.push(sink.emit(emitted.length % 3 === 1 ? 'message.assistant' : 'tool.started', 'runtime', 'native', { i: emitted.length }));
+      };
+      // queue batch: three events start a flush, sent from the queue.
+      // spool batch: ten events overflow the queue first, so the flush
+      // starts with the evidence spilled to disk.
+      burst(inFlight === 'queue batch' ? 3 : 10);
+      await api.inFlight();
+      const first = api.waiting[0]!.map((e) => e.event_id);
+      assert.deepEqual(first, inFlight === 'queue batch' ? emitted.slice(0, 3).map((e) => e.event_id) : [emitted[0].event_id], `${at}: the batch in flight`);
+      // A burst well over maxBuffered while that batch is in flight.
+      burst(20);
+      api.settle(ok);
+      await sink.flush();
+      await sink.close();
+      assert.equal(sink.pending(), 0, at);
+      const ids = api.sent.map((e) => e.event_id);
+      assert.equal(new Set(ids).size, ids.length, `${at}: no event is delivered twice`);
+      const evidence = emitted.filter((e) => e.type === 'tool.started');
+      const delivered = api.sent.filter((e) => e.type === 'tool.started');
+      assert.deepEqual(delivered.map((e) => e.event_id).sort(), evidence.map((e) => e.event_id).sort(), `${at}: every evidence event is delivered`);
+      const seqs = delivered.map((e) => e.producer_seq);
+      assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b), `${at}: evidence keeps its order`);
+      const lost = emitted.filter((e) => e.type === 'message.assistant' && !ids.includes(e.event_id)).length;
+      const reported = api.sent.filter((e) => e.type === 'error' && e.payload.code === 'events_dropped').reduce((n, e) => n + e.payload.count, 0);
+      assert.equal(reported, lost, `${at}: every dropped event is counted`);
+    }
+  }
 });
 
 test('workspace: dedicated worktree, existing branches and human changes untouched', () => {
