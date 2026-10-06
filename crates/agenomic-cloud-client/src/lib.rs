@@ -464,7 +464,7 @@ impl CloudClient {
             let body = resp.text().await.unwrap_or_default();
             let hint = endpoint_hint(status, &body);
             return Err(CliError::Network(format!(
-                "whoami: HTTP {status} — {body}{hint}",
+                "whoami: HTTP {status}: {body}{hint}",
                 body = truncate_for_error(&body)
             )));
         }
@@ -476,7 +476,7 @@ impl CloudClient {
             CliError::Network(format!(
                 "whoami parse: {e} (content-type: {ct}, body: {body}). \
                  Hint: this usually means the configured endpoint is not the \
-                 Agenomic Cloud API gateway — check that `--endpoint` points to \
+                 Agenomic Cloud API gateway; check that `--endpoint` points to \
                  the API service (e.g. https://api.agenomic.io), not the web UI.",
                 ct = if content_type.is_empty() {
                     "<none>"
@@ -1475,7 +1475,11 @@ fn truncate_for_error(body: &str) -> String {
     if trimmed.len() <= MAX {
         return trimmed.to_string();
     }
-    format!("{}… (+{} bytes)", &trimmed[..MAX], trimmed.len() - MAX)
+    let cut = (0..=MAX)
+        .rev()
+        .find(|index| trimmed.is_char_boundary(*index))
+        .unwrap_or(0);
+    format!("{}… (+{} bytes)", &trimmed[..cut], trimmed.len() - cut)
 }
 
 /// Build the "is your endpoint right?" hint for non-success responses

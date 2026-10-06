@@ -87,6 +87,13 @@ New code for managed prompts carries no comments; the reasons live here.
   new exit code 21, 401 and 403 to 5, 400, 404 and 422 to 1, the rest to
   6). Its body excerpt is cut on characters, not bytes, so a non-ASCII
   error body cannot panic.
+- `truncate_for_error` cuts on a character boundary too: `prompts export`
+  and URI references call `whoami`, and a whoami body over 240 bytes with
+  a multibyte character across byte 240 (a localized web page behind a
+  wrong endpoint) made the command panic
+  (`export_reports_a_non_ascii_whoami_body_without_panicking`). The two
+  whoami messages these commands print use a colon and a semicolon
+  instead of em dashes, like the `HashMismatch` text.
 - Help text of the new clap commands uses `about` and `help` attributes
   rather than doc comments, so that no new comments are added.
 - The prompt schemas under `schemas/` are verbatim copies of the

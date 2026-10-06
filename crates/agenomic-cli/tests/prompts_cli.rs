@@ -285,6 +285,23 @@ async fn mount_planner(server: &MockServer, served: &Value) {
         .await;
 }
 
+async fn assert_every_request_sent_the_key(server: &MockServer) {
+    let received = server.received_requests().await.unwrap();
+    assert!(!received.is_empty());
+    for request in &received {
+        assert_eq!(
+            request
+                .headers
+                .get("x-api-key")
+                .and_then(|value| value.to_str().ok()),
+            Some(KEY),
+            "{} {}",
+            request.method,
+            request.url
+        );
+    }
+}
+
 fn requests(received: &[Request]) -> Vec<String> {
     received
         .iter()
@@ -509,6 +526,7 @@ async fn push_creates_a_missing_prompt_then_publishes_version_1() {
     assert_eq!(summary["created"], true);
     assert_eq!(summary["content_digest"], json!(digest(&greeting)));
     server.verify().await;
+    assert_every_request_sent_the_key(&server).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -541,6 +559,7 @@ async fn push_conflict_exits_21_and_dry_run_sends_nothing() {
     assert_exit(&output, 0);
     insta::assert_snapshot!("push_dry_run", stdout(&output));
     assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    assert_every_request_sent_the_key(&server).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -587,6 +606,7 @@ async fn push_refuses_a_stale_file_digest_and_a_diverging_server_digest() {
     let output = env.run(&["prompts", "push", &fresh]);
     assert_exit(&output, 1);
     assert_stderr(&output, "hint");
+    assert_every_request_sent_the_key(&server).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -640,6 +660,7 @@ async fn get_writes_a_verified_prompt_file_and_resolves_aliases_once() {
         stdout(&output),
         "Plan the next step for order 42.\nNever share internal notes.\n"
     );
+    assert_every_request_sent_the_key(&server).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -707,6 +728,7 @@ async fn pull_all_writes_every_version_under_the_prompt_directory() {
         assert_eq!(file["version"], version);
         assert_eq!(file["schema"], "agenomic.prompt_file/v1");
     }
+    assert_every_request_sent_the_key(&server).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -754,6 +776,7 @@ async fn pull_all_writes_nothing_when_any_version_fails_its_digest() {
     assert_stderr(&output, "prompt_digest_mismatch");
     assert!(!env.dir().join("prompts").exists());
     server.verify().await;
+    assert_every_request_sent_the_key(&server).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -861,6 +884,38 @@ async fn export_of_a_tampered_bundle_exits_1_and_writes_nothing() {
     ]);
     assert_exit(&output, 1);
     assert_stderr(&output, "prompt_digest_mismatch");
+    assert!(!env.dir().join("bundle.json").exists());
+    assert_every_request_sent_the_key(&server).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn export_reports_a_non_ascii_whoami_body_without_panicking() {
+    let server = MockServer::start().await;
+    let env = Env::cloud(&server);
+    let page = format!(
+        "<!DOCTYPE html><html><body>{}\u{e9}t\u{e9} indisponible</body></html>",
+        "a".repeat(212)
+    );
+    assert!(!page.is_char_boundary(240));
+    Mock::given(method("GET"))
+        .and(path("/v1/whoami"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(page, "text/html"))
+        .mount(&server)
+        .await;
+    let output = env.run(&[
+        "prompts",
+        "export",
+        "--agent",
+        AGENT,
+        "--channel",
+        "production",
+        "-o",
+        "bundle.json",
+    ]);
+    assert_exit(&output, 6);
+    assert_stderr(&output, "whoami parse");
+    assert!(!stderr(&output).contains("panicked"), "{}", stderr(&output));
+    assert!(!stderr(&output).contains('\u{2014}'), "{}", stderr(&output));
     assert!(!env.dir().join("bundle.json").exists());
 }
 
@@ -1068,6 +1123,7 @@ async fn list_prompts_channels_and_history() {
     assert_exit(&output, 0);
     insta::assert_snapshot!("channels_history", stdout(&output));
     server.verify().await;
+    assert_every_request_sent_the_key(&server).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1123,4 +1179,5 @@ async fn render_server_parity_compares_the_rendered_hash() {
     assert_eq!(result["server"]["matches"], true);
     let output = env.run(&args);
     assert_exit(&output, 1);
+    assert_every_request_sent_the_key(&server).await;
 }
