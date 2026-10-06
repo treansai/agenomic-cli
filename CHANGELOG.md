@@ -6,6 +6,63 @@ All notable changes to `agenomic-cli` are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Managed prompts offline.** A new `agenomic-prompt` crate implements
+  RFC 0012 without network access: prompt references (`prm_x:7`,
+  `prm_x@alias`, `agenomic://` URIs), canonical JSON and `sha256:`
+  digests, the `agenomic-fstring/v1` renderer (renderer version `"1"`),
+  the `agenomic-secrets/1` patterns and the prompt bundle load procedure.
+  A bundle loads only when it is pinned by its digest or signed by a
+  trusted key; there is no escape hatch. The crate shares no code with
+  the server or the SDKs: it vendors the specification's conformance
+  vectors, pinned by `SPEC_VECTORS.lock`, and runs every vector of the
+  `rust-cli` consumer (`cargo test -p agenomic-prompt --test conformance`).
+- **`agenomic prompts list|get|pull|push|render|export`.** Downloads
+  recompute every content digest before anything is written. `push`
+  validates the template and computes the digest locally, then publishes
+  with `parent_version` from the file; pushing the same file twice
+  returns the same version, and no `Idempotency-Key` is sent. `render`
+  works offline on a prompt file or on a slot of an offline bundle, and
+  `--server` compares the local `rendered_hash` with the cloud's.
+  `export` verifies the signed bundle (digests, closure, scope, and the
+  signature with `--trust-key`) before writing it, then prints the
+  `prompt_bundle_digest` to pin in the runtime. See `docs/prompts.md`.
+- **`agenomic channels list|history|promote|rollback`.** `list` and
+  `history` read the release channels of an agent. `promote` and
+  `rollback` are hand-off commands: a channel move needs a signed-in
+  person and the CLI authenticates with an API key, so they only call
+  the read-only move preview
+  (`GET /v1/agents/{id}/channels/{name}/move-preview`). They print the
+  current and target releases with their digests, the gates, the
+  approvals and the reasons why this credential cannot move the
+  channel, then the web address where an authorized person completes
+  the move. They exit 0 and never move a channel. `--web-url` or
+  `AGENOMIC_WEB_URL` turns the preview's web path into a full address.
+- **Exit code 21 (`CloudConflict`).** On the prompt and channel
+  commands, a refusal from the cloud maps by HTTP status: 409 gives 21 (for
+  example a stale `parent_version` on `prompts push`), 401 and 403 give
+  5, 400, 404 and 422 give 1, and any other status gives 6. Bundle
+  signature, trust, expiry and governance failures give 9. Existing
+  commands keep their exit codes.
+- **Prompt schemas.** `schemas/` gains verbatim copies of the
+  specification's v0.4 `prompt-common`, `prompt-content`,
+  `prompt-manifest`, `prompt-artifact-set`, `prompt-file` and
+  `prompt-bundle` schemas, and `SchemaKind` gains the five prompt
+  document kinds.
+
+### Changed
+
+- The `HashMismatch` error now reads
+  `hash mismatch: expected ..., got ...`.
+- With managed prompts, Agenomic Cloud refuses an API key that tries to
+  approve, promote or roll back a release: `POST /v1/releases/{id}/promote`
+  and `POST /v1/releases/{id}/rollback` answer 403 `session_required`.
+  The `agenomic-cloud-client` methods `promote_release` and
+  `rollback_release` therefore fail with an API key. No `agenomic`
+  command calls them; use the web app, where
+  `agenomic channels promote` and `rollback` point.
+
 ## [0.3.0-alpha.0] - 2026-07-13
 
 ### Added
@@ -62,8 +119,8 @@ All notable changes to `agenomic-cli` are documented here. Format follows
 
 ### Added
 
-- **Signed `governance` ATEP stream.** The `governance` stream — defined since
-  the ATEP MVP but never written — now carries a tamper-evident audit trail.
+- **Signed `governance` ATEP stream.** The `governance` stream (defined since
+  the ATEP MVP but never written) now carries a tamper-evident audit trail.
   All four `agenomic governance` subcommands accept `--atep <store>
   --signing-key <key>`; each engine result is sealed as a `governance.*` event
   (`cluster_detected` / `proposal_generated` / `critique_recorded` /
@@ -75,15 +132,15 @@ All notable changes to `agenomic-cli` are documented here. Format follows
 - **Governance agents (Point 4 / BACKEND_GAPS Gap 5).** New `agenomic-governance`
   crate plus `agenomic governance {cluster,hypothesize,critique,audit}`. Three
   pure, deterministic engines over flagged production traces:
-  - `DiagnosticAgent` — groups traces by `(signal, skill)`, mines keywords
+  - `DiagnosticAgent`: groups traces by `(signal, skill)`, mines keywords
     (Mode 1: failure clustering).
-  - `HypothesisAgent` — emits typed `Proposal`s (`extend_skill_examples`,
+  - `HypothesisAgent`: emits typed `Proposal`s (`extend_skill_examples`,
     `narrow_skill_scope`, `add_policy_rule`, `escalation_overhaul`, `none`).
     **Never mutates a bundle** (Mode 2: hypothesis generation).
-  - `AdversarialReviewer` — fail-closed rule battery, verdict `pass` / `warn` /
+  - `AdversarialReviewer`: fail-closed rule battery, verdict `pass` / `warn` /
     `block` (Mode 3: adversarial review). `block` exits 16.
   `audit` chains the three end-to-end. Modes 4 (human-approval gate) and 5
-  (shadow deployment) layer above this — these engines produce the artifacts
+  (shadow deployment) layer above this; these engines produce the artifacts
   that gate consumes.
 - **`entrypoint.kind` accepts `docker` and `wasm`.** `agenomic run` now
   dispatches via `agenomic_os::launch_for_kind` to a per-kind launcher: the
@@ -91,14 +148,14 @@ All notable changes to `agenomic-cli` are documented here. Format follows
   --network=none|bridge -e <NAME> <image>`), and a new `WasmLauncher`
   (`wasmtime run [--dir …] [-S http] <module>`). All three go through the
   same fail-closed env filter, working-directory containment, and trace
-  pipeline. Declared env vars are forwarded *by name only* — values come
+  pipeline. Declared env vars are forwarded *by name only*: values come
   from the filtered child env so secrets stay out of `argv`. Schema and
   `ExecutionContract` updated; `entrypoint.image` (docker) and
   `entrypoint.module` (wasm) are validated at parse time.
 
 ### Internal
 
-- **`agenomic compile` — genome → runtime adapters.** New `agenomic-compile`
+- **`agenomic compile`: genome → runtime adapters.** New `agenomic-compile`
   crate and command that lower a bundle's `genome.yaml` into runnable,
   self-contained source under `runtime/<target>.compiled/`. Targets: `plain`
   (FastAPI + provider SDK), `langgraph`, `crewai`, `docker` (the `plain` service
@@ -135,8 +192,8 @@ All notable changes to `agenomic-cli` are documented here. Format follows
 - **`--version` now reports the git tag (git-based versioning).** `agenomic
   --version` / `agm --version` resolve the version at build time: the release
   workflow injects the pushed tag (e.g. `v0.2.0-rc.0`) via `AGENOMIC_VERSION`, so
-  every published target — including the cross-compiled ones built in a git-less
-  container — reports the tag. Local builds derive it from `git describe --tags
+  every published target (including the cross-compiled ones built in a git-less
+  container) reports the tag. Local builds derive it from `git describe --tags
   --match=v*` (nearest version tag plus commit/dirty info), falling back to the
   crate version when built outside a git checkout. Tagging `vX` therefore yields
   a binary whose `--version` is `vX`.
@@ -144,7 +201,7 @@ All notable changes to `agenomic-cli` are documented here. Format follows
   login` no longer requires `--endpoint`, and the cloud push commands
   (`push-agent`, `push-release`, `push-replay`, `push-attestation`), `bucket
   use`, and `whoami` fall back to the hosted cloud when no endpoint is
-  configured — set `--endpoint` / `AGENOMIC_ENDPOINT` only to target a
+  configured; set `--endpoint` / `AGENOMIC_ENDPOINT` only to target a
   self-hosted or staging deployment. The default is the **API gateway**
   (`api.agenomic.io`), not the dashboard (`app.agenomic.io`): the dashboard
   does not serve the `/v1/*` routes the CLI calls and 404s on them. The "no

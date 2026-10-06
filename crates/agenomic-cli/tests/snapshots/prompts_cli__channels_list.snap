@@ -1,0 +1,7 @@
+---
+source: crates/agenomic-cli/tests/prompts_cli.rs
+expression: stdout(&output)
+---
+CHANNEL     RELEASE  RELEASE ID                            GENERATION  PROTECTED
+production  av_0042  1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d  12          true
+staging     -        -                                     1           false

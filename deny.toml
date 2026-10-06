@@ -108,6 +108,10 @@ name = "agenomic-policy"
 allow = ["AGPL-3.0-only"]
 
 [[licenses.exceptions]]
+name = "agenomic-prompt"
+allow = ["AGPL-3.0-only"]
+
+[[licenses.exceptions]]
 name = "agenomic-replay-local"
 allow = ["AGPL-3.0-only"]
 

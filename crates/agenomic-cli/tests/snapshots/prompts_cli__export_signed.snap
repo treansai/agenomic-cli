@@ -1,0 +1,11 @@
+---
+source: crates/agenomic-cli/tests/prompts_cli.rs
+expression: env.redact(&stdout(&output))
+---
+wrote bundle.json
+prompt_bundle_digest: sha256:8a9edcf57a30f18807c101da92d8e8671ff4f3cc087827a35a5b72098bef694a
+prompt_manifest_digest: sha256:a761a1e240b9213aed6c144491ca6bb523a82476749dcf045158949ede7af6e7
+expires_at: 2099-01-01T00:00:00Z
+governance: {"approved":true,"channel":"production","channel_protected":true,"release_status":"production"}
+signature: verified (key orgkey_test)
+pin it as expected_bundle_digest (Python) or expectedBundleDigest (TypeScript): sha256:8a9edcf57a30f18807c101da92d8e8671ff4f3cc087827a35a5b72098bef694a

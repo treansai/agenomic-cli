@@ -1,0 +1,6 @@
+---
+source: crates/agenomic-cli/tests/prompts_cli.rs
+expression: stdout(&output)
+---
+Plan the next step for order 42.
+Never share internal notes.

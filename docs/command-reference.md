@@ -29,6 +29,12 @@ Every `agenomic` command, their flags, and exit codes.
 | 16 | OsPolicyViolation | A Rego policy gate denied `run`/`policy eval`, or the Tool Boundary Gate blocked a tool call |
 | 18 | ToolBoundaryReviewRequired | `agenomic gate check` held a tool call for human review |
 | 19 | LedgerIntegrityFailed | `agenomic ledger verify` found tampering, a chain break, or a conflict |
+| 21 | CloudConflict | The cloud answered 409 (for example `prompt_version_conflict` on `agenomic prompts push`) |
+
+On the `prompts` and `channels` commands, a refusal from the cloud maps
+by HTTP status: 409 gives 21, 401 and 403 give 5, 400, 404 and 422
+give 1, and any other status gives 6. The message names the error code
+of the cloud (`{"error": {"code", "message"}}`) when the body has one.
 
 ## Commands
 
@@ -40,7 +46,7 @@ Scaffold a bundle directory with `genome.yaml`, `agent.lock.yaml`,
 When `PATH` already contains a recognised project manifest
 (`pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`, or an
 existing `agenomic.yaml`), `init` runs detection and fills the
-generated files with values taken from the repository — project name,
+generated files with values taken from the repository: project name,
 authors, description, framework (`google-adk` / `langgraph` /
 `langchain` / `openai-agents` / `crewai` / `llama-index` / `custom`),
 model provider, entrypoint, tools, and memory backend.
@@ -80,15 +86,15 @@ Compile the bundle's `genome.yaml` into runnable runtime adapters under
 `runtime/<target>.compiled/` (the `genome → runtime` step of the bundle format).
 With no `--target` and no `--all`, every target is compiled. Targets:
 
-- `plain` — FastAPI service calling the provider SDK directly.
-- `langgraph` — a `StateGraph` with one node per skill.
-- `crewai` — a Crew with one `Task` per skill.
-- `google-adk` — a Google Agent Development Kit agent exposing `root_agent`,
+- `plain`: FastAPI service calling the provider SDK directly.
+- `langgraph`: a `StateGraph` with one node per skill.
+- `crewai`: a Crew with one `Task` per skill.
+- `google-adk`: a Google Agent Development Kit agent exposing `root_agent`,
   runnable with `adk run` / `adk web` and deployable via Google's
   [`agents-cli`](https://github.com/google/agents-cli). Gemini models bind
   natively; other providers route through ADK's `LiteLlm` wrapper.
-- `docker` — the `plain` service packaged as an OCI image (pinned `Dockerfile`).
-- `wasm` — a `componentize-py` WASI component exporting `agenomic:agent/invoke`
+- `docker`: the `plain` service packaged as an OCI image (pinned `Dockerfile`).
+- `wasm`: a `componentize-py` WASI component exporting `agenomic:agent/invoke`
   (prompts inlined; outbound model calls need a WASI-HTTP-capable host).
 
 Each compiled tree is self-contained: the system prompt and skill prompts are
@@ -104,20 +110,20 @@ live MCP servers is the operator's integration step.
 ### `agenomic governance cluster <TRACES.jsonl>`
 
 Group a stream of flagged production traces by `(signal, skill)` and surface
-the top keywords per cluster (Mode 1 of Point 4 — "failure clustering"). Input
+the top keywords per cluster (Mode 1 of Point 4, "failure clustering"). Input
 is one JSON object per line with `{trace_id, agent_id, skill, signal,
 input_snippet, output_snippet}`; pass `-` for stdin. Output is deterministic.
 
 ### `agenomic governance hypothesize <CLUSTERS.json>`
 
-Turn each cluster into a textual remediation proposal (Mode 2 — "hypothesis
+Turn each cluster into a textual remediation proposal (Mode 2, "hypothesis
 generation"). The hypothesis agent **never mutates a bundle**; it produces JSON
 a human reads. Action kinds: `extend_skill_examples`, `narrow_skill_scope`,
 `add_policy_rule`, `escalation_overhaul`, `none`.
 
 ### `agenomic governance critique <PROPOSAL.json>`
 
-Adversarially review one proposal (Mode 3 — "adversarial reviewer"). Heuristics
+Adversarially review one proposal (Mode 3, "adversarial reviewer"). Heuristics
 include "evidence base too small (<3 traces)", "large prompt expansion risks
 over-triggering", "scope narrowing without explicit exclusions masks the
 failure", and "policy rule lacks an anchoring keyword". Verdict is `pass` /
@@ -136,7 +142,7 @@ All four governance subcommands accept `--atep <STORE>` and `--signing-key
 <KEY>` (used together). When set, the engine's results are sealed onto the
 store's ATEP `governance` stream as a hash-linked batch of signed events:
 `governance.cluster_detected`, `governance.proposal_generated`,
-`governance.critique_recorded`, and — for `audit` — a closing
+`governance.critique_recorded`, and (for `audit`) a closing
 `governance.audit_completed` summary. Each batch chains onto the stream's
 existing head (parents = prior event's causal hash) and continues `stream_seq`,
 so repeated runs build one tamper-evident trail. The store must already be
@@ -147,12 +153,12 @@ and the new `store_merkle_root`.
 
 ### `agenomic gate check <TOOL-CALL.json> [--policy DIR] [--rules FILE] [--approval FILE] [--executed]`
 
-Run a proposed tool call through the **Tool Boundary Gate** — deterministic,
+Run a proposed tool call through the **Tool Boundary Gate**: deterministic,
 at-the-effect enforcement that never calls an LLM. Layers a non-negotiable rule
 set (tool allowlist & scopes, self-modification, path traversal / sensitive
 files, PII / exfiltration to unapproved external recipients, irreversible
 effects) over the reused fail-closed Rego gate. Arguments are `untrusted` by
-default — provenance from model / tool / MCP / skill content is held to stricter
+default; provenance from model / tool / MCP / skill content is held to stricter
 rules. Exits `0` (allow), `16` (block), or `18` (human review required).
 
 `--policy DIR` (default `.`) holds a `policies/` folder (Rego) and an optional
@@ -271,6 +277,84 @@ Enqueue a cloud replay job.
 
 Create a cloud attestation from an existing release + replay job.
 
+### Managed prompts
+
+The `prompts` and `channels` commands are documented in
+[prompts.md](prompts.md). Offline commands need no profile; the others
+use the active cloud profile and send `x-api-key`.
+
+#### `agenomic prompts list [--query Q] [--tag T]... [--limit N] [--cursor C]`
+
+`GET /v1/prompts`. Table by default, the raw page with `--format json`.
+
+#### `agenomic prompts get <REF> [-o FILE]`
+
+Downloads one version as an `agenomic.prompt_file/v1` document. `REF`
+is `prm_x` (latest version), `prm_x:7`, `prm_x@alias` (resolved once
+through `POST /v1/prompts/resolve`) or an `agenomic://` URI of the
+current workspace. The content digest of the version and of every
+fragment is recomputed locally; a mismatch exits 1.
+
+#### `agenomic prompts push <FILE> [--message M] [--dry-run]`
+
+Validates the file against `schemas/prompt-file.schema.json`, checks
+its `content_digest` when present, validates the template locally and
+computes the digest. Without `--dry-run` it publishes with
+`POST /v1/prompts/{id}/versions` (creating the prompt first when the
+cloud answers `prompt_not_found`) and requires the server digest to
+equal the local one. A stale `parent_version` exits 21.
+
+#### `agenomic prompts pull <PROMPT_ID|REF> [--all] [--dir DIR]`
+
+Writes `DIR/<prompt_id>/<n>.prompt.json`. `--all` takes a bare prompt
+id and downloads every version.
+
+#### `agenomic prompts render <FILE|REF> [--var NAME=VALUE]... [--vars FILE] [--server]`
+
+#### `agenomic prompts render --bundle FILE --slot SLOT --workspace UUID --agent UUID (--expect-bundle-digest D | --trust-key PEM)`
+
+Renders with the `agenomic-fstring/v1` renderer, version `"1"`. A file
+or a bundle renders offline; a reference downloads the version first.
+`--server` also calls `POST /v1/prompts/render` and exits 1 when the
+`rendered_hash` differs. Render errors exit 1 before anything else
+happens.
+
+#### `agenomic prompts export --agent UUID (--channel NAME | --release UUID) -o FILE [--trust-key PEM] [--expires-in-days N]`
+
+`GET /v1/agents/{id}/prompt-bundle`. Verifies every digest, the closure
+and the scope (and the signature with `--trust-key`, exit 9 when it
+fails) before writing the file, then prints `prompt_bundle_digest` to
+pin offline loads.
+
+#### `agenomic channels list --agent UUID`
+
+`GET /v1/agents/{id}/channels`: name, release, release id, generation
+and protection of every channel of the agent.
+
+#### `agenomic channels history --agent UUID <CHANNEL> [--after N] [--limit N]`
+
+`GET /v1/agents/{id}/channels/{name}/history`: generation, action, from
+and to releases, actor and reason of each move, oldest first. The human
+output prints the `--after` value of the next page.
+
+#### `agenomic channels promote --agent UUID <CHANNEL> --release UUID [--web-url URL]`
+
+#### `agenomic channels rollback --agent UUID <CHANNEL> [--to-release UUID] [--web-url URL]`
+
+Hand-off commands. They call only the read-only move preview
+(`GET /v1/agents/{id}/channels/{name}/move-preview`), print the
+current release and the release the move would point the channel to
+(`candidate` for a promotion; `target` for a rollback, which is the
+`--to-release` value or the default target, with a `default` line
+when they differ), their genome and manifest digests, the gates, the
+approvals, the reasons why this credential cannot move the channel
+(always `session_required` for an API key) and the web address where
+an authorized person completes the move with a session, then exit 0.
+They never move a channel: channel moves are session only and the CLI
+authenticates with an API key. `--format json` prints
+`{action, channel, moved: false, move_url, preview}` with the cloud's
+preview unchanged. An unknown release or channel exits 1.
+
 ### `agenomic bundle extract <ARCHIVE> <DIR>`
 
 Extract a `.bundle.tar.zst`.
@@ -308,7 +392,7 @@ signing key if none exists.
 ### `agenomic ledger append --event FILE`
 
 Append one event (JSON: `agent_id`, `run_id`, `event_type`, `payload`, and
-optional ids). The payload is committed by hash — raw content never enters
+optional ids). The payload is committed by hash; raw content never enters
 the ledger or the WAL. Same `event_id` + same payload is idempotent; a
 divergent payload is a conflict (exit 19) recorded in the dead-letter store.
 
@@ -346,15 +430,15 @@ public half only.
 
 ### Ledger integrations
 
-- `agenomic track start --ledger [--ledger-store DIR] [--ledger-keys DIR]` —
+- `agenomic track start --ledger [--ledger-store DIR] [--ledger-keys DIR]`:
   bind the session: lifecycle + every ingested event are hash-committed to
   the ledger. `agenomic track report --include-ledger-proof` attaches the
   proof block (root hash, run chain head, block ids, key ids,
   verification/gap/queue-loss status); the report hash covers it.
-- `agenomic governance <cluster|hypothesize|critique|audit> … --ledger` —
+- `agenomic governance <cluster|hypothesize|critique|audit> … --ledger`:
   dual-emit engine results to the ledger alongside the signed ATEP
   `governance` stream (never instead of it).
-- `agenomic replay … --from-ledger RUN` — verify the run's ledger chain
+- `agenomic replay … --from-ledger RUN`: verify the run's ledger chain
   BEFORE replaying (exit 19 on failure) and attach the ledger proof to the
   replay report. Provenance/integrity only: replay stays statistical.
 
@@ -367,5 +451,5 @@ non-probative status and the platform legal notice.
 
 ### `agenomic evidence verify <DIR>`
 
-Re-verify a proof bundle on a clean machine — no keystore, no network;
+Re-verify a proof bundle on a clean machine (no keystore, no network);
 public keys ship inside. Exit 19 on any failure.

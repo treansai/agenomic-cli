@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agenomic.dev/spec/v0.4/prompt-artifact-set.schema.json",
+  "title": "Agenomic prompt artifact set (v0.4)",
+  "description": "The `agenomic.prompt_artifact_set/v1` projection of a prompt bundle (RFC 0012): the root manifest and its digest, every pinned child manifest and every pinned prompt version, copied verbatim from the bundle. Its sha256 digest is the `prompt_bundle_digest`, which identifies the artifact closure independently of export time, governance and signer.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "prompt_manifest_digest", "manifest", "children", "prompts"],
+  "properties": {
+    "schema": { "const": "agenomic.prompt_artifact_set/v1" },
+    "prompt_manifest_digest": { "$ref": "prompt-common.schema.json#/$defs/sha256Digest" },
+    "manifest": { "$ref": "prompt-manifest.schema.json" },
+    "children": { "$ref": "#/$defs/children" },
+    "prompts": { "$ref": "#/$defs/prompts" }
+  },
+  "$defs": {
+    "children": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": { "$ref": "prompt-common.schema.json#/$defs/uuidLower" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["release_id", "genome_version", "prompt_manifest_digest", "manifest"],
+        "properties": {
+          "release_id": { "$ref": "prompt-common.schema.json#/$defs/uuidLower" },
+          "genome_version": {
+            "anyOf": [
+              { "$ref": "prompt-common.schema.json#/$defs/sha256Digest" },
+              { "type": "null" }
+            ]
+          },
+          "prompt_manifest_digest": { "$ref": "prompt-common.schema.json#/$defs/sha256Digest" },
+          "manifest": { "$ref": "prompt-manifest.schema.json" }
+        }
+      }
+    },
+    "prompts": {
+      "type": "object",
+      "maxProperties": 4096,
+      "propertyNames": { "$ref": "prompt-common.schema.json#/$defs/promptRefKey" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["prompt_id", "version", "prompt_kind", "content_digest", "content"],
+        "properties": {
+          "prompt_id": { "$ref": "prompt-common.schema.json#/$defs/promptId" },
+          "version": { "$ref": "prompt-common.schema.json#/$defs/versionNumber" },
+          "prompt_kind": { "$ref": "prompt-common.schema.json#/$defs/promptKind" },
+          "content_digest": { "$ref": "prompt-common.schema.json#/$defs/sha256Digest" },
+          "content": { "$ref": "prompt-content.schema.json" }
+        }
+      }
+    }
+  }
+}
