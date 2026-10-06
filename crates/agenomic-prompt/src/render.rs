@@ -1634,6 +1634,7 @@ fn render_as(
                 }));
             }
         }
+        rendered_size += history.iter().map(message_code_points).sum::<usize>();
         messages.extend(history.iter().cloned());
         if !options.allow_duplicate_system {
             let duplicates = |item: &Value| {
@@ -1835,6 +1836,28 @@ mod tests {
             &RenderOptions::default(),
         );
         let error = error.unwrap_err();
+        assert_eq!(error.errors[0].code, "rendered_output_too_large");
+    }
+
+    #[test]
+    fn history_counts_toward_the_rendered_output_limit() {
+        let content = json!({
+            "schema": CONTENT_SCHEMA,
+            "template_format": TEMPLATE_FORMAT,
+            "renderer_version": RENDERER_VERSION,
+            "kind": "chat",
+            "body": [{ "role": "system", "content": "hi" }],
+            "variables": {},
+            "partials": {},
+            "output_contract": null,
+            "fragments": {},
+        });
+        let big = "x".repeat(MAX_RENDERED_CODE_POINTS);
+        let options = RenderOptions {
+            history: Some(vec![json!({ "role": "user", "content": big })]),
+            ..RenderOptions::default()
+        };
+        let error = render(&content, &Map::new(), &NoFragments, &options).unwrap_err();
         assert_eq!(error.errors[0].code, "rendered_output_too_large");
     }
 
