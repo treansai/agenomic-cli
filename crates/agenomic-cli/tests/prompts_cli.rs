@@ -965,6 +965,40 @@ async fn channels_rollback_is_a_hand_off_that_only_reads_the_move_preview() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn channels_rollback_to_release_prints_the_evaluated_target() {
+    let server = MockServer::start().await;
+    let env = Env::cloud(&server);
+    let mut body = preview("rollback");
+    body["candidate"] = json!({ "release_id": CANDIDATE, "name": "av_0043", "status": "rolled_back", "origin": "prompt_candidate", "base_release_id": RELEASE, "genome_version": format!("sha256:{}", "b".repeat(64)), "prompt_manifest_digest": format!("sha256:{}", "5".repeat(64)) });
+    body["gates"] = json!([{ "id": "signing", "status": "failed", "blocking": true, "detail": "the release is rolled_back" }]);
+    body["actions"] = json!({ "promote": false, "rollback": false, "reasons": ["session_required", "rollback_target_invalid"] });
+    body["move_url"] = json!(format!("/agents/{AGENT}/channels/production"));
+    mount_only_preview(&server, ("to_release_id", CANDIDATE), body).await;
+    let output = env.run(&[
+        "channels",
+        "rollback",
+        "--agent",
+        AGENT,
+        "production",
+        "--to-release",
+        CANDIDATE,
+    ]);
+    assert_exit(&output, 0);
+    let text = stdout(&output);
+    assert!(text.contains(&format!("target:    av_0043 {CANDIDATE} (rolled_back)")));
+    assert!(text.contains(&format!("default:   av_0041 {PREVIOUS} (approved)")));
+    insta::assert_snapshot!("channels_rollback_hand_off_to_release", text);
+    let received = server.received_requests().await.unwrap();
+    assert_eq!(
+        requests(&received),
+        vec![format!(
+            "GET /v1/agents/{AGENT}/channels/production/move-preview?action=rollback&to_release_id={CANDIDATE}"
+        )]
+    );
+    server.verify().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn list_prompts_channels_and_history() {
     let server = MockServer::start().await;
     let env = Env::cloud(&server);

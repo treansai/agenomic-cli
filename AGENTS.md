@@ -75,6 +75,14 @@ New code for managed prompts carries no comments; the reasons live here.
   key, so they call only the read-only move preview and print where a
   person completes the move. The preview returns a web path; `--web-url`
   or `AGENOMIC_WEB_URL` turns it into a full address.
+- In a move preview, `candidate` is the release the move would point the
+  channel to, also for a rollback (the `--to-release` value or the
+  cloud's default target). `agenomic channels rollback` therefore prints
+  `candidate` as its `target` and adds `rollback.default_target` only
+  when the two differ: printing the default target alone showed another
+  release than the one the gates evaluated, which a run against a real
+  gateway revealed
+  (`channels_rollback_to_release_prints_the_evaluated_target`).
 - `CliError::CloudRefused` maps a coded cloud refusal by status (409 to the
   new exit code 21, 401 and 403 to 5, 400, 404 and 422 to 1, the rest to
   6). Its body excerpt is cut on characters, not bytes, so a non-ASCII

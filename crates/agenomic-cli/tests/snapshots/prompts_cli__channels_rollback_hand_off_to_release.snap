@@ -1,0 +1,17 @@
+---
+source: crates/agenomic-cli/tests/prompts_cli.rs
+expression: text
+---
+rollback preview for channel production of agent 2b1e5c3a-8d4f-4e6a-9b0c-1d2e3f4a5b6c
+channel:   generation 12, protected true
+current:   av_0042 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d (production) genome sha256:3333333333333333333333333333333333333333333333333333333333333333 manifest sha256:4444444444444444444444444444444444444444444444444444444444444444
+target:    av_0043 8f0c2d4e-6a1b-4c3d-9e5f-7a8b9c0d1e2f (rolled_back) genome sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb manifest sha256:5555555555555555555555555555555555555555555555555555555555555555
+default:   av_0041 0f9e8d7c-6b5a-4f3e-8d2c-1b0a9f8e7d6c (approved) genome - manifest -
+option:    av_0041 0f9e8d7c-6b5a-4f3e-8d2c-1b0a9f8e7d6c (approved) genome - manifest -
+gates:
+  signing: failed (the release is rolled_back)
+approvals: {"author_user_id":null,"progress":{"approved":1},"requirement":{"required":1}}
+actions for this credential: promote=false rollback=false reasons=["session_required","rollback_target_invalid"]
+
+This command never moves a channel: an authorized person completes the rollback in the Agenomic web app, with a session.
+open: /agents/2b1e5c3a-8d4f-4e6a-9b0c-1d2e3f4a5b6c/channels/production (on your Agenomic web app; pass --web-url or set AGENOMIC_WEB_URL to print the full address)

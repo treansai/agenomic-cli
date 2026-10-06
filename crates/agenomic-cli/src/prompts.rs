@@ -1248,10 +1248,13 @@ fn channels_hand_off(
         println!("candidate: {}", release_line(response.get("candidate")));
     } else {
         let rollback = response.get("rollback").unwrap_or(&Value::Null);
-        println!(
-            "target:    {}",
-            release_line(rollback.get("default_target"))
-        );
+        let target = response.get("candidate");
+        let default_target = rollback.get("default_target");
+        println!("target:    {}", release_line(target));
+        let target_id = target.and_then(|value| value.get("release_id"));
+        if default_target.and_then(|value| value.get("release_id")) != target_id {
+            println!("default:   {}", release_line(default_target));
+        }
         for option in rollback
             .get("options")
             .and_then(Value::as_array)
