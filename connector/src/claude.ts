@@ -316,7 +316,7 @@ export class ClaudeSession {
       const files = ws.changes(this.o.cwd, ctx.baseRevision);
       const payload: Record<string, unknown> = { base_revision: ctx.baseRevision, files };
       if (ctx.capture.diffs) {
-        const d = ws.diff(this.o.cwd, ctx.baseRevision);
+        const d = ws.diff(this.o.cwd, ctx.baseRevision, ctx.secrets());
         payload.diff = d.text;
         payload.truncated = d.truncated;
       }

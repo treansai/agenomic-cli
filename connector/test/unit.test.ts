@@ -544,6 +544,59 @@ test('captured Codex content is redacted with every runtime credential value, be
   });
 });
 
+test('a diff snapshot is redacted before it is cut: a secret across the cut leaves no prefix behind', async () => {
+  await withHome(async () => {
+    const credential = 'corp-provider-credential-7f3a9b2c4d5e';
+    process.env.AGN_UNIT_DIFF_CREDENTIAL = credential;
+    try {
+      const repo = tempRepo();
+      const git = (...a: string[]) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', maxBuffer: 64 << 20 });
+      const base = git('rev-parse', 'HEAD').trim();
+      const CUT = 256 * 1024;
+      /** Rewrites README.md so that `secret` starts 6 characters before the cut of the diff. */
+      const straddle = (secret: string) => {
+        const write = (pad: number) => fs.writeFileSync(path.join(repo, 'README.md'), 'x'.repeat(pad) + ' ' + secret + '\n');
+        write(1000);
+        const header = git('diff', '-M', base).indexOf(secret) - 1000;
+        write(CUT - 6 - header);
+        const at = git('diff', '-M', base).indexOf(secret);
+        assert.ok(at < CUT && at + secret.length > CUT, 'the secret straddles the cut');
+      };
+      const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+      cfg.runtimes.codex.env_passthrough = ['AGN_UNIT_DIFF_CREDENTIAL'];
+      cfg.runtimes.claude_code.env_passthrough = ['AGN_UNIT_DIFF_CREDENTIAL'];
+      const capture = { conversation: false, commands: false, diffs: true, outputs: false };
+      // A runtime credential value, and a token recognised by its pattern only.
+      for (const secret of [credential, 'ghp_abcdefghijklmnopqrstuvwxyz0123']) {
+        straddle(secret);
+        const d = ws.diff(repo, base, [credential]);
+        assert.equal(d.truncated, true);
+        assert.equal(d.text.length, CUT);
+        assert.match(d.text, /\[REDAC$/, 'redacted, then cut');
+        assert.ok(!d.text.includes(secret.slice(0, 6)), `${secret.slice(0, 6)} leaked`);
+        // As both adapters ship it.
+        const api = new ProbeApi();
+        const daemon: any = new Daemon(cfg, api);
+        const cx = daemon.manage(randomUUID(), 'codex', 'launched', 'enforce', capture, repo, base);
+        new CodexSession({ ctx: cx.ctx, cwd: repo, runtime: cfg.runtimes.codex, onNativeSession: async () => undefined, onStatus: () => undefined } as any)['snapshotDiff']('t1');
+        const cc = daemon.manage(randomUUID(), 'claude_code', 'launched', 'enforce', capture, repo, base);
+        new ClaudeSession({ ctx: cc.ctx, cwd: repo, runtime: cfg.runtimes.claude_code, onNativeSession: async () => undefined, onStatus: () => undefined } as any)['snapshotDiff']();
+        await cx.ctx.sink.close();
+        await cc.ctx.sink.close();
+        const snapshots = api.events.filter((e) => e.type === 'diff.snapshot');
+        assert.equal(snapshots.length, 2);
+        for (const e of snapshots) {
+          assert.equal(e.payload.truncated, true);
+          assert.match(e.payload.diff, /\[REDAC$/);
+          assert.ok(!e.payload.diff.includes(secret.slice(0, 6)), `${secret.slice(0, 6)} leaked`);
+        }
+      }
+    } finally {
+      delete process.env.AGN_UNIT_DIFF_CREDENTIAL;
+    }
+  });
+});
+
 test('a Codex executable that cannot be spawned refuses the launch; the daemon stays up', async () => {
   await withHome(async (home) => {
     const repo = tempRepo();

@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { redact } from './redact.ts';
 
 /**
  * Git operations the connector performs on a declared workspace. It never
@@ -113,10 +114,22 @@ export function changes(dir: string, base: string): FileChange[] {
   return [...out.values()].slice(0, 2000);
 }
 
-/** Unified diff against `base`, capped. Binary files are summarised by git. */
-export function diff(dir: string, base: string, maxBytes = 256 * 1024): { text: string; truncated: boolean } {
-  const text = git(dir, ['diff', '-M', base], 64 * 1024 * 1024);
-  return text.length > maxBytes ? { text: text.slice(0, maxBytes), truncated: true } : { text, truncated: false };
+/** Text past the cap that is still redacted, so that a secret across the cut is recognised whole. */
+const REDACTION_SLACK = 64 * 1024;
+
+/**
+ * Unified diff against `base`, redacted with the session's credential
+ * values and the known secret patterns, then capped. Binary files are
+ * summarised by git. Redaction runs before the cut, as for every other
+ * captured field: a secret across the cut would otherwise leave a prefix
+ * that no pattern recognises. It reads the cap plus a slack far longer
+ * than any secret, so its cost stays bounded for a huge diff.
+ */
+export function diff(dir: string, base: string, secrets: string[] = [], maxBytes = 256 * 1024): { text: string; truncated: boolean } {
+  const raw = git(dir, ['diff', '-M', base], 64 * 1024 * 1024);
+  const window = maxBytes + REDACTION_SLACK;
+  const text = redact(raw.length > window ? raw.slice(0, window) : raw, secrets);
+  return text.length > maxBytes ? { text: text.slice(0, maxBytes), truncated: true } : { text, truncated: raw.length > window };
 }
 
 export function headRevision(dir: string): string | null {
