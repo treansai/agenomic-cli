@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { RunnerApi } from '../src/api.ts';
+import { ApiError, RunnerApi } from '../src/api.ts';
 import { manifest, saveProbe } from '../src/capabilities.ts';
 import { ClaudeSession, claudeCodeVersion, sdkPackage } from '../src/claude.ts';
 import { CodexSession, codexVersion } from '../src/codex.ts';
@@ -162,6 +163,79 @@ test('an oversized hook payload gets the structured fallback, not a crash exit',
   assert.equal(post.stdout, '');
   assert.equal(eventOf('{"session_id":"s","hook_event_name":"PostToolUse","tool_input":{"command":"xx'), 'PostToolUse');
   assert.equal(eventOf('{"tool_input":{"command":"xx'), undefined);
+});
+
+/** Runs the hook command without blocking this process, whose daemon answers it. */
+function hookAsync(args: string[], input: string): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [BIN, 'hook', ...args], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => (stdout += d));
+    child.stderr.on('data', (d) => (stderr += d));
+    child.on('close', (status) => resolve({ status, stdout, stderr }));
+    child.stdin.end(input);
+  });
+}
+
+test('a daemon error reply or a malformed reply takes the fail mode, never a silent pass', async () => {
+  await withHome(async () => {
+    // The daemon cannot register a new local session: the gateway is unreachable.
+    const repo = tempRepo();
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+    const api = new (class extends ProbeApi {
+      override async request<T = any>(method: string, p: string, opts: { body?: any } = {}): Promise<T> {
+        if (p === '/v1/coding/runner/sessions') throw new ApiError(0, 'network', 'POST /v1/coding/runner/sessions: gateway unavailable');
+        return super.request<T>(method, p, opts);
+      }
+    })();
+    const daemon: any = new Daemon(cfg, api);
+    fs.mkdirSync(paths.state(), { recursive: true });
+    await daemon.listen();
+    try {
+      const pre = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 'cli-new', cwd: repo, tool_name: 'Bash', tool_input: { command: 'git push --force' } });
+      const args = (fail: string) => ['claude-code', '--fail', fail, '--deadline', '5000', '--socket', paths.socket()];
+      const closed = await hookAsync(args('closed'), pre);
+      assert.equal(closed.status, 0, closed.stderr);
+      const out = JSON.parse(closed.stdout);
+      assert.equal(out.hookSpecificOutput.permissionDecision, 'deny', 'fail-closed refuses explicitly');
+      assert.match(out.hookSpecificOutput.permissionDecisionReason, /gateway unavailable/);
+      const open = await hookAsync(args('open'), pre);
+      assert.equal(open.status, 0, open.stderr);
+      assert.equal(open.stdout, '', 'fail-open leaves the native flow in charge');
+      const post = await hookAsync(args('closed'), JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 'cli-new', cwd: repo, tool_name: 'Bash' }));
+      assert.equal(post.stdout, '', 'only a PreToolUse is refused');
+    } finally {
+      daemon.server.close();
+    }
+  });
+  // Replies of a daemon that does not answer as expected.
+  const pre = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', tool_name: 'Bash', tool_input: { command: 'ls' } });
+  const deny = { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'Agenomic: policy' } };
+  const cases: [string, 'deny' | 'none' | 'passed'][] = [
+    ['{"error":"boom"}', 'deny'], ['{"error":{"code":"x"}}', 'deny'], ['[]', 'deny'], ['null', 'deny'], ['"ok"', 'deny'],
+    ['{"output":"allow"}', 'deny'], ['{"output":[]}', 'deny'], ['not json', 'deny'], ['{}', 'none'], [JSON.stringify({ output: deny }), 'passed'],
+  ];
+  for (const [reply, expected] of cases) {
+    const sock = path.join(tmp('agn-sock-'), 'state', 'connector.sock');
+    fs.mkdirSync(path.dirname(sock));
+    const server = net.createServer((c) => c.once('data', () => c.end(reply + '\n')));
+    await new Promise<void>((resolve) => server.listen(sock, resolve));
+    try {
+      const r = await hookAsync(['codex', '--fail', 'closed', '--deadline', '5000', '--socket', sock], pre);
+      assert.equal(r.status, 0, r.stderr);
+      if (expected === 'none') assert.equal(r.stdout, '', reply);
+      else if (expected === 'passed') assert.deepEqual(JSON.parse(r.stdout), deny, reply);
+      else {
+        const out = JSON.parse(r.stdout).hookSpecificOutput;
+        assert.equal(out.permissionDecision, 'deny', reply);
+        assert.match(out.permissionDecisionReason, /^Agenomic connector unavailable/, reply);
+      }
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  }
 });
 
 class FlakyApi extends RunnerApi {

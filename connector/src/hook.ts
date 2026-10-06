@@ -1,5 +1,6 @@
 import net from 'node:net';
 import { localFailMode, paths } from './config.ts';
+import { clean } from './redact.ts';
 
 /** Largest hook payload the hook reads; a larger one is not forwarded. */
 const MAX_INPUT = 1024 * 1024;
@@ -10,7 +11,8 @@ const MAX_INPUT = 1024 * 1024;
  * it answers within a deadline below the native hook timeout. If the daemon
  * cannot answer, a fail-closed hook refuses the tool call explicitly with
  * the structured decision both runtimes document; a fail-open hook lets the
- * native flow continue. Neither treats a transport error as a decision.
+ * native flow continue. Neither treats a transport error, an error reply
+ * or a malformed reply as a decision.
  * The hooks of the developer's own sessions use `local`: the fail mode
  * follows the connector's current local-sessions mode (enforce fails
  * closed), read when it is needed rather than fixed at install time.
@@ -34,12 +36,28 @@ export async function runHook(runtime: 'claude-code' | 'codex', failMode: 'close
   }
   const event: string | undefined = input?.hook_event_name;
   try {
-    const reply = await ask({ op: 'hook', runtime, input }, deadlineMs);
-    if (reply?.output) process.stdout.write(JSON.stringify(reply.output));
+    const output = hookOutput(await ask({ op: 'hook', runtime, input }, deadlineMs));
+    if (output) process.stdout.write(JSON.stringify(output));
     return 0;
   } catch (error) {
-    return fallback(runtime, event, failMode, (error as Error).message);
+    return fallback(runtime, event, failMode, clean((error as Error).message, 300));
   }
+}
+
+/**
+ * The hook output carried by a daemon reply: `{}` (no decision, the
+ * native flow continues) or `{"output": {...}}`. A reply naming an error
+ * (the daemon could not handle the call, for example the gateway was
+ * unreachable when a new session was registered) and a malformed reply
+ * are failures, routed through the fail mode like a transport error.
+ */
+export function hookOutput(reply: unknown): Record<string, unknown> | undefined {
+  if (!reply || typeof reply !== 'object' || Array.isArray(reply)) throw new Error('malformed connector reply');
+  const r = reply as { output?: unknown; error?: unknown };
+  if (r.error !== undefined) throw new Error(`connector error: ${typeof r.error === 'string' ? r.error : JSON.stringify(r.error)}`);
+  if (r.output === undefined) return undefined;
+  if (!r.output || typeof r.output !== 'object' || Array.isArray(r.output)) throw new Error('malformed connector reply');
+  return r.output as Record<string, unknown>;
 }
 
 function fallback(_runtime: string, event: string | undefined, failMode: 'closed' | 'open' | 'local', why: string): number {
