@@ -1,6 +1,9 @@
 import net from 'node:net';
 import { paths } from './config.ts';
 
+/** Largest hook payload the hook reads; a larger one is not forwarded. */
+const MAX_INPUT = 1024 * 1024;
+
 /**
  * Entry point of the command hooks Claude Code and Codex run. The hook is a
  * thin client of the local connector daemon: it holds no credential, and
@@ -10,7 +13,16 @@ import { paths } from './config.ts';
  * native flow continue. Neither treats a transport error as a decision.
  */
 export async function runHook(runtime: 'claude-code' | 'codex', failMode: 'closed' | 'open', deadlineMs: number): Promise<number> {
-  const raw = await readStdin(1024 * 1024);
+  let raw: string;
+  try {
+    raw = await readStdin(MAX_INPUT);
+  } catch (error) {
+    // An oversized or unreadable payload is a failure like any other: in
+    // fail-closed mode it gets the structured deny, never a crash exit
+    // (which both runtimes treat as a non-blocking hook error).
+    const e = error as InputError;
+    return fallback(runtime, eventOf(e.head ?? ''), failMode, e.message);
+  }
   let input: any;
   try {
     input = JSON.parse(raw);
@@ -40,16 +52,41 @@ function fallback(_runtime: string, event: string | undefined, failMode: 'closed
   return 0;
 }
 
+/** The event name of a payload that could not be read whole, if its start names it. */
+export function eventOf(head: string): string | undefined {
+  return /"hook_event_name"\s*:\s*"([A-Za-z]+)"/.exec(head)?.[1];
+}
+
+class InputError extends Error {
+  readonly head: string;
+  constructor(message: string, head: string) {
+    super(message);
+    this.head = head;
+  }
+}
+
 function readStdin(max: number): Promise<string> {
+  const stdin = process.stdin;
   return new Promise((resolve, reject) => {
     let data = '';
-    process.stdin.setEncoding('utf8');
-    process.stdin.on('data', (c) => {
+    let failed = false;
+    const fail = (why: string) => {
+      if (failed) return;
+      failed = true;
+      // Stop buffering: the rest of the payload is not needed to refuse.
+      stdin.removeAllListeners('data');
+      stdin.destroy();
+      reject(new InputError(why, data.slice(0, 64 * 1024)));
+    };
+    stdin.setEncoding('utf8');
+    stdin.on('data', (c: string) => {
       data += c;
-      if (data.length > max) reject(new Error('hook input too large'));
+      if (data.length > max) fail('hook input too large');
     });
-    process.stdin.on('end', () => resolve(data));
-    process.stdin.on('error', reject);
+    stdin.on('end', () => {
+      if (!failed) resolve(data);
+    });
+    stdin.on('error', (e: Error) => fail(`hook input unreadable: ${e.message}`));
   });
 }
 

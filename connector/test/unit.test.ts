@@ -6,6 +6,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { RunnerApi } from '../src/api.ts';
 import { EventSink } from '../src/events.ts';
+import { eventOf } from '../src/hook.ts';
 import { apply, codexBlock, planClaude, planCodex } from '../src/hooks-install.ts';
 import { clean, redact } from '../src/redact.ts';
 import { isTestCommand } from '../src/session.ts';
@@ -83,6 +84,26 @@ test('a fail-closed hook refuses explicitly when the daemon is unreachable; fail
   assert.equal(open.stdout, '', 'fail-open leaves the native flow in charge');
   const garbage = spawnSync(process.execPath, [BIN, 'hook', 'codex', '--fail', 'closed', '--deadline', '2000', '--socket', sock], { input: 'not json', encoding: 'utf8' });
   assert.equal(JSON.parse(garbage.stdout).hookSpecificOutput.permissionDecision, 'deny');
+});
+
+test('an oversized hook payload gets the structured fallback, not a crash exit', () => {
+  const sock = path.join(tmp('agn-sock-'), 'state', 'missing.sock');
+  const hook = (fail: string, input: string) => spawnSync(process.execPath, [BIN, 'hook', 'claude-code', '--fail', fail, '--deadline', '2000', '--socket', sock], { input, encoding: 'utf8', maxBuffer: 8 << 20 });
+  const big = (event: string) => JSON.stringify({ hook_event_name: event, session_id: 's', tool_name: 'Bash', tool_input: { command: 'x'.repeat(1100 * 1024) } });
+  const closed = hook('closed', big('PreToolUse'));
+  assert.equal(closed.status, 0, closed.stderr);
+  const out = JSON.parse(closed.stdout);
+  assert.equal(out.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.hookSpecificOutput.permissionDecisionReason, /too large/);
+  const open = hook('open', big('PreToolUse'));
+  assert.equal(open.status, 0, open.stderr);
+  assert.equal(open.stdout, '');
+  // A large tool response after the fact is not refused as if it were a PreToolUse.
+  const post = hook('closed', big('PostToolUse'));
+  assert.equal(post.status, 0, post.stderr);
+  assert.equal(post.stdout, '');
+  assert.equal(eventOf('{"session_id":"s","hook_event_name":"PostToolUse","tool_input":{"command":"xx'), 'PostToolUse');
+  assert.equal(eventOf('{"tool_input":{"command":"xx'), undefined);
 });
 
 class FlakyApi extends RunnerApi {
