@@ -68,6 +68,8 @@ export const paths = {
   worktrees: () => path.join(home(), 'state', 'worktrees'),
   runtimeHome: (runtime: string) => path.join(home(), 'state', 'runtime', runtime),
   sessions: () => path.join(home(), 'state', 'sessions.json'),
+  /** Fail mode of the local-session hooks, recorded with each configuration change. */
+  localFailMode: () => path.join(home(), 'state', 'local-sessions.fail'),
 };
 
 const defaultRuntime = (): RuntimeConfig => ({ enabled: true, env_passthrough: [], extra_env: {}, allowed_domains: [] });
@@ -110,6 +112,34 @@ export function validateConfig(cfg: ConnectorConfig): void {
 export function saveConfig(cfg: ConnectorConfig): void {
   validateConfig(cfg);
   writeSecretFile(paths.config(), JSON.stringify(cfg, null, 2) + '\n');
+  writeSecretFile(paths.localFailMode(), failModeOf(cfg.local_sessions.mode) + '\n');
+}
+
+const failModeOf = (mode: Mode): 'closed' | 'open' => (mode === 'enforce' ? 'closed' : 'open');
+
+/**
+ * Fail mode of the hooks installed for the developer's own sessions,
+ * resolved when a hook needs it (the daemon did not answer) from the
+ * current local-sessions mode, so that `local-sessions --mode` also
+ * applies to hooks installed before the change. If connector.json cannot
+ * be read, the mode recorded with the last configuration change decides;
+ * if that cannot be read either while a configuration exists, the hook
+ * fails closed.
+ */
+export function localFailMode(): 'closed' | 'open' {
+  try {
+    const mode = JSON.parse(fs.readFileSync(paths.config(), 'utf8'))?.local_sessions?.mode;
+    if (mode === 'observe' || mode === 'shadow' || mode === 'enforce') return failModeOf(mode);
+  } catch {
+    /* unreadable or invalid: use the recorded mode */
+  }
+  try {
+    const recorded = fs.readFileSync(paths.localFailMode(), 'utf8').trim();
+    if (recorded === 'closed' || recorded === 'open') return recorded;
+  } catch {
+    /* not recorded */
+  }
+  return fs.existsSync(paths.config()) ? 'closed' : 'open';
 }
 
 export function loadCredentials(): Credentials | undefined {

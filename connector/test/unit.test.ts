@@ -5,9 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { RunnerApi } from '../src/api.ts';
+import { defaultConfig, localFailMode, paths, saveConfig } from '../src/config.ts';
 import { EventSink } from '../src/events.ts';
 import { eventOf } from '../src/hook.ts';
-import { apply, codexBlock, planClaude, planCodex } from '../src/hooks-install.ts';
+import { apply, codexBlock, hookCommand, planClaude, planCodex } from '../src/hooks-install.ts';
 import { clean, redact } from '../src/redact.ts';
 import { isTestCommand } from '../src/session.ts';
 import { realPathEscapes } from '../src/util.ts';
@@ -84,6 +85,56 @@ test('a fail-closed hook refuses explicitly when the daemon is unreachable; fail
   assert.equal(open.stdout, '', 'fail-open leaves the native flow in charge');
   const garbage = spawnSync(process.execPath, [BIN, 'hook', 'codex', '--fail', 'closed', '--deadline', '2000', '--socket', sock], { input: 'not json', encoding: 'utf8' });
   assert.equal(JSON.parse(garbage.stdout).hookSpecificOutput.permissionDecision, 'deny');
+});
+
+test('local-session hooks follow the current local-sessions mode, not the mode at install time', () => {
+  const home = tmp('agn-home-');
+  const env = { ...process.env, AGENOMIC_CONNECTOR_HOME: home };
+  const cli = (...a: string[]) => spawnSync(process.execPath, [BIN, ...a], { env, encoding: 'utf8' });
+  const input = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', tool_name: 'Bash', tool_input: { command: 'ls' } });
+  // The installed command carries no fixed fail mode.
+  const command = hookCommand('claude-code', 'local', 2000, path.join(home, 'state', 'connector.sock'));
+  assert.match(command, / hook claude-code --fail local /);
+  // The daemon is not running: every call below takes the fallback.
+  const hook = () => spawnSync(process.execPath, [BIN, 'hook', 'claude-code', '--fail', 'local', '--deadline', '2000', '--socket', path.join(home, 'state', 'connector.sock')], { input, encoding: 'utf8' }).stdout;
+  const denied = () => JSON.parse(hook() || '{}').hookSpecificOutput?.permissionDecision === 'deny';
+  assert.equal(denied(), false, 'no connector configuration: nothing to enforce');
+  const prev = process.env.AGENOMIC_CONNECTOR_HOME;
+  process.env.AGENOMIC_CONNECTOR_HOME = home;
+  try {
+    saveConfig(defaultConfig('http://127.0.0.1:9', 'unit'));
+    assert.equal(localFailMode(), 'open');
+    assert.equal(denied(), false, 'observe fails open');
+    assert.equal(cli('local-sessions', '--mode', 'enforce').status, 0);
+    assert.equal(localFailMode(), 'closed');
+    assert.equal(denied(), true, 'after the switch to enforce, the same installed hook fails closed');
+    // An unreadable configuration: the mode recorded with the last change decides.
+    fs.writeFileSync(paths.config(), '{ not json');
+    assert.equal(denied(), true);
+    fs.rmSync(paths.localFailMode());
+    assert.equal(denied(), true, 'neither readable while a configuration exists: closed');
+    fs.rmSync(paths.config());
+    assert.equal(denied(), false, 'no configuration and no recorded mode: open');
+    saveConfig(defaultConfig('http://127.0.0.1:9', 'unit'));
+    assert.equal(cli('local-sessions', '--mode', 'enforce').status, 0);
+    fs.rmSync(paths.config());
+    assert.equal(denied(), true, 'enforce was the last recorded mode: closed');
+    assert.equal(cli('hooks', 'install', '--runtime', 'claude-code', '--dir', home).status, 0);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.local.json'), 'utf8')).hooks.PreToolUse[0].hooks[0].command.includes('--fail local'), true);
+  } finally {
+    if (prev === undefined) delete process.env.AGENOMIC_CONNECTOR_HOME;
+    else process.env.AGENOMIC_CONNECTOR_HOME = prev;
+  }
+  // Hooks installed with a fixed mode are replaced by a new install, once.
+  const file = path.join(tmp('agn-hooks-'), '.claude', 'settings.local.json');
+  apply(planClaude(file, 'open', true));
+  apply(planClaude(file, 'local', true));
+  const installed = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.equal(installed.hooks.PreToolUse.length, 1);
+  assert.match(installed.hooks.PreToolUse[0].hooks[0].command, /--fail local/);
+  assert.equal(planClaude(file, 'local', true).changed, false);
+  apply(planClaude(file, 'local', false));
+  assert.equal(fs.readFileSync(file, 'utf8'), '{}\n');
 });
 
 test('an oversized hook payload gets the structured fallback, not a crash exit', () => {

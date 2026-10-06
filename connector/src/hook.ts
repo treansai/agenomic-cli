@@ -1,5 +1,5 @@
 import net from 'node:net';
-import { paths } from './config.ts';
+import { localFailMode, paths } from './config.ts';
 
 /** Largest hook payload the hook reads; a larger one is not forwarded. */
 const MAX_INPUT = 1024 * 1024;
@@ -11,8 +11,11 @@ const MAX_INPUT = 1024 * 1024;
  * cannot answer, a fail-closed hook refuses the tool call explicitly with
  * the structured decision both runtimes document; a fail-open hook lets the
  * native flow continue. Neither treats a transport error as a decision.
+ * The hooks of the developer's own sessions use `local`: the fail mode
+ * follows the connector's current local-sessions mode (enforce fails
+ * closed), read when it is needed rather than fixed at install time.
  */
-export async function runHook(runtime: 'claude-code' | 'codex', failMode: 'closed' | 'open', deadlineMs: number): Promise<number> {
+export async function runHook(runtime: 'claude-code' | 'codex', failMode: 'closed' | 'open' | 'local', deadlineMs: number): Promise<number> {
   let raw: string;
   try {
     raw = await readStdin(MAX_INPUT);
@@ -39,8 +42,9 @@ export async function runHook(runtime: 'claude-code' | 'codex', failMode: 'close
   }
 }
 
-function fallback(_runtime: string, event: string | undefined, failMode: 'closed' | 'open', why: string): number {
-  if (failMode === 'closed' && (event === 'PreToolUse' || event === undefined)) {
+function fallback(_runtime: string, event: string | undefined, failMode: 'closed' | 'open' | 'local', why: string): number {
+  if (event !== 'PreToolUse' && event !== undefined) return 0;
+  if ((failMode === 'local' ? localFailMode() : failMode) === 'closed') {
     process.stdout.write(JSON.stringify({
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',

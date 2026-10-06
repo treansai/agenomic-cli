@@ -42,6 +42,11 @@ Install keeps your existing hooks, is idempotent and backs the file up;
 uninstall removes exactly what install added. Codex runs only trusted
 hooks: the installer records trust for its own entries, by hash, because
 you ran the command. Restart sessions that were open before the install.
+When the daemon does not answer, a hook follows the current
+`local-sessions` mode: enforce refuses the tool call, observe and shadow
+let the runtime decide. Changing the mode needs no reinstall (hooks
+installed by an earlier version keep a fixed mode until you run
+`hooks install` again).
 Local hooks are cooperative, not a security boundary (see
 `agenomic-cloud/docs/coding/threat-model.md`).
 

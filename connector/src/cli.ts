@@ -59,7 +59,8 @@ export async function main(argv: string[]): Promise<number> {
         const home = path.dirname(path.dirname(socket));
         process.env.AGENOMIC_CONNECTOR_HOME = home;
       }
-      return runHook(runtime, one(f, 'fail') === 'closed' ? 'closed' : 'open', Number(one(f, 'deadline') ?? 25000));
+      const fail = one(f, 'fail');
+      return runHook(runtime, fail === 'closed' || fail === 'open' ? fail : 'local', Number(one(f, 'deadline') ?? 25000));
     }
     case 'enroll': {
       const token = one(f, 'token') ?? process.env.AGENOMIC_ENROLLMENT_TOKEN;
@@ -111,6 +112,9 @@ export async function main(argv: string[]): Promise<number> {
       }
       saveConfig(cfg);
       out(JSON.stringify(cfg.local_sessions));
+      // Installed hooks read the mode when they need it; the daemon reads
+      // its configuration when it starts.
+      if (mode) out('installed hooks follow this mode now; restart the daemon (run) to apply it to new sessions');
       return 0;
     }
     case 'hooks': {
@@ -119,7 +123,8 @@ export async function main(argv: string[]): Promise<number> {
       const runtime = one(f, 'runtime');
       const dry = one(f, 'dry-run') === 'true';
       const cfg = fs.existsSync(paths.config()) ? loadConfig() : undefined;
-      const failMode = (cfg?.local_sessions.mode ?? 'observe') === 'enforce' ? 'closed' : 'open';
+      // Not fixed at install time: the hooks follow `local-sessions --mode`.
+      const failMode = 'local' as const;
       if (runtime === 'claude-code') {
         const scope = (one(f, 'scope') ?? 'project') as 'project' | 'user';
         const file = claudeSettingsFile(scope, one(f, 'dir'));

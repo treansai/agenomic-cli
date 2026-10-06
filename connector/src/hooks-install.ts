@@ -20,11 +20,20 @@ export const CLAUDE_EVENTS = [
 
 export const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'SessionEnd'] as const;
 
+/**
+ * What a hook does when the daemon does not answer: `closed` refuses the
+ * tool call, `open` leaves the native flow in charge, `local` follows the
+ * connector's local-sessions mode at that moment (enforce: closed). The
+ * hooks installed for the developer's own sessions use `local`; a launched
+ * session's own hooks use the session's fixed mode.
+ */
+export type FailMode = 'closed' | 'open' | 'local';
+
 const MARK = 'agenomic-connector';
 const BLOCK_START = '# >>> agenomic-connector hooks (managed; remove with `agenomic-connector hooks uninstall`)';
 const BLOCK_END = '# <<< agenomic-connector hooks';
 
-export function hookCommand(runtime: 'claude-code' | 'codex', failMode: 'closed' | 'open', deadlineMs = 25000, socket = paths.socket()): string {
+export function hookCommand(runtime: 'claude-code' | 'codex', failMode: FailMode, deadlineMs = 25000, socket = paths.socket()): string {
   const bin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'agenomic-connector.mjs');
   const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
   return `${q(process.execPath)} ${q(bin)} hook ${runtime} --fail ${failMode} --deadline ${deadlineMs} --socket ${q(socket)}`;
@@ -50,7 +59,7 @@ function isOurs(entry: any): boolean {
   return Array.isArray(entry?.hooks) && entry.hooks.some((h: any) => typeof h?.command === 'string' && h.command.includes(MARK) && h.command.includes(' hook '));
 }
 
-export function planClaude(file: string, failMode: 'closed' | 'open', install: boolean): Plan {
+export function planClaude(file: string, failMode: FailMode, install: boolean): Plan {
   const before = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
   const settings = before ? JSON.parse(before) : {};
   if (typeof settings !== 'object' || Array.isArray(settings)) throw new Error(`${file} is not a JSON object`);
@@ -104,7 +113,7 @@ function stripBlock(text: string): string {
 
 const tomlString = (s: string) => JSON.stringify(s);
 
-export function codexBlock(failMode: 'closed' | 'open', timeoutSec: number, trust: Record<string, string> = {}, socket = paths.socket()): string {
+export function codexBlock(failMode: FailMode, timeoutSec: number, trust: Record<string, string> = {}, socket = paths.socket()): string {
   const lines = [BLOCK_START];
   for (const event of CODEX_EVENTS) {
     const pre = event === 'PreToolUse';
@@ -120,7 +129,7 @@ export function codexBlock(failMode: 'closed' | 'open', timeoutSec: number, trus
   return lines.join('\n');
 }
 
-export function planCodex(file: string, failMode: 'closed' | 'open', install: boolean, trust: Record<string, string> = {}, timeoutSec = 600, socket = paths.socket()): Plan {
+export function planCodex(file: string, failMode: FailMode, install: boolean, trust: Record<string, string> = {}, timeoutSec = 600, socket = paths.socket()): Plan {
   const before = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
   if (before && /^\s*\[hooks\]\s*$/m.test(stripBlock(before))) {
     // A `[hooks]` table elsewhere would be redefined by our array tables.
@@ -170,7 +179,7 @@ export async function codexListHooks(exe: string, codexHome: string, cwd: string
  * entries (Codex does not run an untrusted hook). Trust is recorded only
  * for commands this tool wrote, matched on the command string.
  */
-export async function installCodex(file: string, failMode: 'closed' | 'open', exe: string, cwd: string, dryRun: boolean, timeoutSec = 600, socket = paths.socket()): Promise<{ plan: Plan; backup: string | null; trusted: number }> {
+export async function installCodex(file: string, failMode: FailMode, exe: string, cwd: string, dryRun: boolean, timeoutSec = 600, socket = paths.socket()): Promise<{ plan: Plan; backup: string | null; trusted: number }> {
   const first = planCodex(file, failMode, true, {}, timeoutSec, socket);
   if (dryRun) return { plan: first, backup: null, trusted: 0 };
   const backup = apply(first);
