@@ -15,6 +15,7 @@ import { EventSink } from '../src/events.ts';
 import { eventOf } from '../src/hook.ts';
 import { apply, codexBlock, hookCommand, planClaude, planCodex } from '../src/hooks-install.ts';
 import { clean, redact } from '../src/redact.ts';
+import { protection, TOOL_IDS } from '../src/protection.ts';
 import { ProbeApi, probeConfig, probedVersion, runProbe, tempRepo } from '../src/probe.ts';
 import { isTestCommand, type SessionContext } from '../src/session.ts';
 import { realPathEscapes, ulid } from '../src/util.ts';
@@ -494,5 +495,55 @@ test('local hook sessions: tool events correlated; a launched session\'s hooks d
     await m.ctx.sink.close();
     const launched = api.events.filter((e) => e.coding_session_id === m.id).map((e) => e.type);
     assert.deepEqual(launched, ['tool.requested'], 'the PreToolUse decision only');
+  });
+});
+
+// The 16 ids of coding-action.schema.json (contract C3), spelled out here
+// so that a change of the connector's list is a visible test change.
+const VOCABULARY = [
+  'coding.fs.read', 'coding.fs.write', 'coding.fs.delete', 'coding.shell.exec', 'coding.shell.interactive_input',
+  'coding.git.read', 'coding.git.commit', 'coding.git.push', 'coding.git.destructive', 'coding.dependency.install',
+  'coding.network.fetch', 'coding.mcp.call', 'coding.agent_config.modify', 'coding.subagent.spawn', 'coding.web.search', 'coding.unknown',
+];
+
+test('protection lists tool ids of the closed vocabulary; mechanisms go to notes, gaps to limitations', async () => {
+  assert.deepEqual([...TOOL_IDS], VOCABULARY);
+  const cases = [['claude_code', 'sdk'], ['claude_code', 'cli_hooks'], ['codex', 'app_server'], ['codex', 'cli_hooks']] as const;
+  for (const [runtime, surface] of cases) {
+    for (const mode of ['observe', 'shadow', 'enforce'] as const) {
+      const p = protection(runtime, surface, mode);
+      const at = `${runtime}/${surface}/${mode}`;
+      for (const id of [...p.protected, ...p.not_covered]) assert.ok(VOCABULARY.includes(id), `${at}: ${id}`);
+      assert.equal(new Set(p.protected).size, p.protected.length, `${at}: unique`);
+      assert.equal(new Set(p.not_covered).size, p.not_covered.length, `${at}: unique`);
+      assert.deepEqual([...p.protected, ...p.not_covered].sort(), [...VOCABULARY].sort(), `${at}: every id is either protected or not covered`);
+      assert.ok(p.notes.length <= 32 && p.notes.every((n) => typeof n === 'string' && n.length > 0 && n.length <= 300), `${at}: notes`);
+      assert.ok(p.limitations.every((n) => typeof n === 'string' && n.length > 0), `${at}: limitations`);
+      if (mode === 'observe') assert.deepEqual(p.protected, [], `${at}: observe protects nothing`);
+    }
+  }
+  assert.deepEqual(protection('claude_code', 'sdk', 'enforce').protected, VOCABULARY, 'every Claude Code tool goes through PreToolUse');
+  assert.deepEqual(protection('claude_code', 'sdk', 'shadow').protected, VOCABULARY);
+  const codex = protection('codex', 'app_server', 'enforce');
+  for (const id of ['coding.shell.interactive_input', 'coding.mcp.call', 'coding.web.search', 'coding.subagent.spawn', 'coding.unknown', 'coding.fs.read']) {
+    assert.ok(codex.not_covered.includes(id as any), `codex enforce: ${id} is not re-checked`);
+  }
+  assert.ok(codex.protected.includes('coding.fs.write'), 'apply_patch goes through the fileChange approval in enforce');
+  assert.ok(protection('codex', 'app_server', 'shadow').not_covered.includes('coding.fs.write'), 'no approval requests in shadow');
+  assert.ok(protection('codex', 'cli_hooks', 'enforce').not_covered.includes('coding.fs.write'));
+
+  // As reported in the session state of a local session.
+  await withHome(async () => {
+    const repo = tempRepo();
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+    cfg.local_sessions.mode = 'enforce';
+    const api = new ProbeApi();
+    await (new Daemon(cfg, api) as any).onLocal({ op: 'hook', runtime: 'claude_code', input: { hook_event_name: 'SessionStart', session_id: 'cli-2', cwd: repo } });
+    const state = api.states.find((s) => s.protection);
+    assert.deepEqual(state.protection.protected, VOCABULARY);
+    assert.deepEqual(state.protection.not_covered, []);
+    assert.ok(state.protection.notes.length > 0);
+    assert.ok(state.limitations.some((l: string) => l.startsWith('hooks are cooperative')));
   });
 });

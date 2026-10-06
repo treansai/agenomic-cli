@@ -9,6 +9,7 @@ import { ClaudeSession, claudeCodeVersion, sdkVersion } from './claude.ts';
 import { CodexSession, codexVersion } from './codex.ts';
 import { DEFAULT_CAPTURE, paths, runtimeSecrets, type Capture, type ConnectorConfig, type Mode, type WorkspaceConfig } from './config.ts';
 import { EventSink } from './events.ts';
+import { protection } from './protection.ts';
 import { clean } from './redact.ts';
 import { SessionContext, type Runtime, type Verdict } from './session.ts';
 import { errorMessage, log, readJson, resolveExecutable, sleep, ulid, writeSecretFile } from './util.ts';
@@ -238,43 +239,6 @@ export class Daemon {
     }
   }
 
-  private protection(runtime: Runtime, mode: Mode): { protected: string[]; not_covered: string[]; limitations: string[] } {
-    if (mode === 'observe') {
-      return {
-        protected: [],
-        not_covered: ['observe mode: Agenomic records, it adds no blocking'],
-        limitations: ['native protections remain active (sandbox, native permission rules)'],
-      };
-    }
-    if (runtime === 'claude_code') {
-      return {
-        protected: [
-          'pre-tool decision on every native tool call (PreToolUse callback and canUseTool)',
-          'Bash writes limited to the session worktree by the Claude Code sandbox',
-          'network limited to the allowed domains by the sandbox proxy',
-          'repository settings, hooks and MCP servers are not loaded',
-        ],
-        not_covered: [
-          'data sent to an allowed domain (an allow list does not prevent exfiltration to it)',
-          'effects of a script beyond its first command are not inspected one by one',
-        ],
-        limitations: ['file checkpoints are not a rollback of shell side effects'],
-      };
-    }
-    return {
-      protected: [
-        'pre-tool decision on shell calls (trusted PreToolUse hook)',
-        'native approval requests for commands and patches answered by Agenomic, one request at a time',
-        'workspace-write sandbox: writes limited to the worktree, network disabled',
-      ],
-      not_covered: [
-        'write_stdin to a running process is not re-checked by PreToolUse',
-        'apply_patch is covered by the fileChange approval request, not by PreToolUse',
-      ],
-      limitations: ['approvals are never granted for the whole session (no acceptForSession)'],
-    };
-  }
-
   private async launch(cmd: any): Promise<void> {
     const p = cmd.payload ?? {};
     const sessionId: string = cmd.coding_session_id;
@@ -312,11 +276,11 @@ export class Daemon {
       await this.setStatus(managed, 'failed');
       return this.result(cmd.id, 'refused', undefined, errorMessage(error));
     }
-    const prot = this.protection(runtime, mode);
+    const prot = protection(runtime, runtime === 'claude_code' ? 'sdk' : 'app_server', mode);
     const caps = this.runtimes().find((r) => r.runtime === runtime)?.capabilities ?? {};
     await managed.ctx.state({
       mode_effective: mode,
-      protection: { protected: prot.protected, not_covered: prot.not_covered },
+      protection: { protected: prot.protected, not_covered: prot.not_covered, notes: prot.notes },
       limitations: prot.limitations,
       capabilities: caps,
     });
@@ -536,21 +500,13 @@ export class Daemon {
     m.nativeId = native;
     this.byNative.set(`${runtime}:${native}`, m);
     const caps = manifest(runtime, 'cli_hooks', this.runtimes().find((r) => r.runtime === runtime)?.version ?? null);
-    const cooperative = local.mode === 'observe'
-      ? { protected: [], not_covered: ['observe mode'] }
-      : {
-          protected: ['pre-tool decisions from the PreToolUse command hook of this session'],
-          not_covered: [
-            'hooks are cooperative: a disabled, removed or killed hook, or a process of the same user, bypasses them',
-            'no Agenomic sandbox around a developer terminal session',
-          ],
-        };
+    const prot = protection(runtime, 'cli_hooks', local.mode);
     await m.ctx.state({
       status: 'running',
       mode_effective: local.mode,
-      protection: cooperative,
+      protection: { protected: prot.protected, not_covered: prot.not_covered, notes: prot.notes },
       capabilities: caps,
-      limitations: ['a session that was already open before the hooks were installed must be restarted to be connected'],
+      limitations: [...prot.limitations, 'a session that was already open before the hooks were installed must be restarted to be connected'],
       workspace: { base_revision: state.base_revision, branch: state.branch, preexisting_changes: state.preexisting_changes.length },
     });
     return m;
