@@ -3,7 +3,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { paths, type RuntimeConfig } from './config.ts';
-import { clean } from './redact.ts';
 import { commandText, isTestCommand, type SessionContext, type Verdict } from './session.ts';
 import { errorMessage, executableVersion, log, realPathEscapes } from './util.ts';
 import * as ws from './workspace.ts';
@@ -106,10 +105,6 @@ export class ClaudeSession {
     this.done = new Promise((r) => (this.resolveDone = r));
   }
 
-  private secrets(): string[] {
-    return this.o.runtime.env_passthrough.map((k) => process.env[k] ?? '').filter(Boolean);
-  }
-
   private env(): Record<string, string> {
     const home = paths.runtimeHome('claude_code');
     fs.mkdirSync(path.join(home, 'config'), { recursive: true, mode: 0o700 });
@@ -198,13 +193,13 @@ export class ClaudeSession {
       const verdict = ctx.known(input.tool_use_id);
       const started = self.toolStart.get(input.tool_use_id);
       const duration = started ? Date.now() - started : undefined;
-      const cmd = commandText(input.tool_name, input.tool_input);
+      const cmd = commandText(input.tool_name, input.tool_input, ctx.secrets());
       ctx.sink.emit(failed ? 'tool.failed' : 'tool.completed', 'runtime', 'native', {
         native_request_id: input.tool_use_id,
         native_tool: input.tool_name,
         duration_ms: duration,
         ...(ctx.capture.commands && cmd ? { command: cmd } : {}),
-        ...(ctx.capture.outputs ? { output: clean(JSON.stringify(input.tool_response ?? input.error ?? ''), 4000, self.secrets()) } : {}),
+        ...(ctx.capture.outputs ? { output: ctx.cleanText(JSON.stringify(input.tool_response ?? input.error ?? ''), 4000) } : {}),
       }, { action_id: verdict?.actionId, runtime_turn_id: String(self.turnId) });
       if (input.tool_name === 'Bash' && isTestCommand(cmd)) {
         ctx.sink.emit('test.result', 'adapter', 'derived', { command: ctx.capture.commands ? cmd : undefined, passed: !failed, basis: 'tool_outcome' });
@@ -250,7 +245,7 @@ export class ClaudeSession {
         pathToClaudeCodeExecutable: this.o.runtime.executable,
         spawnClaudeCodeProcess: (opts: any) => {
           const child = spawn(opts.command, opts.args, { cwd: opts.cwd, env: opts.env, signal: opts.signal, stdio: ['pipe', 'pipe', 'pipe'] });
-          child.stderr?.on('data', (d) => log('debug', 'claude stderr', { line: clean(String(d), 500) }));
+          child.stderr?.on('data', (d) => log('debug', 'claude stderr', { line: this.o.ctx.cleanText(String(d), 500) }));
           this.child = child;
           return child as any;
         },
@@ -261,7 +256,7 @@ export class ClaudeSession {
 
   private pushUser(text: string): void {
     this.turnId++;
-    this.o.ctx.sink.emit('message.user', 'adapter', 'native', this.o.ctx.capture.conversation ? { text: clean(text, 16000) } : { length: text.length }, { runtime_turn_id: String(this.turnId) });
+    this.o.ctx.sink.emit('message.user', 'adapter', 'native', this.o.ctx.capture.conversation ? { text: this.o.ctx.cleanText(text, 16000) } : { length: text.length }, { runtime_turn_id: String(this.turnId) });
     this.o.ctx.sink.emit('turn.started', 'adapter', 'native', {}, { runtime_turn_id: String(this.turnId) });
     this.inbox.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null });
   }
@@ -277,7 +272,7 @@ export class ClaudeSession {
           this.o.onStatus('running');
         } else if (m.type === 'assistant') {
           const text = (m.message?.content ?? []).filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n');
-          if (text) ctx.sink.emit('message.assistant', 'runtime', 'native', ctx.capture.conversation ? { text: clean(text, 16000) } : { length: text.length }, { runtime_turn_id: String(this.turnId) });
+          if (text) ctx.sink.emit('message.assistant', 'runtime', 'native', ctx.capture.conversation ? { text: ctx.cleanText(text, 16000) } : { length: text.length }, { runtime_turn_id: String(this.turnId) });
         } else if (m.type === 'result') {
           ctx.sink.emit(m.subtype === 'error_during_execution' ? 'turn.interrupted' : 'turn.completed', 'runtime', 'native', {
             subtype: m.subtype, is_error: m.is_error, num_turns: m.num_turns, duration_ms: m.duration_ms,
@@ -296,7 +291,7 @@ export class ClaudeSession {
         }
       }
     } catch (error) {
-      ctx.sink.emit('error', 'adapter', 'native', { code: 'runtime_error', message: clean(errorMessage(error), 500) });
+      ctx.sink.emit('error', 'adapter', 'native', { code: 'runtime_error', message: ctx.cleanText(errorMessage(error), 500) });
       log('warn', 'claude session ended with an error', { session: ctx.id, error: errorMessage(error) });
     } finally {
       this.ended = true;
@@ -327,7 +322,7 @@ export class ClaudeSession {
     const questions = (input.questions ?? []) as { question: string; options?: { label: string }[] }[];
     ctx.sink.emit('question.asked', 'runtime', 'native', {
       question_id: id,
-      ...(ctx.capture.conversation ? { questions: questions.map((q) => ({ question: clean(q.question, 1000), options: (q.options ?? []).map((o) => clean(o.label, 200)) })) } : { count: questions.length }),
+      ...(ctx.capture.conversation ? { questions: questions.map((q) => ({ question: ctx.cleanText(q.question, 1000), options: (q.options ?? []).map((o) => ctx.cleanText(o.label, 200)) })) } : { count: questions.length }),
     });
     this.o.onStatus('waiting_input');
     const answer = await new Promise<string | null>((resolve) => {
@@ -344,7 +339,7 @@ export class ClaudeSession {
     } catch {
       for (const q of questions) answers[q.question] = answer;
     }
-    ctx.sink.emit('question.answered', 'adapter', 'native', { question_id: id, ...(ctx.capture.conversation ? { text: clean(answer, 4000) } : {}) });
+    ctx.sink.emit('question.answered', 'adapter', 'native', { question_id: id, ...(ctx.capture.conversation ? { text: ctx.cleanText(answer, 4000) } : {}) });
     return { behavior: 'allow', updatedInput: { ...input, answers } };
   }
 

@@ -88,6 +88,19 @@ export function defaultConfig(endpoint: string, name: string): ConnectorConfig {
   };
 }
 
+const SECRET_NAME = /KEY|TOKEN|SECRET|PASSW|CREDENTIAL|AUTH/i;
+
+/**
+ * Credential values of a runtime: the variables passed through to it
+ * (provider authentication) and the extra_env values whose name says they
+ * are secret. They are redacted from every event before it is buffered.
+ */
+export function runtimeSecrets(runtime: RuntimeConfig, env: NodeJS.ProcessEnv = process.env): string[] {
+  const values = runtime.env_passthrough.map((k) => env[k] ?? '');
+  for (const [k, v] of Object.entries(runtime.extra_env)) if (SECRET_NAME.test(k)) values.push(v);
+  return values.filter(Boolean);
+}
+
 export function loadConfig(): ConnectorConfig {
   const cfg = readJson<ConnectorConfig>(paths.config());
   if (!cfg) throw new Error(`not enrolled: ${paths.config()} is missing (run "agenomic-connector enroll")`);

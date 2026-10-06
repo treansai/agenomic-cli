@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,15 +8,15 @@ import { test } from 'node:test';
 import { RunnerApi } from '../src/api.ts';
 import { saveProbe } from '../src/capabilities.ts';
 import { claudeCodeVersion, sdkPackage } from '../src/claude.ts';
-import { codexVersion } from '../src/codex.ts';
-import { defaultConfig, localFailMode, paths, saveConfig } from '../src/config.ts';
+import { CodexSession, codexVersion } from '../src/codex.ts';
+import { defaultConfig, localFailMode, paths, runtimeSecrets, saveConfig } from '../src/config.ts';
 import { Daemon } from '../src/daemon.ts';
 import { EventSink } from '../src/events.ts';
 import { eventOf } from '../src/hook.ts';
 import { apply, codexBlock, hookCommand, planClaude, planCodex } from '../src/hooks-install.ts';
 import { clean, redact } from '../src/redact.ts';
-import { probeConfig, probedVersion, runProbe } from '../src/probe.ts';
-import { isTestCommand } from '../src/session.ts';
+import { ProbeApi, probeConfig, probedVersion, runProbe } from '../src/probe.ts';
+import { isTestCommand, type SessionContext } from '../src/session.ts';
 import { realPathEscapes } from '../src/util.ts';
 import * as ws from '../src/workspace.ts';
 
@@ -305,4 +306,53 @@ test('doctor --probe runs the machine\'s configured runtimes: enabled ones, thei
   machine.runtimes.codex.enabled = false;
   machine.runtimes.claude_code.enabled = false;
   assert.deepEqual(await runProbe(machine), []);
+});
+
+/** Runs `fn` with the connector home set to a fresh directory. */
+async function withHome<T>(fn: (home: string) => Promise<T> | T): Promise<T> {
+  const home = tmp('agn-home-');
+  const prev = process.env.AGENOMIC_CONNECTOR_HOME;
+  process.env.AGENOMIC_CONNECTOR_HOME = home;
+  try {
+    return await fn(home);
+  } finally {
+    if (prev === undefined) delete process.env.AGENOMIC_CONNECTOR_HOME;
+    else process.env.AGENOMIC_CONNECTOR_HOME = prev;
+  }
+}
+
+/** A daemon-managed session context and a Codex adapter around it, without a process. */
+function codexHarness(cfg = defaultConfig('http://127.0.0.1:9', 'unit'), mode: 'observe' | 'shadow' | 'enforce' = 'enforce', capture = { conversation: true, commands: true, diffs: false, outputs: true }) {
+  const api = new ProbeApi();
+  const daemon = new Daemon(cfg, api);
+  const m = (daemon as any).manage(randomUUID(), 'codex', 'launched', mode, capture, tmp('agn-wt-'), null);
+  const codex = new CodexSession({ ctx: m.ctx, cwd: m.cwd, runtime: cfg.runtimes.codex, onNativeSession: async () => undefined, onStatus: () => undefined });
+  return { api, daemon, ctx: m.ctx as SessionContext, codex: codex as any };
+}
+
+test('captured Codex content is redacted with every runtime credential value, before it is bounded', async () => {
+  await withHome(async () => {
+    const passthrough = 'corp-provider-credential-7f3a9b2c4d5e';
+    const extra = 'corp-gateway-credential-0a1b2c3d4e5f';
+    process.env.AGN_UNIT_PROVIDER_CREDENTIAL = passthrough;
+    try {
+      const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+      cfg.runtimes.codex.env_passthrough = ['AGN_UNIT_PROVIDER_CREDENTIAL'];
+      cfg.runtimes.codex.extra_env = { CORP_GATEWAY_TOKEN: extra, CORP_BASE_URL: 'http://gateway.corp.example:8080' };
+      assert.deepEqual(runtimeSecrets(cfg.runtimes.codex), [passthrough, extra], 'non secret extra_env values are not redacted');
+      const { api, ctx, codex } = codexHarness(cfg);
+      codex.onNotification('item/started', { turnId: 't1', item: { type: 'commandExecution', id: 'call_1', command: `curl -H ${extra} gateway` } });
+      // The secret straddles the output bound: redacted first, it cannot leave a prefix behind.
+      codex.onNotification('item/completed', { turnId: 't1', item: { type: 'commandExecution', id: 'call_1', command: `curl -H ${extra} gateway`, status: 'completed', exitCode: 0, aggregatedOutput: 'x'.repeat(3990) + passthrough } });
+      codex.onNotification('item/completed', { turnId: 't1', item: { type: 'agentMessage', id: 'msg_1', text: `the key is ${passthrough}` } });
+      await ctx.sink.close();
+      const shipped = JSON.stringify(api.events);
+      for (const secret of [passthrough, extra]) assert.ok(!shipped.includes(secret.slice(0, 10)), `${secret.slice(0, 10)} leaked`);
+      const done = api.events.find((e) => e.type === 'tool.completed');
+      assert.match(done.payload.output, /\[REDACTED\]$/);
+      assert.match(done.payload.command, /curl -H \[REDACTED\] gateway/);
+    } finally {
+      delete process.env.AGN_UNIT_PROVIDER_CREDENTIAL;
+    }
+  });
 });

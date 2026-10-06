@@ -5,7 +5,6 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { createRequire } from 'node:module';
 import { paths, type RuntimeConfig } from './config.ts';
-import { clean } from './redact.ts';
 import { installCodex } from './hooks-install.ts';
 import { isTestCommand, type SessionContext } from './session.ts';
 import { errorMessage, executableVersion, log } from './util.ts';
@@ -147,7 +146,7 @@ export class CodexSession {
     const command = exe.endsWith('.js') ? process.execPath : exe;
     const argv = exe.endsWith('.js') ? [exe, ...args] : args;
     this.child = spawn(command, argv, { cwd: this.o.cwd, env: this.env(), stdio: ['pipe', 'pipe', 'pipe'] });
-    this.child.stderr?.on('data', (d) => log('debug', 'codex stderr', { line: clean(String(d), 500) }));
+    this.child.stderr?.on('data', (d) => log('debug', 'codex stderr', { line: this.o.ctx.cleanText(String(d), 500) }));
     this.child.on('exit', (code, signal) => {
       this.ended = true;
       for (const p of this.pending.values()) p.reject(new Error('app-server exited'));
@@ -323,7 +322,7 @@ export class CodexSession {
         this.itemStart.set(item.id, Date.now());
         if (item.type === 'fileChange') this.fileChanges.set(item.id, item.changes ?? []);
         if (item.type === 'commandExecution') {
-          ctx.sink.emit('tool.started', 'runtime', 'native', { native_request_id: item.id, native_tool: 'exec_command', ...(ctx.capture.commands ? { command: clean(String(item.command ?? ''), 2000) } : {}) }, { runtime_turn_id: turn });
+          ctx.sink.emit('tool.started', 'runtime', 'native', { native_request_id: item.id, native_tool: 'exec_command', ...(ctx.capture.commands ? { command: ctx.cleanText(String(item.command ?? ''), 2000) } : {}) }, { runtime_turn_id: turn });
         }
         if (item.type === 'collabAgentToolCall' || item.type === 'subAgent') ctx.sink.emit('subagent.started', 'runtime', 'native', { item_id: item.id });
         break;
@@ -332,13 +331,13 @@ export class CodexSession {
         const duration = started ? Date.now() - started : undefined;
         const verdict = ctx.known(item.id);
         if (item.type === 'agentMessage') {
-          ctx.sink.emit('message.assistant', 'runtime', 'native', ctx.capture.conversation ? { text: clean(String(item.text ?? ''), 16000) } : { length: String(item.text ?? '').length }, { runtime_turn_id: turn });
+          ctx.sink.emit('message.assistant', 'runtime', 'native', ctx.capture.conversation ? { text: ctx.cleanText(String(item.text ?? ''), 16000) } : { length: String(item.text ?? '').length }, { runtime_turn_id: turn });
         } else if (item.type === 'commandExecution') {
           const failed = item.status !== 'completed' || (typeof item.exitCode === 'number' && item.exitCode !== 0);
           ctx.sink.emit(failed ? 'tool.failed' : 'tool.completed', 'runtime', 'native', {
             native_request_id: item.id, native_tool: 'exec_command', status: item.status, exit_code: item.exitCode ?? null, duration_ms: duration,
-            ...(ctx.capture.commands ? { command: clean(String(item.command ?? ''), 2000) } : {}),
-            ...(ctx.capture.outputs ? { output: clean(String(item.aggregatedOutput ?? ''), 4000) } : {}),
+            ...(ctx.capture.commands ? { command: ctx.cleanText(String(item.command ?? ''), 2000) } : {}),
+            ...(ctx.capture.outputs ? { output: ctx.cleanText(String(item.aggregatedOutput ?? ''), 4000) } : {}),
           }, { runtime_turn_id: turn, action_id: verdict?.actionId });
           if (isTestCommand(item.command)) ctx.sink.emit('test.result', 'adapter', 'derived', { passed: item.exitCode === 0, exit_code: item.exitCode ?? null, basis: 'exit_code' });
           if (item.status === 'declined') void ctx.report(verdict?.actionId, 'unknown', { summary: 'declined, not executed' });
@@ -378,7 +377,7 @@ export class CodexSession {
   async send(text: string, expectedTurnId?: string): Promise<'applied' | 'refused'> {
     if (this.ended || !this.threadId) return 'refused';
     const ctx = this.o.ctx;
-    ctx.sink.emit('message.user', 'adapter', 'native', ctx.capture.conversation ? { text: clean(text, 16000) } : { length: text.length });
+    ctx.sink.emit('message.user', 'adapter', 'native', ctx.capture.conversation ? { text: ctx.cleanText(text, 16000) } : { length: text.length });
     const input = [{ type: 'text', text }];
     if (this.activeTurn) {
       // Steering needs the active turn id: a stale view is refused.

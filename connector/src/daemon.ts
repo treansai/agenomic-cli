@@ -7,7 +7,7 @@ import { RunnerApi } from './api.ts';
 import { manifest } from './capabilities.ts';
 import { ClaudeSession, claudeCodeVersion, sdkVersion } from './claude.ts';
 import { CodexSession, codexVersion } from './codex.ts';
-import { DEFAULT_CAPTURE, paths, type Capture, type ConnectorConfig, type Mode, type WorkspaceConfig } from './config.ts';
+import { DEFAULT_CAPTURE, paths, runtimeSecrets, type Capture, type ConnectorConfig, type Mode, type WorkspaceConfig } from './config.ts';
 import { EventSink } from './events.ts';
 import { clean } from './redact.ts';
 import { SessionContext, type Runtime, type Verdict } from './session.ts';
@@ -324,9 +324,12 @@ export class Daemon {
   }
 
   private manage(id: string, runtime: Runtime, origin: Managed['origin'], mode: Mode, capture: Capture, cwd: string, base: string | null, traceId?: string, workspaceId?: string): Managed {
-    const secrets = () => [this.api.credentials()?.access_token ?? '', this.api.credentials()?.refresh_token ?? ''];
+    // Runner credentials and the runtime's own credential values, redacted
+    // from every event of the session before it is buffered.
+    const rcfg = runtime === 'claude_code' ? this.cfg.runtimes.claude_code : this.cfg.runtimes.codex;
+    const secrets = () => [this.api.credentials()?.access_token ?? '', this.api.credentials()?.refresh_token ?? '', ...runtimeSecrets(rcfg)].filter(Boolean);
     const sink = new EventSink(this.api, id, secrets, paths.spool());
-    const ctx = new SessionContext(this.api, id, runtime, mode, sink, capture, cwd, base, traceId);
+    const ctx = new SessionContext(this.api, id, runtime, mode, sink, capture, cwd, base, traceId, secrets);
     const m: Managed = { id, runtime, origin, ctx, status: 'starting', cwd, workspaceId };
     this.sessions.set(id, m);
     return m;
@@ -432,7 +435,7 @@ export class Daemon {
         ctx.sink.emit('session.started', 'runtime', 'native', { source: input.source, model: input.model });
         return {};
       case 'UserPromptSubmit':
-        ctx.sink.emit('message.user', 'runtime', 'native', ctx.capture.conversation ? { text: clean(String(input.prompt ?? ''), 16000) } : { length: String(input.prompt ?? '').length });
+        ctx.sink.emit('message.user', 'runtime', 'native', ctx.capture.conversation ? { text: ctx.cleanText(String(input.prompt ?? ''), 16000) } : { length: String(input.prompt ?? '').length });
         return {};
       case 'PreToolUse': {
         const v: Verdict = await ctx.authorize({

@@ -59,8 +59,10 @@ export class SessionContext {
   readonly workspaceRoot: string;
   baseRevision: string | null;
   readonly traceId?: string;
+  /** Values redacted from content before it is shipped (runner and runtime credentials). */
+  readonly secrets: () => string[];
 
-  constructor(api: RunnerApi, id: string, runtime: Runtime, mode: Mode, sink: EventSink, capture: Capture, workspaceRoot: string, baseRevision: string | null, traceId?: string) {
+  constructor(api: RunnerApi, id: string, runtime: Runtime, mode: Mode, sink: EventSink, capture: Capture, workspaceRoot: string, baseRevision: string | null, traceId?: string, secrets: () => string[] = () => []) {
     this.api = api;
     this.id = id;
     this.runtime = runtime;
@@ -70,6 +72,16 @@ export class SessionContext {
     this.workspaceRoot = workspaceRoot;
     this.baseRevision = baseRevision;
     this.traceId = traceId;
+    this.secrets = secrets;
+  }
+
+  /**
+   * Captured content made safe to ship: the session's credential values
+   * are redacted before the text is bounded, so that a cut never leaves
+   * a partial secret the event-level redaction cannot recognise.
+   */
+  cleanText(text: string, max: number): string {
+    return clean(text, max, this.secrets());
   }
 
   /** The decision already obtained for a native request id, if any. */
@@ -113,7 +125,7 @@ export class SessionContext {
       decision: res.decision,
       effective_mode: res.effective_mode,
       would_have_been: res.would_have_been ?? null,
-      ...(this.capture.commands ? { command: commandText(a.tool, a.input) } : {}),
+      ...(this.capture.commands ? { command: commandText(a.tool, a.input, this.secrets()) } : {}),
     }, { action_id: res.action_id, runtime_turn_id: a.turnId, trace_id: this.traceId });
 
     if (res.decision === 'pending') {
@@ -195,11 +207,11 @@ export class SessionContext {
   }
 }
 
-export function commandText(tool: string, input: unknown): string | undefined {
+export function commandText(tool: string, input: unknown, secrets: string[] = []): string | undefined {
   const i = (input ?? {}) as Record<string, unknown>;
   const c = i.command ?? i.cmd;
-  if (typeof c === 'string') return clean(c, 2000);
-  if (Array.isArray(c)) return clean(c.join(' '), 2000);
+  if (typeof c === 'string') return clean(c, 2000, secrets);
+  if (Array.isArray(c)) return clean(c.join(' '), 2000, secrets);
   if (typeof i.file_path === 'string') return `${tool} ${i.file_path}`;
   return undefined;
 }
