@@ -301,6 +301,7 @@ export class CodexSession {
       case 'turn/completed': {
         const status = p.turn?.status;
         ctx.sink.emit(status === 'interrupted' ? 'turn.interrupted' : 'turn.completed', 'runtime', 'native', { status }, { runtime_turn_id: p.turn?.id });
+        void ctx.settleOpen(`turn ${status ?? 'ended'} before the tool reported`);
         this.activeTurn = null;
         this.snapshotDiff(p.turn?.id);
         this.o.onStatus('idle');
@@ -406,6 +407,7 @@ export class CodexSession {
   }
 
   async stop(): Promise<'applied' | 'unknown'> {
+    void this.o.ctx.settleOpen('session stopped before the tool reported');
     const child = this.child;
     if (!child || child.exitCode !== null || child.signalCode !== null) return 'applied';
     child.stdin?.end();

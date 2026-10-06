@@ -272,6 +272,7 @@ export class ClaudeSession {
           ctx.sink.emit(m.subtype === 'error_during_execution' ? 'turn.interrupted' : 'turn.completed', 'runtime', 'native', {
             subtype: m.subtype, is_error: m.is_error, num_turns: m.num_turns, duration_ms: m.duration_ms,
           }, { runtime_turn_id: String(this.turnId) });
+          void ctx.settleOpen(`turn ended (${m.subtype}) before the tool reported`);
           ctx.sink.emit('usage', 'runtime', 'native', {
             input_tokens: m.usage?.input_tokens ?? null,
             output_tokens: m.usage?.output_tokens ?? null,
@@ -366,6 +367,7 @@ export class ClaudeSession {
 
   /** Stops the runtime process and reports `applied` only once it exited. */
   async stop(): Promise<'applied' | 'unknown'> {
+    void this.o.ctx.settleOpen('session stopped before the tool reported');
     this.inbox.close();
     try {
       this.query.close?.();

@@ -447,9 +447,11 @@ export class Daemon {
       case 'Stop':
         // End of a turn, not of the session.
         ctx.sink.emit('turn.completed', 'runtime', 'native', {}, { runtime_turn_id: input.turn_id });
+        void ctx.settleOpen('turn ended before the tool reported');
         return {};
       case 'SessionEnd':
         ctx.sink.emit('session.ended', 'runtime', 'native', { reason: input.reason });
+        void ctx.settleOpen('session ended before the tool reported');
         if (m.origin === 'local_connected') {
           await this.setStatus(m, 'stopped');
           await ctx.sink.close();

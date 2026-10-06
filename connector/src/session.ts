@@ -47,6 +47,8 @@ export interface AuthorizeArgs {
  */
 export class SessionContext {
   private readonly verdicts = new Map<string, Verdict>();
+  /** Admitted actions whose outcome was not reported yet. */
+  private readonly open = new Set<string>();
 
   readonly api: RunnerApi;
   readonly id: string;
@@ -143,6 +145,7 @@ export class SessionContext {
       effectiveMode: res.effective_mode,
     };
     this.verdicts.set(a.nativeId, v);
+    if (v.decision !== 'deny' && v.actionId) this.open.add(v.actionId);
     return v;
   }
 
@@ -164,6 +167,7 @@ export class SessionContext {
 
   async report(actionId: string | undefined, outcome: 'started' | 'completed' | 'failed' | 'unknown', detail: { exit_code?: number | null; duration_ms?: number; summary?: string } = {}): Promise<void> {
     if (!actionId) return;
+    if (outcome !== 'started') this.open.delete(actionId);
     try {
       await this.api.request('POST', `/v1/coding/runner/sessions/${this.id}/actions/${actionId}/report`, {
         body: { outcome, exit_code: detail.exit_code ?? undefined, duration_ms: detail.duration_ms, summary: detail.summary ? clean(detail.summary, 400) : undefined },
@@ -173,6 +177,17 @@ export class SessionContext {
     } catch (error) {
       log('warn', 'action report failed', { session: this.id, action: actionId, error: errorMessage(error) });
     }
+  }
+
+  /**
+   * Report every admitted action still without an outcome as `unknown`
+   * (an interrupted turn, a stopped process), so that the gateway settles
+   * them instead of leaving them pending.
+   */
+  async settleOpen(summary: string): Promise<void> {
+    const ids = [...this.open];
+    this.open.clear();
+    await Promise.all(ids.map((id) => this.report(id, 'unknown', { summary })));
   }
 
   async state(update: Record<string, unknown>): Promise<any> {
