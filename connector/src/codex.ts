@@ -145,16 +145,32 @@ export class CodexSession {
     const args = ['app-server', '--listen', 'stdio://'];
     const command = exe.endsWith('.js') ? process.execPath : exe;
     const argv = exe.endsWith('.js') ? [exe, ...args] : args;
-    this.child = spawn(command, argv, { cwd: this.o.cwd, env: this.env(), stdio: ['pipe', 'pipe', 'pipe'] });
-    this.child.stderr?.on('data', (d) => log('debug', 'codex stderr', { line: this.o.ctx.cleanText(String(d), 500) }));
-    this.child.on('exit', (code, signal) => {
+    const child = spawn(command, argv, { cwd: this.o.cwd, env: this.env(), stdio: ['pipe', 'pipe', 'pipe'] });
+    this.child = child;
+    // A missing or non-executable binary emits 'error' (never 'exit'),
+    // which would crash the daemon without a listener: the start is
+    // refused instead.
+    child.on('error', (e) => log('warn', 'codex process error', { session: this.o.ctx.id, error: e.message }));
+    try {
+      await new Promise<void>((resolve, reject) => {
+        child.once('spawn', resolve);
+        child.once('error', reject);
+      });
+    } catch (error) {
+      this.child = undefined;
+      this.ended = true;
+      this.resolveDone();
+      throw new Error(`codex could not be started: ${errorMessage(error)}`);
+    }
+    child.stderr?.on('data', (d) => log('debug', 'codex stderr', { line: this.o.ctx.cleanText(String(d), 500) }));
+    child.on('exit', (code, signal) => {
       this.ended = true;
       for (const p of this.pending.values()) p.reject(new Error('app-server exited'));
       this.pending.clear();
       this.o.ctx.sink.emit('session.ended', 'supervisor', 'native', { exit_code: code, signal });
       this.resolveDone();
     });
-    const rl = readline.createInterface({ input: this.child.stdout! });
+    const rl = readline.createInterface({ input: child.stdout! });
     rl.on('line', (line) => void this.onLine(line));
 
     const init = await this.call('initialize', { clientInfo: { name: 'agenomic-connector', title: 'Agenomic', version: '0.1.0' } });

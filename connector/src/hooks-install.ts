@@ -145,6 +145,14 @@ export async function codexListHooks(exe: string, codexHome: string, cwd: string
   const command = exe.endsWith('.js') ? process.execPath : exe;
   const argv = exe.endsWith('.js') ? [exe, 'app-server'] : ['app-server'];
   const child = spawn(command, argv, { cwd, env: { ...process.env, CODEX_HOME: codexHome }, stdio: ['pipe', 'pipe', 'ignore'] });
+  // A missing or non-executable binary emits 'error' (never 'exit'):
+  // every call fails at once instead of crashing the process.
+  let failure: Error | undefined;
+  const waiting = new Set<(e: Error) => void>();
+  child.on('error', (e) => {
+    failure = new Error(`codex could not be started: ${e.message}`);
+    for (const fail of waiting) fail(failure);
+  });
   const rl = readline.createInterface({ input: child.stdout! });
   const replies = new Map<number, (v: any) => void>();
   rl.on('line', (l) => {
@@ -157,9 +165,20 @@ export async function codexListHooks(exe: string, codexHome: string, cwd: string
   });
   const call = (id: number, method: string, params: unknown) =>
     new Promise<any>((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error(`${method} timed out`)), 20000);
-      replies.set(id, (m) => {
+      if (failure) return reject(failure);
+      const settle = () => {
         clearTimeout(t);
+        waiting.delete(fail);
+        replies.delete(id);
+      };
+      const fail = (e: Error) => {
+        settle();
+        reject(e);
+      };
+      const t = setTimeout(() => fail(new Error(`${method} timed out`)), 20000);
+      waiting.add(fail);
+      replies.set(id, (m) => {
+        settle();
         m.error ? reject(new Error(m.error.message)) : resolve(m.result);
       });
       child.stdin!.write(JSON.stringify({ id, method, params }) + '\n');

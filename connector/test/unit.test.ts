@@ -496,6 +496,37 @@ test('captured Codex content is redacted with every runtime credential value, be
   });
 });
 
+test('a Codex executable that cannot be spawned refuses the launch; the daemon stays up', async () => {
+  await withHome(async (home) => {
+    const repo = tempRepo();
+    const missing = path.join(home, 'missing', 'codex');
+    const notExecutable = path.join(tmp('agn-bin-'), 'codex');
+    fs.writeFileSync(notExecutable, 'not a program\n', { mode: 0o644 });
+    // observe spawns the App Server directly; shadow and enforce first ask
+    // the binary for its hooks.
+    const cases = [[missing, 'observe', /ENOENT/], [missing, 'enforce', /ENOENT/], [notExecutable, 'observe', /EACCES/], [notExecutable, 'shadow', /EACCES/]] as const;
+    for (const [executable, mode, why] of cases) {
+      const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+      cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+      cfg.runtimes.codex.executable = executable;
+      const api = new ProbeApi();
+      const daemon = new Daemon(cfg, api);
+      const session = randomUUID();
+      const launch = ulid();
+      await daemon.handleCommand({ id: launch, kind: 'launch', coding_session_id: session, payload: { runtime: 'codex', workspace_id: 'w', mode } });
+      const r = api.results.get(launch);
+      assert.equal(r?.status, 'refused', `${mode} ${executable}`);
+      assert.match(r.error, /codex could not be started/);
+      assert.match(r.error, why);
+      // A late 'error' event would surface here as an uncaught exception.
+      await sleep(100);
+      const send = ulid();
+      await daemon.handleCommand({ id: send, kind: 'send_message', coding_session_id: session, payload: { text: 'hello' } });
+      assert.equal(api.results.get(send)?.status, 'refused');
+    }
+  });
+});
+
 test('a local Codex terminal session reports the codex:cli_hooks capabilities, validated by its own probe', async () => {
   await withHome(async () => {
     const version = codexVersion(defaultConfig('x', 'x').runtimes.codex)!;
