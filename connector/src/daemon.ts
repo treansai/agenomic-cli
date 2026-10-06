@@ -5,8 +5,8 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { RunnerApi } from './api.ts';
 import { manifest } from './capabilities.ts';
-import { ClaudeSession, claudeCodeVersion, sdkVersion } from './claude.ts';
-import { CodexSession, codexVersion } from './codex.ts';
+import { ClaudeSession, claudeCodeVersion, readClaudeCodeVersion, sdkVersion } from './claude.ts';
+import { CodexSession, codexVersion, readCodexVersion } from './codex.ts';
 import { DEFAULT_CAPTURE, paths, runtimeSecrets, type Capture, type ConnectorConfig, type Mode, type WorkspaceConfig } from './config.ts';
 import { EventSink } from './events.ts';
 import { protection } from './protection.ts';
@@ -81,12 +81,13 @@ export class Daemon {
     // The version is the one of the binary sessions run (a configured
     // executable reports its own): a probe of another binary never
     // validates it. One that cannot tell its version stays listed, with
-    // nothing validated.
+    // nothing validated, and so does one whose `--version` has not
+    // answered yet (read in the background, never awaited here).
     const cc = this.cfg.runtimes.claude_code;
     if (cc.enabled) {
       const sdk = sdkVersion();
       if (sdk) {
-        const version = claudeCodeVersion(cc);
+        const version = claudeCodeVersion(cc) ?? null;
         const caps = manifest('claude_code', 'sdk', version);
         if (!sb.ok) caps.pre_tool_control = { ...caps.pre_tool_control!, validated: 'unsupported', detail: `sandbox unavailable: ${sb.detail}` };
         out.push({ runtime: 'claude_code', version: version ?? 'unknown', sdk_version: sdk, surfaces: ['sdk', 'cli_hooks'], capabilities: caps });
@@ -94,7 +95,7 @@ export class Daemon {
     }
     const cx = this.cfg.runtimes.codex;
     if (cx.enabled) {
-      const version = codexVersion(cx);
+      const version = codexVersion(cx) ?? null;
       if (version || (cx.executable && resolveExecutable(cx.executable))) {
         out.push({ runtime: 'codex', version: version ?? 'unknown', surfaces: ['app_server', 'cli_hooks'], capabilities: manifest('codex', 'app_server', version) });
       }
@@ -123,10 +124,24 @@ export class Daemon {
   async start(): Promise<void> {
     fs.mkdirSync(paths.state(), { recursive: true, mode: 0o700 });
     await this.listen();
+    const versions = this.readVersions();
     await this.heartbeat();
     log('info', 'connector connected', { endpoint: this.cfg.endpoint, workspaces: this.cfg.workspaces.length });
+    // A runtime version still unknown in that heartbeat is reported as
+    // soon as its `--version` has answered.
+    void versions
+      .then((pending) => (pending && !this.abort.signal.aborted ? this.heartbeat() : undefined))
+      .catch((error) => log('warn', 'heartbeat failed', { error: errorMessage(error) }));
     void this.loop('heartbeat', 20000, () => this.heartbeat());
     void this.commandLoop();
+  }
+
+  /** Reads the configured runtime versions; true when one of them was not known yet. */
+  private async readVersions(): Promise<boolean> {
+    const { claude_code: cc, codex: cx } = this.cfg.runtimes;
+    const pending = (cc.enabled && claudeCodeVersion(cc) === undefined) || (cx.enabled && codexVersion(cx) === undefined);
+    await Promise.all([cc.enabled ? readClaudeCodeVersion(cc) : null, cx.enabled ? readCodexVersion(cx) : null]);
+    return pending;
   }
 
   async stop(): Promise<void> {

@@ -8,8 +8,8 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { ApiError, RunnerApi } from '../src/api.ts';
 import { manifest, saveProbe } from '../src/capabilities.ts';
-import { ClaudeSession, claudeCodeVersion, sdkPackage } from '../src/claude.ts';
-import { CodexSession, codexVersion } from '../src/codex.ts';
+import { ClaudeSession, claudeCodeVersion, readClaudeCodeVersion, sdkPackage } from '../src/claude.ts';
+import { CodexSession, codexVersion, readCodexVersion } from '../src/codex.ts';
 import { defaultConfig, localFailMode, paths, runtimeSecrets, saveConfig } from '../src/config.ts';
 import { Daemon } from '../src/daemon.ts';
 import { EventSink } from '../src/events.ts';
@@ -376,7 +376,7 @@ function fakeBinary(line: string): string {
   return file;
 }
 
-test('a configured runtime executable reports its own version; a probe of another binary does not validate it', () => {
+test('a configured runtime executable reports its own version; a probe of another binary does not validate it', async () => {
   const home = tmp('agn-home-');
   const prev = process.env.AGENOMIC_CONNECTOR_HOME;
   process.env.AGENOMIC_CONNECTOR_HOME = home;
@@ -384,11 +384,13 @@ test('a configured runtime executable reports its own version; a probe of anothe
     const claude = fakeBinary('9.8.7 (Claude Code)');
     const codex = fakeBinary('codex-cli 1.2.3');
     const rt = (executable?: string) => ({ enabled: true, executable, env_passthrough: [], extra_env: {}, allowed_domains: [] });
-    assert.equal(claudeCodeVersion(rt(claude)), '9.8.7');
+    assert.equal(claudeCodeVersion(rt(claude)), undefined, 'not read yet: never waited for');
+    assert.equal(await readClaudeCodeVersion(rt(claude)), '9.8.7');
+    assert.equal(claudeCodeVersion(rt(claude)), '9.8.7', 'cached once read');
     assert.equal(claudeCodeVersion(rt()), sdkPackage()!.claudeCodeVersion, 'the bundled binary: the version the SDK pins');
-    assert.equal(codexVersion(rt(codex)), '1.2.3');
+    assert.equal(await readCodexVersion(rt(codex)), '1.2.3');
     assert.equal(codexVersion(rt(path.join(home, 'missing'))), null);
-    assert.equal(codexVersion(rt(fakeBinary('no version here'))), null);
+    assert.equal(await readCodexVersion(rt(fakeBinary('no version here'))), null);
 
     const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
     const api = new RunnerApi('http://127.0.0.1:9', { access_token: 'a', refresh_token: 'r', access_expires_at: new Date(Date.now() + 3600e3).toISOString(), refresh_expires_at: new Date(Date.now() + 3600e3).toISOString() }, false);
@@ -415,6 +417,7 @@ test('a configured runtime executable reports its own version; a probe of anothe
 
     // A binary that cannot tell its version is listed, with nothing validated.
     cfg.runtimes.codex.executable = fakeBinary('no version here');
+    await readCodexVersion(cfg.runtimes.codex);
     const unknown = new Daemon(cfg, api).runtimes().find((r) => r.runtime === 'codex');
     assert.equal(unknown.version, 'unknown');
     assert.equal(unknown.capabilities.observe.validated, 'unknown');
@@ -422,6 +425,51 @@ test('a configured runtime executable reports its own version; a probe of anothe
     if (prev === undefined) delete process.env.AGENOMIC_CONNECTOR_HOME;
     else process.env.AGENOMIC_CONNECTOR_HOME = prev;
   }
+});
+
+test('a slow --version never delays a heartbeat or a hook reply', async () => {
+  await withHome(async () => {
+    const repo = tempRepo();
+    const slow = path.join(tmp('agn-bin-'), 'codex');
+    fs.writeFileSync(slow, "#!/bin/sh\nsleep 2\necho 'codex-cli 7.7.7'\n", { mode: 0o755 });
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+    cfg.runtimes.codex.executable = slow;
+    const api = new (class extends ProbeApi {
+      heartbeats: any[] = [];
+      override async request<T = any>(method: string, p: string, opts: { body?: any } = {}): Promise<T> {
+        if (p.endsWith('/heartbeat')) this.heartbeats.push(opts.body);
+        return super.request<T>(method, p, opts);
+      }
+    })();
+    const daemon: any = new Daemon(cfg, api);
+    const codexOf = (beat: any) => beat.runtimes.find((r: any) => r.runtime === 'codex');
+    // The event loop keeps turning while `--version` runs.
+    let ticks = 0;
+    const ticker = setInterval(() => ticks++, 20);
+    try {
+      let t = Date.now();
+      await daemon.start();
+      assert.ok(Date.now() - t < 1000, `start and its first heartbeat took ${Date.now() - t} ms`);
+      assert.equal(codexOf(api.heartbeats[0]).version, 'unknown', 'not known yet');
+      assert.equal(codexOf(api.heartbeats[0]).capabilities.observe.validated, 'unknown');
+      t = Date.now();
+      const reply = await daemon.onLocal({ op: 'hook', runtime: 'codex', input: { hook_event_name: 'PreToolUse', session_id: 'thread-slow', cwd: repo, tool_use_id: 'call_1', tool_name: 'Bash', tool_input: { command: 'ls' } } });
+      assert.deepEqual(reply, {});
+      assert.ok(Date.now() - t < 1000, `the first hook of a new local session took ${Date.now() - t} ms`);
+      t = Date.now();
+      await daemon.heartbeat();
+      assert.ok(Date.now() - t < 1000, `a heartbeat took ${Date.now() - t} ms`);
+      // Once `--version` has answered, one more heartbeat reports it.
+      const deadline = Date.now() + 10000;
+      while (!api.heartbeats.some((b) => codexOf(b).version === '7.7.7') && Date.now() < deadline) await sleep(50);
+      assert.equal(codexOf(api.heartbeats.at(-1)).version, '7.7.7');
+      assert.ok(ticks >= 50, `the event loop turned ${ticks} times in 2 s`);
+    } finally {
+      clearInterval(ticker);
+      await daemon.stop();
+    }
+  });
 });
 
 test('doctor --probe runs the machine\'s configured runtimes: enabled ones, their executable, its version', async () => {
@@ -436,11 +484,11 @@ test('doctor --probe runs the machine\'s configured runtimes: enabled ones, thei
   assert.match(codex.runtimes.codex.extra_config_toml!, /agenomic_scripted/);
   assert.doesNotMatch(codex.runtimes.codex.extra_config_toml!, /corp/);
   assert.equal(codex.runtimes.claude_code.enabled, false);
-  assert.equal(probedVersion(codex, 'codex'), '4.5.6', 'recorded under the version of the binary that ran');
+  assert.equal(await probedVersion(codex, 'codex'), '4.5.6', 'recorded under the version of the binary that ran');
   const claude = probeConfig(machine, 'claude_code', 'http://127.0.0.1:1', '/tmp/repo');
   assert.equal(claude.runtimes.claude_code.executable, undefined);
   assert.deepEqual(claude.runtimes.claude_code.allowed_domains, ['registry.npmjs.org']);
-  assert.equal(probedVersion(claude, 'claude_code'), sdkPackage()!.claudeCodeVersion);
+  assert.equal(await probedVersion(claude, 'claude_code'), sdkPackage()!.claudeCodeVersion);
   // Disabled runtimes are not probed at all.
   machine.runtimes.codex.enabled = false;
   machine.runtimes.claude_code.enabled = false;

@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -99,32 +99,81 @@ export function resolveExecutable(exe: string): string | null {
   return null;
 }
 
+const VERSION = /\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/;
 const versions = new Map<string, string | null>();
+const reading = new Map<string, Promise<string | null>>();
+
+/** The executable's file and the cache key of its current revision; null when it is not found. */
+function revision(exe: string): { file: string; key: string } | null {
+  const file = resolveExecutable(exe);
+  if (!file) return null;
+  try {
+    const st = fs.statSync(file);
+    return { file, key: `${file}\0${st.size}\0${st.mtimeMs}` };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * The version a runtime executable reports (first x.y.z of `--version`),
  * cached per file revision. Null when it cannot be run or prints no
- * version: nothing is then validated for it.
+ * version: nothing is then validated for it. `--version` runs in a child
+ * process the caller never waits for (it can take seconds, and the
+ * daemon answers hooks on the same event loop): `undefined` means it has
+ * not answered yet, and it is being read in the background.
  */
-export function executableVersion(exe: string): string | null {
-  const file = resolveExecutable(exe);
-  if (!file) return null;
-  let key: string;
-  try {
-    const st = fs.statSync(file);
-    key = `${file}\0${st.size}\0${st.mtimeMs}`;
-  } catch {
-    return null;
+export function executableVersion(exe: string): string | null | undefined {
+  const rev = revision(exe);
+  if (!rev) return null;
+  if (versions.has(rev.key)) return versions.get(rev.key)!;
+  void readExecutableVersion(exe);
+  return undefined;
+}
+
+/** executableVersion(), waiting for the answer; one `--version` per file revision. */
+export function readExecutableVersion(exe: string): Promise<string | null> {
+  const rev = revision(exe);
+  if (!rev) return Promise.resolve(null);
+  if (versions.has(rev.key)) return Promise.resolve(versions.get(rev.key)!);
+  let p = reading.get(rev.key);
+  if (!p) {
+    p = runVersion(rev.file).then((version) => {
+      versions.set(rev.key, version);
+      reading.delete(rev.key);
+      return version;
+    });
+    reading.set(rev.key, p);
   }
-  if (versions.has(key)) return versions.get(key)!;
-  let version: string | null = null;
-  try {
+  return p;
+}
+
+function runVersion(file: string, timeoutMs = 10000): Promise<string | null> {
+  return new Promise((resolve) => {
     const script = /\.[cm]?js$/.test(file);
-    const out = execFileSync(script ? process.execPath : file, script ? [file, '--version'] : ['--version'], { encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'ignore'] });
-    version = /\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/.exec(out)?.[0] ?? null;
-  } catch {
-    version = null;
-  }
-  versions.set(key, version);
-  return version;
+    let child: ChildProcess;
+    try {
+      child = spawn(script ? process.execPath : file, script ? [file, '--version'] : ['--version'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch {
+      return resolve(null);
+    }
+    let out = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      child.stdout?.destroy();
+      resolve(null);
+    }, timeoutMs);
+    child.stdout!.setEncoding('utf8');
+    child.stdout!.on('data', (d: string) => {
+      if (out.length < 64 * 1024) out += d;
+    });
+    child.on('error', () => {
+      clearTimeout(timer);
+      resolve(null);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve(code === 0 ? (VERSION.exec(out)?.[0] ?? null) : null);
+    });
+  });
 }

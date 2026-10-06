@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { RunnerApi } from './api.ts';
 import { saveProbe, type CapName, type ProbeResult } from './capabilities.ts';
-import { claudeCodeVersion } from './claude.ts';
-import { codexExecutable, codexVersion } from './codex.ts';
+import { readClaudeCodeVersion } from './claude.ts';
+import { codexExecutable, readCodexVersion } from './codex.ts';
 import { defaultConfig, loadConfig, type ConnectorConfig } from './config.ts';
 import { Daemon } from './daemon.ts';
 import { codexProviderToml, fakeAnthropic, fakeResponses, script, type FakeServer } from './fakes.ts';
@@ -137,8 +137,8 @@ export function probeConfig(machine: ConnectorConfig, runtime: 'claude_code' | '
 }
 
 /** Version of the binary the probe runs, read from the binary as the daemon does. */
-export function probedVersion(cfg: ConnectorConfig, runtime: 'claude_code' | 'codex'): string {
-  return (runtime === 'claude_code' ? claudeCodeVersion(cfg.runtimes.claude_code) : codexVersion(cfg.runtimes.codex)) ?? 'unknown';
+export async function probedVersion(cfg: ConnectorConfig, runtime: 'claude_code' | 'codex'): Promise<string> {
+  return (await (runtime === 'claude_code' ? readClaudeCodeVersion(cfg.runtimes.claude_code) : readCodexVersion(cfg.runtimes.codex))) ?? 'unknown';
 }
 
 export async function probeRuntime(runtime: 'claude_code' | 'codex', fake: FakeServer, home: string, machine: ConnectorConfig): Promise<ProbeResult> {
@@ -216,7 +216,7 @@ export async function probeRuntime(runtime: 'claude_code' | 'codex', fake: FakeS
   } finally {
     await d.stop();
   }
-  return { runtime, surface: runtime === 'claude_code' ? 'sdk' : 'app_server', version: probedVersion(cfg, runtime), at: new Date().toISOString(), results };
+  return { runtime, surface: runtime === 'claude_code' ? 'sdk' : 'app_server', version: await probedVersion(cfg, runtime), at: new Date().toISOString(), results };
 }
 
 /** Runs a CLI with stdin closed; resolves with its exit code and the end of its output. */
@@ -282,7 +282,7 @@ export async function probeCodexCli(fake: FakeServer, home: string, machine: Con
   } finally {
     await d.stop();
   }
-  return { runtime: 'codex', surface: 'cli_hooks', version: probedVersion(cfg, 'codex'), at: new Date().toISOString(), results };
+  return { runtime: 'codex', surface: 'cli_hooks', version: await probedVersion(cfg, 'codex'), at: new Date().toISOString(), results };
 }
 
 /** The surfaces `doctor --probe` validates, per runtime. */

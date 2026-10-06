@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { paths, type RuntimeConfig } from './config.ts';
 import { commandText, isTestCommand, type SessionContext, type Verdict } from './session.ts';
-import { errorMessage, executableVersion, log, realPathEscapes } from './util.ts';
+import { errorMessage, executableVersion, log, readExecutableVersion, realPathEscapes } from './util.ts';
 import * as ws from './workspace.ts';
 
 // Pinned in package.json; imported lazily so `hooks install` and `enroll`
@@ -41,11 +41,18 @@ export function sdkVersion(): string | null {
 
 /**
  * Version of the Claude Code binary a session runs: what a configured
- * executable reports itself, otherwise the version the pinned SDK
- * bundles. Never the bundled version for a custom executable.
+ * executable reports itself (`undefined` until it has answered, see
+ * executableVersion), otherwise the version the pinned SDK bundles.
+ * Never the bundled version for a custom executable.
  */
-export function claudeCodeVersion(runtime: RuntimeConfig): string | null {
+export function claudeCodeVersion(runtime: RuntimeConfig): string | null | undefined {
   if (runtime.executable) return executableVersion(runtime.executable);
+  return sdkPackage()?.claudeCodeVersion ?? null;
+}
+
+/** claudeCodeVersion(), waiting for a configured executable's answer. */
+export async function readClaudeCodeVersion(runtime: RuntimeConfig): Promise<string | null> {
+  if (runtime.executable) return readExecutableVersion(runtime.executable);
   return sdkPackage()?.claudeCodeVersion ?? null;
 }
 
