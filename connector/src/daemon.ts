@@ -273,7 +273,11 @@ export class Daemon {
     try {
       await this.startAdapter(managed, rcfg, { model: p.model, prompt: p.prompt });
     } catch (error) {
+      // The partial adapter is stopped (startAdapter); the session is no
+      // longer managed, so no later command reaches it.
+      this.sessions.delete(sessionId);
       await this.setStatus(managed, 'failed');
+      await managed.ctx.sink.close();
       return this.result(cmd.id, 'refused', undefined, errorMessage(error));
     }
     const prot = protection(runtime, runtime === 'claude_code' ? 'sdk' : 'app_server', mode);
@@ -317,7 +321,18 @@ export class Daemon {
     const common = { ctx: m.ctx, cwd: m.cwd, model: o.model ?? null, prompt: o.prompt ?? null, resume: o.resume ?? null, runtime: rcfg, onNativeSession, onStatus };
     const adapter: Adapter = m.runtime === 'claude_code' ? new ClaudeSession(common) : new CodexSession(common);
     m.adapter = adapter;
-    await adapter.start();
+    try {
+      await adapter.start();
+    } catch (error) {
+      // A start that failed after the process was spawned (initialization,
+      // thread start or the session registration): commands no longer
+      // reach the adapter, and its process is stopped.
+      m.adapter = undefined;
+      if (m.nativeId && this.byNative.get(`${m.runtime}:${m.nativeId}`) === m) this.byNative.delete(`${m.runtime}:${m.nativeId}`);
+      const stopped = await adapter.stop().catch(() => 'unknown' as const);
+      if (stopped !== 'applied') log('warn', 'runtime process of a failed start may still run', { session: m.id });
+      throw error;
+    }
     void adapter.done.then(async () => {
       if (m.status !== 'stopped') await this.setStatus(m, 'stopped');
       await m.ctx.sink.flush();
@@ -332,7 +347,15 @@ export class Daemon {
     const rcfg = rec.runtime === 'claude_code' ? this.cfg.runtimes.claude_code : this.cfg.runtimes.codex;
     const m = live ?? this.manage(cmd.coding_session_id, rec.runtime, 'launched', rec.mode, rec.capture, rec.cwd, rec.base_revision, undefined, rec.workspace_id);
     // Resume is always by explicit native id, never "the last session".
-    await this.startAdapter(m, rcfg, { resume: rec.native_id, prompt: cmd.payload?.prompt ?? undefined });
+    try {
+      await this.startAdapter(m, rcfg, { resume: rec.native_id, prompt: cmd.payload?.prompt ?? undefined });
+    } catch (error) {
+      if (!live) {
+        this.sessions.delete(m.id);
+        await m.ctx.sink.close();
+      }
+      return this.result(cmd.id, 'refused', undefined, errorMessage(error));
+    }
     await this.setStatus(m, 'running');
     return this.result(cmd.id, 'applied');
   }

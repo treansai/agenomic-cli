@@ -527,6 +527,73 @@ test('a Codex executable that cannot be spawned refuses the launch; the daemon s
   });
 });
 
+test('a launch or resume whose start fails after the spawn stops the process and unmanages the session', async () => {
+  await withHome(async () => {
+    const repo = tempRepo();
+    // An App Server that starts a thread; the session registration that follows times out.
+    const bin = tmp('agn-bin-');
+    const fake = path.join(bin, 'codex.js');
+    const pidFile = path.join(bin, 'pid');
+    fs.writeFileSync(fake, [
+      "const fs = require('node:fs');",
+      "fs.writeFileSync(process.env.FAKE_PID_FILE, String(process.pid));",
+      "const rl = require('node:readline').createInterface({ input: process.stdin });",
+      "rl.on('line', (line) => {",
+      '  const m = JSON.parse(line);',
+      '  if (m.id === undefined) return;',
+      "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : m.method.startsWith('thread/') ? { thread: { id: 'thread-fake' } } : {};",
+      "  process.stdout.write(JSON.stringify({ id: m.id, result }) + '\\n');",
+      '});',
+      "rl.on('close', () => process.exit(0));",
+    ].join('\n'));
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+    cfg.runtimes.codex.executable = fake;
+    cfg.runtimes.codex.extra_env = { FAKE_PID_FILE: pidFile };
+    const api = new (class extends ProbeApi {
+      override async request<T = any>(method: string, p: string, opts: { body?: any } = {}): Promise<T> {
+        if (p === '/v1/coding/runner/sessions') throw new ApiError(0, 'timeout', 'POST /v1/coding/runner/sessions timed out');
+        return super.request<T>(method, p, opts);
+      }
+    })();
+    const daemon: any = new Daemon(cfg, api);
+    const session = randomUUID();
+    const command = async (kind: string, payload: unknown = {}) => {
+      const id = ulid();
+      await daemon.handleCommand({ id, kind, coding_session_id: session, payload });
+      return api.results.get(id);
+    };
+    const alive = (pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const pids: number[] = [];
+    try {
+      for (const kind of ['launch', 'resume_session'] as const) {
+        fs.rmSync(pidFile, { force: true });
+        const r = await command(kind, kind === 'launch' ? { runtime: 'codex', workspace_id: 'w', mode: 'observe' } : {});
+        assert.equal(r?.status, 'refused', kind);
+        assert.match(r.error, /sessions timed out/, kind);
+        const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+        pids.push(pid);
+        assert.equal(alive(pid), false, `${kind}: the spawned App Server was stopped`);
+        assert.equal(daemon.sessions.has(session), false, `${kind}: the session is no longer managed`);
+        assert.equal(daemon.byNative.size, 0);
+        for (const next of ['send_message', 'interrupt_turn', 'stop_process']) {
+          assert.equal((await command(next, { text: 'hello' }))?.status, 'refused', `${kind}, then ${next}`);
+        }
+      }
+      assert.ok(api.states.some((s) => s.status === 'failed'), 'the launch is reported failed');
+    } finally {
+      for (const pid of pids) if (alive(pid)) process.kill(pid, 'SIGKILL');
+    }
+  });
+});
+
 test('a local Codex terminal session reports the codex:cli_hooks capabilities, validated by its own probe', async () => {
   await withHome(async () => {
     const version = codexVersion(defaultConfig('x', 'x').runtimes.codex)!;
