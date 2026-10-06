@@ -95,7 +95,7 @@ export class Daemon {
     if (cx.enabled) {
       const version = codexVersion(cx);
       if (version || (cx.executable && resolveExecutable(cx.executable))) {
-        out.push({ runtime: 'codex', version: version ?? 'unknown', surfaces: ['app_server'], capabilities: manifest('codex', 'app_server', version) });
+        out.push({ runtime: 'codex', version: version ?? 'unknown', surfaces: ['app_server', 'cli_hooks'], capabilities: manifest('codex', 'app_server', version) });
       }
     }
     return out;

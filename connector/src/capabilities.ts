@@ -48,6 +48,18 @@ export const ANNOUNCED: Record<string, Announced> = {
     user_questions: ['unsupported', 'questions are answered in the terminal'],
     subagent_tracking: ['partial', 'SubagentStart/SubagentStop hooks'],
   },
+  'codex:cli_hooks': {
+    observe: ['partial', 'command hooks of a developer Codex CLI session: prompts, shell calls, turn and session ends; no assistant messages, no apply_patch'],
+    converse: ['unsupported', 'a terminal session cannot receive messages from Agenomic'],
+    remote_approval: ['partial', 'the PreToolUse hook holds a shell call until its approval, up to the hook timeout'],
+    pre_tool_control: ['partial', 'cooperative PreToolUse hook on shell calls only (apply_patch, write_stdin, MCP and web search are not checked); same-user processes and disabled hooks bypass it'],
+    interrupt_turn: ['unsupported', 'no supported API to interrupt a terminal session'],
+    stop_process: ['unsupported', 'the connector does not own the process'],
+    resume: ['unsupported', 'resume happens in the terminal'],
+    file_diffs: ['unsupported', 'the developer checkout is not snapshotted'],
+    user_questions: ['unsupported', 'questions are answered in the terminal'],
+    subagent_tracking: ['unsupported', 'Codex hooks report no subagent lifecycle'],
+  },
   'codex:app_server': {
     observe: ['supported_tested', 'App Server notifications'],
     converse: ['supported_tested', 'turn/start and turn/steer with expectedTurnId'],

@@ -1,14 +1,16 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { RunnerApi } from './api.ts';
 import { saveProbe, type CapName, type ProbeResult } from './capabilities.ts';
 import { claudeCodeVersion } from './claude.ts';
-import { codexVersion } from './codex.ts';
+import { codexExecutable, codexVersion } from './codex.ts';
 import { defaultConfig, loadConfig, type ConnectorConfig } from './config.ts';
 import { Daemon } from './daemon.ts';
 import { codexProviderToml, fakeAnthropic, fakeResponses, script, type FakeServer } from './fakes.ts';
+import { installCodex } from './hooks-install.ts';
+import { clean } from './redact.ts';
 import { sleep, ulid } from './util.ts';
 
 /**
@@ -216,21 +218,90 @@ export async function probeRuntime(runtime: 'claude_code' | 'codex', fake: FakeS
   return { runtime, surface: runtime === 'claude_code' ? 'sdk' : 'app_server', version: probedVersion(cfg, runtime), at: new Date().toISOString(), results };
 }
 
+/** Runs a CLI with stdin closed; resolves with its exit code and the end of its output. */
+function runCli(command: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number }): Promise<{ code: number | null; tail: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { cwd: opts.cwd, env: opts.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    const keep = (d: Buffer) => (out = (out + d).slice(-4000));
+    child.stdout.on('data', keep);
+    child.stderr.on('data', keep);
+    const t = setTimeout(() => child.kill('SIGKILL'), opts.timeoutMs);
+    child.on('error', (e) => keep(Buffer.from(String(e))));
+    child.on('close', (code) => {
+      clearTimeout(t);
+      resolve({ code, tail: out });
+    });
+  });
+}
+
 /**
- * `doctor --probe`: validates the launched surfaces of the runtimes this
- * machine is configured with (enabled ones only, with their configured
+ * The Codex CLI surface (local sessions): a terminal `codex exec` session
+ * in a declared workspace, run with the configured Codex binary and the
+ * connector's hooks installed in its CODEX_HOME, reported to and decided
+ * by this daemon. It validates what those hooks can do: report the
+ * session, refuse a shell call before it runs, and hold one until its
+ * approval. The other capabilities of the surface are unsupported.
+ */
+export async function probeCodexCli(fake: FakeServer, home: string, machine: ConnectorConfig): Promise<ProbeResult> {
+  process.env.AGENOMIC_CONNECTOR_HOME = home;
+  const repo = tempRepo();
+  const cfg = probeConfig(machine, 'codex', fake.url, repo);
+  cfg.local_sessions.mode = 'enforce';
+  const api = new ProbeApi();
+  const d = new Daemon(cfg, api);
+  await d.start();
+  const results: ProbeResult['results'] = {};
+  const set = (k: CapName, ok: boolean, detail: string) => (results[k] = { ok, detail });
+  const codexHome = path.join(home, 'codex-cli');
+  fs.mkdirSync(codexHome, { recursive: true, mode: 0o700 });
+  const file = path.join(codexHome, 'config.toml');
+  fs.writeFileSync(file, codexProviderToml(fake.url) + '\n', { mode: 0o600 });
+  const exe = codexExecutable(cfg.runtimes.codex);
+  try {
+    const hooks = await installCodex(file, 'closed', exe, repo, false).catch((e: Error) => ({ trusted: 0, error: e.message }));
+    const shell = (cmd: string) => ({ tool: 'exec_command', input: { cmd } });
+    const steps = [shell('echo in > inside.txt'), shell('echo deny-me > deny-me.txt'), shell('echo approve-me > approved.txt')];
+    const run = hooks.trusted > 0
+      ? await runCli(exe.endsWith('.js') ? process.execPath : exe, [...(exe.endsWith('.js') ? [exe] : []), 'exec', '--skip-git-repo-check', '-s', 'workspace-write', script(steps, 'cli probe')], {
+          cwd: repo,
+          env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: codexHome, CODEX_HOME: codexHome, AGENOMIC_SCRIPTED_KEY: 'probe-not-a-key' },
+          timeoutMs: 180000,
+        })
+      : { code: null, tail: 'error' in hooks ? hooks.error : 'codex did not report the installed hooks' };
+    await until(() => api.has('session.ended'), 10000);
+    const why = run.code === 0 ? '' : `; codex exec exited ${run.code}: ${clean(run.tail.split('\n').slice(-3).join(' '), 300)}`;
+    const reported = api.states.some((s) => s.mode_effective === 'enforce') && api.has('session.started') && api.has('tool.requested') && api.has('tool.completed') && api.has('turn.completed');
+    set('observe', run.code === 0 && reported, `hooks trusted ${hooks.trusted}; session, tool calls and turn end reported ${reported}${why}`);
+    const inside = fs.existsSync(path.join(repo, 'inside.txt'));
+    const denied = !fs.existsSync(path.join(repo, 'deny-me.txt'));
+    set('pre_tool_control', run.code === 0 && inside && denied, `allowed shell call ran ${inside}, denied shell call absent ${denied}${why}`);
+    const approved = fs.existsSync(path.join(repo, 'approved.txt')) && api.has('approval.resolved');
+    set('remote_approval', run.code === 0 && approved, `shell call held by the hook ran after its approval ${approved}${why}`);
+  } finally {
+    await d.stop();
+  }
+  return { runtime: 'codex', surface: 'cli_hooks', version: probedVersion(cfg, 'codex'), at: new Date().toISOString(), results };
+}
+
+/** The surfaces `doctor --probe` validates, per runtime. */
+const SURFACES = [['claude_code', 'sdk'], ['codex', 'app_server'], ['codex', 'cli_hooks']] as const;
+
+/**
+ * `doctor --probe`: validates the surfaces of the runtimes this machine
+ * is configured with (enabled ones only, with their configured
  * executable) and records the result under the version of the binary
  * that ran.
  */
 export async function runProbe(machine: ConnectorConfig = loadConfig()): Promise<ProbeResult[]> {
   const realHome = process.env.AGENOMIC_CONNECTOR_HOME;
   const out: ProbeResult[] = [];
-  for (const runtime of ['claude_code', 'codex'] as const) {
+  for (const [runtime, surface] of SURFACES) {
     if (!machine.runtimes[runtime].enabled) continue;
     const fake = runtime === 'claude_code' ? await fakeAnthropic() : await fakeResponses();
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agn-probe-home-'));
     try {
-      out.push(await probeRuntime(runtime, fake, home, machine));
+      out.push(surface === 'cli_hooks' ? await probeCodexCli(fake, home, machine) : await probeRuntime(runtime, fake, home, machine));
     } finally {
       await fake.close();
       if (realHome) process.env.AGENOMIC_CONNECTOR_HOME = realHome;

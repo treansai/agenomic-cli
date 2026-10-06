@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { RunnerApi } from '../src/api.ts';
-import { saveProbe } from '../src/capabilities.ts';
+import { manifest, saveProbe } from '../src/capabilities.ts';
 import { claudeCodeVersion, sdkPackage } from '../src/claude.ts';
 import { CodexSession, codexVersion } from '../src/codex.ts';
 import { defaultConfig, localFailMode, paths, runtimeSecrets, saveConfig } from '../src/config.ts';
@@ -15,7 +15,7 @@ import { EventSink } from '../src/events.ts';
 import { eventOf } from '../src/hook.ts';
 import { apply, codexBlock, hookCommand, planClaude, planCodex } from '../src/hooks-install.ts';
 import { clean, redact } from '../src/redact.ts';
-import { ProbeApi, probeConfig, probedVersion, runProbe } from '../src/probe.ts';
+import { ProbeApi, probeConfig, probedVersion, runProbe, tempRepo } from '../src/probe.ts';
 import { isTestCommand, type SessionContext } from '../src/session.ts';
 import { realPathEscapes } from '../src/util.ts';
 import * as ws from '../src/workspace.ts';
@@ -354,5 +354,35 @@ test('captured Codex content is redacted with every runtime credential value, be
     } finally {
       delete process.env.AGN_UNIT_PROVIDER_CREDENTIAL;
     }
+  });
+});
+
+test('a local Codex terminal session reports the codex:cli_hooks capabilities, validated by its own probe', async () => {
+  await withHome(async () => {
+    const version = codexVersion(defaultConfig('x', 'x').runtimes.codex)!;
+    const caps = manifest('codex', 'cli_hooks', version);
+    assert.deepEqual(Object.keys(caps).sort(), ['converse', 'file_diffs', 'interrupt_turn', 'observe', 'pre_tool_control', 'remote_approval', 'resume', 'stop_process', 'subagent_tracking', 'user_questions']);
+    assert.equal(caps.pre_tool_control!.announced, 'partial', 'cooperative, shell calls only');
+    assert.equal(caps.pre_tool_control!.validated, 'unknown', 'nothing validated without a probe');
+    assert.equal(caps.converse!.validated, 'unsupported');
+    const ok = { ok: true, detail: 'probe' };
+    saveProbe({ runtime: 'codex', surface: 'cli_hooks', version, at: '', results: { observe: ok, pre_tool_control: ok, remote_approval: { ok: false, detail: 'held call did not run' } } });
+    const probed = manifest('codex', 'cli_hooks', version);
+    assert.equal(probed.observe!.validated, 'partial');
+    assert.equal(probed.pre_tool_control!.validated, 'partial');
+    assert.equal(probed.remote_approval!.validated, 'unsupported', 'a failed probe never validates');
+    assert.equal(probed.stop_process!.validated, 'unsupported');
+
+    const repo = tempRepo();
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+    cfg.local_sessions.mode = 'enforce';
+    const api = new ProbeApi();
+    const daemon = new Daemon(cfg, api);
+    assert.deepEqual(daemon.runtimes().find((r) => r.runtime === 'codex').surfaces, ['app_server', 'cli_hooks']);
+    await (daemon as any).onLocal({ op: 'hook', runtime: 'codex', input: { hook_event_name: 'SessionStart', session_id: 'thread-1', cwd: repo } });
+    const state = api.states.find((s) => s.capabilities);
+    assert.equal(state.capabilities.pre_tool_control.validated, 'partial');
+    assert.equal(state.capabilities.converse.validated, 'unsupported');
   });
 });

@@ -55,15 +55,20 @@ Local hooks are cooperative, not a security boundary (see
 `doctor --probe` runs the runtimes this machine is configured with (the
 enabled ones, with their configured `executable`) against local scripted
 model endpoints (no provider, no network) through the same adapters the
-daemon uses, and checks effects on disk: a denied write is
-absent, a write outside the worktree is blocked by the sandbox even when
-allowed, an approved action runs only after its approval, a second message
-runs, an interrupt cuts a 60 s command short, a stop is verified, a resume
-continues in the same worktree, and the developer's uncommitted files are
-untouched. Results are stored under the version the probed binary
-reports (`--version` for a configured executable); the daemon reports the
-same version, so a probe of one binary never validates another. The
-cockpit only offers an operation validated on the machine.
+daemon uses, and checks effects on disk: a denied write is absent, a
+write outside the worktree is blocked by the sandbox even when allowed,
+an approved action runs only after its approval, a second message runs,
+an interrupt cuts a 60 s command short, a stop is verified, a resume
+continues in the same worktree, and the developer's uncommitted files
+are untouched. For Codex it also runs a terminal `codex exec` session
+with the connector's hooks installed, as for your own sessions: the
+session is reported, a refused shell call does not run and a held one
+runs only after its approval (Claude Code terminal sessions are not
+probed yet, so their capabilities stay unvalidated). Results are stored
+under the version the probed binary reports (`--version` for a
+configured executable); the daemon reports the same version, so a probe
+of one binary never validates another. The cockpit only offers an
+operation validated on the machine.
 
 ## Tests
 
