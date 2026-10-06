@@ -51,6 +51,7 @@ pub struct RunHandle {
     pub trace: Trace,
 }
 
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait Launcher: Send + Sync {
     async fn launch(&self, plan: LaunchPlan) -> OsResult<RunHandle>;
