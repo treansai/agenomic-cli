@@ -30,7 +30,7 @@ single-prompt file `agenomic.prompt_file/v1`
     "renderer_version": "1",
     "kind": "chat",
     "body": [
-      { "role": "system", "content": "You plan support work for locale {locale}." },
+      { "role": "system", "content": "You plan support work in {locale}." },
       { "placeholder": "history", "optional": true },
       { "role": "user", "content": "{question}" }
     ],
@@ -63,7 +63,8 @@ single-prompt file `agenomic.prompt_file/v1`
 ```bash
 agenomic prompts list --query planner --tag support
 agenomic prompts get prm_support_planner:7 -o planner.json
-agenomic prompts get prm_support_planner@staging     # resolved once, to an immutable version
+# an alias is resolved once, to an immutable version
+agenomic prompts get prm_support_planner@staging
 agenomic prompts pull prm_support_planner --all --dir prompts
 ```
 
@@ -165,21 +166,69 @@ agenomic channels rollback --agent <AGENT_ID> production [--to-release <RELEASE_
 
 Channel moves are session only, and the CLI authenticates with an API
 key, so `promote` and `rollback` are hand-off commands. They call only
-the read-only move preview, print the current and candidate releases
-with their digests, the gates, the approvals and the actions available
-to this credential, and print where an authorized person completes the
+the read-only move preview
+(`GET /v1/agents/{id}/channels/{name}/move-preview`), print what the
+cloud would check, and print where an authorized person completes the
 move in the web app. They exit 0 when the preview succeeded and never
-move a channel.
+move a channel, whatever the role of the key's owner.
 
 The preview returns a web path. Pass `--web-url https://<your web app>`
 or set `AGENOMIC_WEB_URL` to print the full address.
+
+A promotion preview, abridged and wrapped at 80 columns:
+
+```text
+promote preview for channel production of agent <AGENT_ID>
+channel:   generation 4, protected true
+current:   av_0001 <RELEASE_ID> (production) genome sha256:85a7... manifest ...
+candidate: av_0003 <RELEASE_ID> (approved) genome sha256:3c8d... manifest ...
+gates:
+  signing: passed (signing policy satisfied)
+  candidate_review: failed (no completed independent review of this ...)
+  prompt_experiment: failed (experiment evidence required: no passing ...)
+  governance_floor: passed (the governance floor is met)
+  compatibility: failed (compatibility is requires_application_change)
+approvals: {"author_user_id":"...","progress":{...},"requirement":{...}}
+actions for this credential: promote=false rollback=false
+  reasons=["session_required","promotion_blocked"]
+
+This command never moves a channel: an authorized person completes the
+promotion in the Agenomic web app, with a session.
+open: https://<your web app>/agents/<AGENT_ID>/channels/production?...
+```
+
+- `current` is the release the channel points to now. `candidate` is
+  the release a promotion would point it to.
+- A rollback preview prints `target`, the release the rollback would
+  return to: the `--to-release` value, or the cloud's default target
+  (the previous approved target of the channel). When `--to-release`
+  names another release, a `default` line shows the default target.
+  The `option` lines list the releases a rollback may return to.
+- Each gate line is `id: status (detail)`. The gates come from the cloud
+  and depend on its governance settings; `compatibility` is
+  informational and never blocks.
+- `reasons` explains why this credential cannot move the channel. An API
+  key always gets `session_required`. Further reasons say what would
+  still stop a person, for example `promotion_blocked` (a gate failed),
+  `release_not_promotable`, `already_target` or
+  `rollback_target_invalid`.
+- `--format json` prints `{action, channel, moved, move_url, preview}`,
+  where `moved` is always `false` and `preview` is the cloud's preview
+  document unchanged.
+- An unknown release or channel exits 1 (`not_found`,
+  `channel_not_found`); a revoked or invalid key exits 5.
+
+Scripts that called `POST /v1/releases/{id}/promote` or `/rollback`
+with an API key now get 403 `session_required` from a cloud with
+managed prompts. Replace them with these hand-off commands and complete
+the move in the web app.
 
 ## Exit codes
 
 | Code | When |
 | --- | --- |
 | 0 | Success |
-| 1 | Local validation or render error, digest mismatch, a 400, 404 or 422 from the cloud |
+| 1 | Validation, render or digest error; a 400, 404 or 422 from the cloud |
 | 5 | Missing credentials, a 401 or 403 from the cloud |
 | 6 | Network error or a 5xx from the cloud |
 | 9 | Bundle signature, trust, expiry or governance failure |
