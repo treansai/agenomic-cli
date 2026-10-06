@@ -63,6 +63,8 @@ export class Daemon {
   private readonly byNative = new Map<string, Managed>();
   private server: net.Server | undefined;
   private readonly abort = new AbortController();
+  private readonly inflight = new Set<string>();
+  private readonly finished = new Map<string, { status: 'applied' | 'refused' | 'unknown'; result?: unknown; error?: string }>();
   private persisted: Persisted;
 
   readonly cfg: ConnectorConfig;
@@ -148,7 +150,7 @@ export class Daemon {
     while (!this.abort.signal.aborted) {
       try {
         const r = await this.api.request('GET', '/v1/coding/runner/commands?wait=25', { timeoutMs: 40000, signal: this.abort.signal });
-        for (const cmd of r.commands ?? []) void this.handleCommand(cmd);
+        for (const cmd of r.commands ?? []) void this.deliver(cmd);
       } catch (error) {
         if (this.abort.signal.aborted) return;
         log('warn', 'command poll failed', { error: errorMessage(error) });
@@ -157,7 +159,26 @@ export class Daemon {
     }
   }
 
+  /**
+   * The gateway redelivers a command whose result it has not received (a
+   * poll response can be lost): one that is still running is not started
+   * twice, and one already done gets its result posted again.
+   */
+  private async deliver(cmd: any): Promise<void> {
+    if (this.inflight.has(cmd.id)) return;
+    const done = this.finished.get(cmd.id);
+    if (done) return this.result(cmd.id, done.status, done.result, done.error);
+    this.inflight.add(cmd.id);
+    try {
+      await this.handleCommand(cmd);
+    } finally {
+      this.inflight.delete(cmd.id);
+    }
+  }
+
   private async result(id: string, status: 'applied' | 'refused' | 'unknown', result?: unknown, error?: string): Promise<void> {
+    this.finished.set(id, { status, result, error });
+    if (this.finished.size > 500) this.finished.delete(this.finished.keys().next().value!);
     try {
       await this.api.request('POST', `/v1/coding/runner/commands/${id}/result`, { body: { status, result, error: error ? clean(error, 500) : undefined }, retry: true });
     } catch (e) {
