@@ -67,7 +67,9 @@ runs only after its approval (Claude Code terminal sessions are not
 probed yet, so their capabilities stay unvalidated). Results are stored
 under the version the probed binary reports (`--version` for a
 configured executable); the daemon reports the same version, so a probe
-of one binary never validates another. The cockpit only offers an
+of one binary never validates another. The daemon reads it in the
+background: until the binary has answered, it reports `unknown` and
+nothing is validated. The cockpit only offers an
 operation validated on the machine.
 
 ## Tests
