@@ -189,27 +189,7 @@ export class ClaudeSession {
       }
       return { behavior: 'deny', message: `Agenomic: ${v.reason}` };
     };
-    const post = (failed: boolean) => async (input: any) => {
-      const verdict = ctx.known(input.tool_use_id);
-      const started = self.toolStart.get(input.tool_use_id);
-      const duration = started ? Date.now() - started : undefined;
-      const cmd = commandText(input.tool_name, input.tool_input, ctx.secrets());
-      ctx.sink.emit(failed ? 'tool.failed' : 'tool.completed', 'runtime', 'native', {
-        native_request_id: input.tool_use_id,
-        native_tool: input.tool_name,
-        duration_ms: duration,
-        ...(ctx.capture.commands && cmd ? { command: cmd } : {}),
-        ...(ctx.capture.outputs ? { output: ctx.cleanText(JSON.stringify(input.tool_response ?? input.error ?? ''), 4000) } : {}),
-      }, { action_id: verdict?.actionId, runtime_turn_id: String(self.turnId) });
-      if (input.tool_name === 'Bash' && isTestCommand(cmd)) {
-        ctx.sink.emit('test.result', 'adapter', 'derived', { command: ctx.capture.commands ? cmd : undefined, passed: !failed, basis: 'tool_outcome' });
-      }
-      if (['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(input.tool_name) && !failed) {
-        ctx.sink.emit('file.changed', 'runtime', 'native', { path: input.tool_input?.file_path ?? input.tool_input?.notebook_path, tool: input.tool_name });
-      }
-      await ctx.report(verdict?.actionId, failed ? 'failed' : 'completed', { duration_ms: duration });
-      return {};
-    };
+    const post = (failed: boolean) => (input: any) => self.postToolUse(input, failed);
     const lifecycle = (type: 'subagent.started' | 'subagent.stopped') => async (input: any) => {
       ctx.sink.emit(type, 'runtime', 'native', { agent_id: input.agent_id, agent_type: input.agent_type });
       return {};
@@ -252,6 +232,28 @@ export class ClaudeSession {
       } as any,
     });
     void this.pump();
+  }
+
+  /** PostToolUse / PostToolUseFailure: the observed outcome of a call, correlated with its action. */
+  private async postToolUse(input: any, failed: boolean): Promise<Record<string, never>> {
+    const ctx = this.o.ctx;
+    const started = this.toolStart.get(input.tool_use_id);
+    const duration = started ? Date.now() - started : undefined;
+    const cmd = commandText(input.tool_name, input.tool_input, ctx.secrets());
+    const verdict = ctx.toolEvent(failed ? 'tool.failed' : 'tool.completed', String(input.tool_use_id), {
+      native_tool: input.tool_name,
+      duration_ms: duration,
+      ...(ctx.capture.commands && cmd ? { command: cmd } : {}),
+      ...(ctx.capture.outputs ? { output: ctx.cleanText(JSON.stringify(input.tool_response ?? input.error ?? ''), 4000) } : {}),
+    }, { runtime_turn_id: String(this.turnId) });
+    if (input.tool_name === 'Bash' && isTestCommand(cmd)) {
+      ctx.sink.emit('test.result', 'adapter', 'derived', { command: ctx.capture.commands ? cmd : undefined, passed: !failed, basis: 'tool_outcome' });
+    }
+    if (['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(input.tool_name) && !failed) {
+      ctx.sink.emit('file.changed', 'runtime', 'native', { path: input.tool_input?.file_path ?? input.tool_input?.notebook_path, tool: input.tool_name });
+    }
+    await ctx.report(verdict?.actionId, failed ? 'failed' : 'completed', { duration_ms: duration });
+    return {};
   }
 
   private pushUser(text: string): void {

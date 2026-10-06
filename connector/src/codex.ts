@@ -235,6 +235,10 @@ export class CodexSession {
           turnId: p.turnId,
           waitForApproval: true,
         });
+        // The command item runs under this decision: its tool events and
+        // outcome are reported against this action. A stdin write is not
+        // the execution of the command item.
+        if (!isStdin) ctx.alias(p.itemId, nativeId);
         // One request, one decision: never acceptForSession, never an
         // execpolicy or network amendment the user did not see.
         this.respond(id, { decision: v.decision === 'allow' ? 'accept' : 'decline' });
@@ -322,23 +326,23 @@ export class CodexSession {
         this.itemStart.set(item.id, Date.now());
         if (item.type === 'fileChange') this.fileChanges.set(item.id, item.changes ?? []);
         if (item.type === 'commandExecution') {
-          ctx.sink.emit('tool.started', 'runtime', 'native', { native_request_id: item.id, native_tool: 'exec_command', ...(ctx.capture.commands ? { command: ctx.cleanText(String(item.command ?? ''), 2000) } : {}) }, { runtime_turn_id: turn });
+          ctx.toolEvent('tool.started', item.id, { native_tool: 'exec_command', ...(ctx.capture.commands ? { command: ctx.cleanText(String(item.command ?? ''), 2000) } : {}) }, { runtime_turn_id: turn });
         }
         if (item.type === 'collabAgentToolCall' || item.type === 'subAgent') ctx.sink.emit('subagent.started', 'runtime', 'native', { item_id: item.id });
         break;
       case 'item/completed': {
         const started = this.itemStart.get(item.id);
         const duration = started ? Date.now() - started : undefined;
-        const verdict = ctx.known(item.id);
+        const verdict = ctx.lookup(item.id);
         if (item.type === 'agentMessage') {
           ctx.sink.emit('message.assistant', 'runtime', 'native', ctx.capture.conversation ? { text: ctx.cleanText(String(item.text ?? ''), 16000) } : { length: String(item.text ?? '').length }, { runtime_turn_id: turn });
         } else if (item.type === 'commandExecution') {
           const failed = item.status !== 'completed' || (typeof item.exitCode === 'number' && item.exitCode !== 0);
-          ctx.sink.emit(failed ? 'tool.failed' : 'tool.completed', 'runtime', 'native', {
-            native_request_id: item.id, native_tool: 'exec_command', status: item.status, exit_code: item.exitCode ?? null, duration_ms: duration,
+          ctx.toolEvent(failed ? 'tool.failed' : 'tool.completed', item.id, {
+            native_tool: 'exec_command', status: item.status, exit_code: item.exitCode ?? null, duration_ms: duration,
             ...(ctx.capture.commands ? { command: ctx.cleanText(String(item.command ?? ''), 2000) } : {}),
             ...(ctx.capture.outputs ? { output: ctx.cleanText(String(item.aggregatedOutput ?? ''), 4000) } : {}),
-          }, { runtime_turn_id: turn, action_id: verdict?.actionId });
+          }, { runtime_turn_id: turn });
           if (isTestCommand(item.command)) ctx.sink.emit('test.result', 'adapter', 'derived', { passed: item.exitCode === 0, exit_code: item.exitCode ?? null, basis: 'exit_code' });
           if (item.status === 'declined') void ctx.report(verdict?.actionId, 'unknown', { summary: 'declined, not executed' });
           else void ctx.report(verdict?.actionId, failed ? 'failed' : 'completed', { exit_code: item.exitCode ?? null, duration_ms: duration });

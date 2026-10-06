@@ -430,6 +430,10 @@ export class Daemon {
       if (!m) return {}; // outside every declared workspace: nothing is sent
     }
     const ctx = m.ctx;
+    // A launched Codex session routes its trusted PreToolUse hook here;
+    // everything else its hooks report, the App Server notifications
+    // already did (a second tool.completed would count the call twice).
+    if (m.origin === 'launched' && event !== 'PreToolUse') return {};
     switch (event) {
       case 'SessionStart':
         ctx.sink.emit('session.started', 'runtime', 'native', { source: input.source, model: input.model });
@@ -462,8 +466,7 @@ export class Daemon {
       case 'PostToolUse':
       case 'PostToolUseFailure': {
         const failed = event === 'PostToolUseFailure';
-        const v = ctx.known(String(input.tool_use_id ?? ''));
-        ctx.sink.emit(failed ? 'tool.failed' : 'tool.completed', 'runtime', 'native', { native_request_id: input.tool_use_id, native_tool: input.tool_name }, { action_id: v?.actionId });
+        const v = ctx.toolEvent(failed ? 'tool.failed' : 'tool.completed', String(input.tool_use_id ?? `${native}:no-tool-use-id`), { native_tool: input.tool_name }, { runtime_turn_id: input.turn_id });
         await ctx.report(v?.actionId, failed ? 'failed' : 'completed');
         return {};
       }

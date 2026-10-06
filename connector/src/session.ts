@@ -1,6 +1,6 @@
 import type { RunnerApi } from './api.ts';
 import type { Capture, Mode } from './config.ts';
-import type { EventSink } from './events.ts';
+import type { CodingEvent, EventSink } from './events.ts';
 import { clean } from './redact.ts';
 import { errorMessage, log, sleep } from './util.ts';
 
@@ -24,6 +24,9 @@ export interface Verdict {
   reason: string;
   actionId?: string;
   effectiveMode?: string;
+  /** The native request id and attempt the decision was asked for (the action's correlation key). */
+  nativeId: string;
+  attempt: number;
 }
 
 export interface AuthorizeArgs {
@@ -47,6 +50,8 @@ export interface AuthorizeArgs {
  */
 export class SessionContext {
   private readonly verdicts = new Map<string, Verdict>();
+  /** A call decided under another native request id (a Codex approval id). */
+  private readonly aliases = new Map<string, string>();
   /** Admitted actions whose outcome was not reported yet. */
   private readonly open = new Set<string>();
 
@@ -89,20 +94,50 @@ export class SessionContext {
     return this.verdicts.get(nativeId);
   }
 
+  /** Record that the call `callId` was decided under the native request id `nativeId`. */
+  alias(callId: string, nativeId: string): void {
+    if (callId !== nativeId) this.aliases.set(callId, nativeId);
+  }
+
+  /** The decision that governs the call `callId`: its own, or the one it was decided under. */
+  lookup(callId: string): Verdict | undefined {
+    const alias = this.aliases.get(callId);
+    return this.verdicts.get(callId) ?? (alias !== undefined ? this.verdicts.get(alias) : undefined);
+  }
+
+  /**
+   * An observed tool.started / tool.completed / tool.failed, correlated
+   * with the coding action of the call: payload.native_request_id and
+   * attempt_id are the action's native request id and attempt, and
+   * action_id is set whenever a decision exists for the call. Without
+   * one (no decision was asked), the event is an observation only.
+   */
+  toolEvent(type: 'tool.started' | 'tool.completed' | 'tool.failed', callId: string, payload: Record<string, unknown>, extra: Partial<CodingEvent> = {}): Verdict | undefined {
+    const v = this.lookup(callId);
+    this.sink.emit(type, 'runtime', 'native', { ...payload, native_request_id: v?.nativeId ?? callId }, {
+      ...extra,
+      action_id: v?.actionId,
+      attempt_id: String(v?.attempt ?? 1),
+    });
+    return v;
+  }
+
   async authorize(a: AuthorizeArgs): Promise<Verdict> {
+    const attempt = a.attempt ?? 1;
     const body = {
       native_request_id: a.nativeId,
       runtime_turn_id: a.turnId,
-      attempt: a.attempt ?? 1,
+      attempt,
       phase: a.phase,
       tool: a.tool,
       input: a.input,
       context: a.context,
     };
+    const key = { nativeId: a.nativeId, attempt };
     const failClosed = (why: string): Verdict =>
       this.mode === 'enforce'
-        ? { decision: 'deny', reason: `Agenomic could not authorize this action (${why}); refused in enforce mode` }
-        : { decision: 'defer', reason: `Agenomic unavailable (${why}); ${this.mode} mode leaves the decision to the runtime` };
+        ? { decision: 'deny', reason: `Agenomic could not authorize this action (${why}); refused in enforce mode`, ...key }
+        : { decision: 'defer', reason: `Agenomic unavailable (${why}); ${this.mode} mode leaves the decision to the runtime`, ...key };
     let res: any;
     try {
       res = await this.api.request('POST', `/v1/coding/runner/sessions/${this.id}/authorize`, {
@@ -126,12 +161,12 @@ export class SessionContext {
       effective_mode: res.effective_mode,
       would_have_been: res.would_have_been ?? null,
       ...(this.capture.commands ? { command: commandText(a.tool, a.input, this.secrets()) } : {}),
-    }, { action_id: res.action_id, runtime_turn_id: a.turnId, trace_id: this.traceId });
+    }, { action_id: res.action_id, attempt_id: String(attempt), runtime_turn_id: a.turnId, trace_id: this.traceId });
 
     if (res.decision === 'pending') {
       this.sink.emit('approval.requested', 'gateway', 'native', { approval_id: res.approval_id, expires_at: res.approval_expires_at }, { action_id: res.action_id });
       if (!a.waitForApproval) {
-        const v: Verdict = { decision: 'deny', reason: `Waiting for approval ${res.approval_id} in Agenomic; retry after it is approved`, actionId: res.action_id };
+        const v: Verdict = { decision: 'deny', reason: `Waiting for approval ${res.approval_id} in Agenomic; retry after it is approved`, actionId: res.action_id, ...key };
         return v;
       }
       void this.state({ status: 'waiting_approval' }).catch(() => undefined);
@@ -142,7 +177,7 @@ export class SessionContext {
         // Let the gateway record the final refusal (rejected or expired)
         // on the action instead of leaving it pending.
         const final = await this.authorize({ ...a, waitForApproval: false }).catch(() => undefined);
-        const v: Verdict = { decision: 'deny', reason: final?.reason && !final.reason.startsWith('Waiting') ? final.reason : `Approval ${resolved}`, actionId: res.action_id };
+        const v: Verdict = { decision: 'deny', reason: final?.reason && !final.reason.startsWith('Waiting') ? final.reason : `Approval ${resolved}`, actionId: res.action_id, ...key };
         this.verdicts.set(a.nativeId, v);
         return v;
       }
@@ -155,6 +190,7 @@ export class SessionContext {
       reason: res.reason ?? res.decision,
       actionId: res.action_id,
       effectiveMode: res.effective_mode,
+      ...key,
     };
     this.verdicts.set(a.nativeId, v);
     if (v.decision !== 'deny' && v.actionId) this.open.add(v.actionId);

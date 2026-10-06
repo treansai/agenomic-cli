@@ -7,7 +7,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { RunnerApi } from '../src/api.ts';
 import { manifest, saveProbe } from '../src/capabilities.ts';
-import { claudeCodeVersion, sdkPackage } from '../src/claude.ts';
+import { ClaudeSession, claudeCodeVersion, sdkPackage } from '../src/claude.ts';
 import { CodexSession, codexVersion } from '../src/codex.ts';
 import { defaultConfig, localFailMode, paths, runtimeSecrets, saveConfig } from '../src/config.ts';
 import { Daemon } from '../src/daemon.ts';
@@ -403,4 +403,96 @@ test('every event envelope carries its coding_session_id, spooled and synthesize
   assert.ok(api.sent.some((e) => e.producer_epoch === 'old'));
   assert.ok(api.sent.some((e) => e.type === 'error' && e.payload.code === 'events_dropped'));
   for (const e of api.sent) assert.equal(e.coding_session_id, id, JSON.stringify(e));
+});
+
+/** The probe API, also recording the action reports. */
+class RecordingApi extends ProbeApi {
+  reports: { action: string; outcome: string }[] = [];
+  override async request<T = any>(method: string, p: string, opts: { body?: any } = {}): Promise<T> {
+    if (p.endsWith('/report')) this.reports.push({ action: p.split('/').at(-2)!, outcome: opts.body?.outcome });
+    return super.request<T>(method, p, opts);
+  }
+}
+
+const toolEvents = (api: ProbeApi) => api.events.filter((e) => e.type.startsWith('tool.'));
+
+test('tool events carry the correlation key of their coding action (native_request_id, attempt_id, action_id)', async () => {
+  await withHome(async () => {
+    // Codex App Server: a call decided by the PreToolUse hook, one decided
+    // only by a native approval request, and one never decided.
+    const api = new RecordingApi();
+    const daemon = new Daemon(defaultConfig('http://127.0.0.1:9', 'unit'), api);
+    const m = (daemon as any).manage(randomUUID(), 'codex', 'launched', 'enforce', { conversation: false, commands: true, diffs: false, outputs: false }, tmp('agn-wt-'), null);
+    const ctx: SessionContext = m.ctx;
+    const codex: any = new CodexSession({ ctx, cwd: m.cwd, runtime: defaultConfig('x', 'x').runtimes.codex, onNativeSession: async () => undefined, onStatus: () => undefined });
+    const hooked = await ctx.authorize({ nativeId: 'call_1', tool: 'Bash', input: { command: 'ls' }, context: {}, phase: 'pre_tool', waitForApproval: true });
+    await codex.onServerRequest(7, 'item/commandExecution/requestApproval', { itemId: 'call_2', approvalId: 'ap-1', command: 'git status', turnId: 't1' });
+    for (const id of ['call_1', 'call_2', 'call_3']) {
+      codex.onNotification('item/started', { turnId: 't1', item: { type: 'commandExecution', id, command: 'ls' } });
+      codex.onNotification('item/completed', { turnId: 't1', item: { type: 'commandExecution', id, command: 'ls', status: 'completed', exitCode: 0 } });
+    }
+    await ctx.sink.close();
+    const approval = api.events.find((e) => e.type === 'tool.requested' && e.payload.native_request_id === 'call_2:ap-1');
+    assert.ok(approval, 'the approval request is its own action');
+    for (const e of toolEvents(api)) {
+      assert.equal(typeof e.payload.native_request_id, 'string', JSON.stringify(e));
+      assert.equal(e.attempt_id, '1', JSON.stringify(e));
+      assert.equal(e.coding_session_id, ctx.id);
+    }
+    for (const e of api.events.filter((x) => x.type === 'tool.requested')) assert.ok(e.action_id, 'tool.requested always names its action');
+    const of = (type: string, key: string) => api.events.find((e) => e.type === type && e.payload.native_request_id === key);
+    for (const type of ['tool.started', 'tool.completed']) {
+      assert.equal(of(type, 'call_1')?.action_id, hooked.actionId, `${type} of a hook-decided call`);
+      assert.equal(of(type, 'call_2:ap-1')?.action_id, approval.action_id, `${type} of an approval-decided call keeps the action's key`);
+      const observed = of(type, 'call_3');
+      assert.ok(observed && observed.action_id === undefined, `${type} of a call without a decision is an observation only`);
+    }
+    assert.deepEqual(api.reports.map((r) => r.action).sort(), [hooked.actionId, approval.action_id].sort(), 'outcomes are reported for both actions');
+
+    // Claude Code (Agent SDK): PostToolUse of a decided call.
+    const c = (daemon as any).manage(randomUUID(), 'claude_code', 'launched', 'enforce', { conversation: false, commands: false, diffs: false, outputs: false }, tmp('agn-wt-'), null);
+    const claude: any = new ClaudeSession({ ctx: c.ctx, cwd: c.cwd, runtime: defaultConfig('x', 'x').runtimes.claude_code, onNativeSession: async () => undefined, onStatus: () => undefined });
+    const v = await c.ctx.authorize({ nativeId: 'toolu_1', tool: 'Read', input: { file_path: 'a' }, context: {}, phase: 'pre_tool', waitForApproval: false });
+    await claude.postToolUse({ tool_use_id: 'toolu_1', tool_name: 'Read', tool_input: { file_path: 'a' } }, false);
+    await claude.postToolUse({ tool_use_id: 'toolu_2', tool_name: 'Read', tool_input: { file_path: 'b' } }, true);
+    await c.ctx.sink.close();
+    const done = api.events.find((e) => e.type === 'tool.completed' && e.payload.native_request_id === 'toolu_1');
+    assert.equal(done.action_id, v.actionId);
+    assert.equal(done.attempt_id, '1');
+    const failed = api.events.find((e) => e.type === 'tool.failed' && e.payload.native_request_id === 'toolu_2');
+    assert.equal(failed.action_id, undefined);
+    assert.equal(failed.attempt_id, '1');
+  });
+});
+
+test('local hook sessions: tool events correlated; a launched session\'s hooks do not report a call twice', async () => {
+  await withHome(async () => {
+    const repo = tempRepo();
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+    const api = new ProbeApi();
+    const daemon: any = new Daemon(cfg, api);
+    const hook = (input: Record<string, unknown>) => daemon.onLocal({ op: 'hook', runtime: 'claude_code', input: { session_id: 'cli-1', cwd: repo, ...input } });
+    await hook({ hook_event_name: 'PreToolUse', tool_use_id: 'toolu_9', tool_name: 'Bash', tool_input: { command: 'ls' } });
+    await hook({ hook_event_name: 'PostToolUse', tool_use_id: 'toolu_9', tool_name: 'Bash' });
+    await hook({ hook_event_name: 'SessionEnd', reason: 'exit' });
+    const requested = api.events.find((e) => e.type === 'tool.requested');
+    const completed = api.events.find((e) => e.type === 'tool.completed');
+    assert.equal(requested.attempt_id, '1');
+    assert.equal(completed.action_id, requested.action_id);
+    assert.equal(completed.attempt_id, '1');
+    assert.equal(completed.payload.native_request_id, 'toolu_9');
+    assert.equal(completed.coding_session_id, requested.coding_session_id);
+
+    // A launched Codex session: its App Server notifications report the call.
+    const m = daemon.manage(randomUUID(), 'codex', 'launched', 'enforce', { conversation: false, commands: false, diffs: false, outputs: false }, repo, null);
+    daemon.byNative.set('codex:thread-1', m);
+    const codexHook = (input: Record<string, unknown>) => daemon.onLocal({ op: 'hook', runtime: 'codex', input: { session_id: 'thread-1', cwd: repo, ...input } });
+    await codexHook({ hook_event_name: 'PreToolUse', tool_use_id: 'call_9', tool_name: 'Bash', tool_input: { command: 'ls' } });
+    await codexHook({ hook_event_name: 'PostToolUse', tool_use_id: 'call_9', tool_name: 'Bash' });
+    await codexHook({ hook_event_name: 'Stop', turn_id: 't' });
+    await m.ctx.sink.close();
+    const launched = api.events.filter((e) => e.coding_session_id === m.id).map((e) => e.type);
+    assert.deepEqual(launched, ['tool.requested'], 'the PreToolUse decision only');
+  });
 });
