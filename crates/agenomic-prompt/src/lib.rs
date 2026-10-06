@@ -17,7 +17,8 @@ pub use ed25519_dalek::VerifyingKey;
 pub use error::PromptError;
 pub use refs::{PromptRef, PromptRefError, RefContext};
 pub use render::{
-    render, render_messages, render_text, tokenize, validate, validate_version, FragmentSource,
-    Issue, NoFragments, RenderError, RenderOptions, Rendered, SecretPolicy, Token,
-    ValidationReport, VersionEntry, RENDERER_VERSION, SUPPORTED_RENDERER_VERSIONS, TEMPLATE_FORMAT,
+    render, render_messages, render_text, tokenize, validate, validate_version,
+    validate_version_lenient, FragmentSource, Issue, NoFragments, RenderError, RenderOptions,
+    Rendered, SecretPolicy, Token, ValidationReport, VersionEntry, RENDERER_VERSION,
+    SUPPORTED_RENDERER_VERSIONS, TEMPLATE_FORMAT,
 };

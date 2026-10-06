@@ -200,7 +200,47 @@ pub fn code_points(text: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use serde_json::json;
+
+    fn ajs_value() -> impl Strategy<Value = Value> {
+        let leaf = prop_oneof![
+            Just(Value::Null),
+            any::<bool>().prop_map(Value::Bool),
+            (-MAX_SAFE_INTEGER..=MAX_SAFE_INTEGER).prop_map(|n| json!(n)),
+            "[a-zA-Z0-9 _\\u{e9}\\u{4e2d}\\u{1f600}]{0,12}".prop_map(Value::String),
+        ];
+        leaf.prop_recursive(4, 32, 4, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..4).prop_map(Value::Array),
+                prop::collection::vec(("[a-z]{1,6}", inner), 0..4)
+                    .prop_map(|pairs| Value::Object(pairs.into_iter().collect())),
+            ]
+        })
+    }
+
+    fn reversed(value: &Value) -> Value {
+        match value {
+            Value::Object(map) => Value::Object(
+                map.iter()
+                    .rev()
+                    .map(|(key, item)| (key.clone(), reversed(item)))
+                    .collect(),
+            ),
+            Value::Array(items) => Value::Array(items.iter().map(reversed).collect()),
+            other => other.clone(),
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn digest_ignores_object_construction_order(value in ajs_value()) {
+            let first = prompt_digest(&value).unwrap();
+            prop_assert_eq!(&first, &prompt_digest(&reversed(&value)).unwrap());
+            let reparsed: Value = serde_json::from_str(&canonical_json(&value)).unwrap();
+            prop_assert_eq!(first, prompt_digest(&reparsed).unwrap());
+        }
+    }
 
     fn nested(depth: usize) -> Value {
         let mut value = json!(0);

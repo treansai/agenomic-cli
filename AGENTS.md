@@ -60,7 +60,7 @@ New code for managed prompts carries no comments; the reasons live here.
   is given, before anything is written.
 - `verifying_key_from_pem` also reads the raw `BEGIN ED25519 PUBLIC KEY`
   form because organization signing keys are published in that form.
-- `agenomic prompts push` tolerates `fragment_not_found` in its offline
+- `agenomic prompts push` tolerates unresolved fragment pins in its offline
   check: fragments are server-side versions, and the server validates
   them at publish time.
 - `agenomic prompts get` also reads the prompt metadata route, because the

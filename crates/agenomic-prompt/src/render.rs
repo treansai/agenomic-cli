@@ -425,6 +425,24 @@ pub fn validate_version(
     Validator::new(fragments).run(content, Some(prompt_kind))
 }
 
+pub fn validate_version_lenient(
+    content: &Value,
+    prompt_kind: &str,
+    fragments: &dyn FragmentSource,
+) -> ValidationReport {
+    let mut validator = Validator::new(fragments);
+    validator.tolerate_unresolved = true;
+    validator.run(content, Some(prompt_kind))
+}
+
+fn message_code_points(message: &Value) -> usize {
+    match message.get("content") {
+        Some(Value::String(text)) => code_points(text),
+        Some(other) => code_points(&other.to_string()),
+        None => 0,
+    }
+}
+
 pub fn content_kind_for(prompt_kind: &str) -> Option<&'static str> {
     match prompt_kind {
         "text" | "fragment" => Some("text"),
@@ -522,6 +540,7 @@ struct VariableUse {
 
 struct Validator<'a> {
     source: &'a dyn FragmentSource,
+    tolerate_unresolved: bool,
     errors: Vec<Issue>,
     warnings: Vec<Issue>,
 }
@@ -530,6 +549,7 @@ impl<'a> Validator<'a> {
     fn new(source: &'a dyn FragmentSource) -> Self {
         Self {
             source,
+            tolerate_unresolved: false,
             errors: Vec::new(),
             warnings: Vec::new(),
         }
@@ -860,6 +880,9 @@ impl<'a> Validator<'a> {
             };
             let ref_key = version_key(&key.0, key.1);
             let Some(entry) = self.source.get(&key.0, key.1) else {
+                if self.tolerate_unresolved {
+                    continue;
+                }
                 self.error(
                     Issue::new("fragment_not_found")
                         .at(&path)
@@ -939,6 +962,9 @@ impl<'a> Validator<'a> {
                 return fail("fragment_expansion_limit");
             }
             let Some(entry) = self.source.get(&prompt_id, version) else {
+                if self.tolerate_unresolved {
+                    continue;
+                }
                 return fail("fragment_not_found");
             };
             if prompt_digest(&entry.content).ok().as_deref() != pin_digest(pin) {
@@ -1599,6 +1625,7 @@ fn render_as(
                     .and_then(Value::as_array)
                     .map(Vec::as_slice)
                     .unwrap_or_default();
+                rendered_size += items.iter().map(message_code_points).sum::<usize>();
                 messages.extend(items.iter().cloned());
                 document_messages.push(json!({ "placeholder": name, "count": items.len() }));
                 expanded_entries.push(json!({
@@ -1766,6 +1793,49 @@ mod tests {
             "output_contract": null,
             "fragments": {},
         })
+    }
+
+    #[test]
+    fn lenient_validation_keeps_checking_after_an_unresolved_pin() {
+        let digest = format!("sha256:{}", "0".repeat(64));
+        let mut content = text_content("{>intro} {missing}");
+        content["fragments"] = json!({
+            "intro": { "prompt_id": "prm_intro", "version": 1, "content_digest": digest },
+        });
+        let strict = validate_version(&content, "text", &NoFragments);
+        assert_eq!(strict.errors[0].code, "fragment_not_found");
+        let lenient = validate_version_lenient(&content, "text", &NoFragments);
+        let codes: Vec<&str> = lenient.errors.iter().map(|item| item.code).collect();
+        assert_eq!(codes, ["undeclared_variable"]);
+    }
+
+    #[test]
+    fn spliced_messages_count_toward_the_rendered_output_limit() {
+        let content = json!({
+            "schema": CONTENT_SCHEMA,
+            "template_format": TEMPLATE_FORMAT,
+            "renderer_version": RENDERER_VERSION,
+            "kind": "chat",
+            "body": [{ "role": "system", "content": "hi" }, { "placeholder": "turns", "optional": false }],
+            "variables": { "turns": { "type": "messages", "required": true } },
+            "partials": {},
+            "output_contract": null,
+            "fragments": {},
+        });
+        let big = "x".repeat(MAX_RENDERED_CODE_POINTS);
+        let mut variables = Map::new();
+        variables.insert(
+            "turns".to_string(),
+            json!([{ "role": "user", "content": big }]),
+        );
+        let error = render(
+            &content,
+            &variables,
+            &NoFragments,
+            &RenderOptions::default(),
+        );
+        let error = error.unwrap_err();
+        assert_eq!(error.errors[0].code, "rendered_output_too_large");
     }
 
     #[test]

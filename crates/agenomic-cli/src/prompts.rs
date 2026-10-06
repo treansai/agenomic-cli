@@ -6,9 +6,10 @@ use agenomic_cloud_client::{AgentSelector, CloudClient, MovePreview, PromptListQ
 use agenomic_core::{io_at, CliError, CliResult, ExitCode, Severity, ValidationIssue};
 use agenomic_prompt::refs::{is_channel_name, is_slot_path};
 use agenomic_prompt::{
-    prompt_digest, render, validate_version, verify_content, verifying_key_from_pem,
-    FragmentSource, LoadOptions, NoFragments, PromptBundle, PromptError, PromptRef, RefContext,
-    RenderOptions, Rendered, VerifyingKey, VersionEntry, CONTENT_SCHEMA, PROMPT_FILE_SCHEMA,
+    prompt_digest, render, validate_version, validate_version_lenient, verify_content,
+    verifying_key_from_pem, FragmentSource, LoadOptions, NoFragments, PromptBundle, PromptError,
+    PromptRef, RefContext, RenderOptions, Rendered, VerifyingKey, VersionEntry, CONTENT_SCHEMA,
+    PROMPT_FILE_SCHEMA,
 };
 use chrono::Utc;
 use serde_json::{json, Map, Value};
@@ -594,6 +595,7 @@ fn prompts_pull(
     let prompt = detail.get("prompt").cloned().unwrap_or(Value::Null);
     let mut cursor: Option<String> = None;
     let mut verified = Vec::new();
+    let mut complete = false;
     for _ in 0..MAX_PAGES {
         let page = cloud.block(cloud.client.list_prompt_versions(
             prompt_id,
@@ -619,8 +621,14 @@ fn prompts_pull(
             .and_then(Value::as_str)
             .map(str::to_string);
         if cursor.is_none() {
+            complete = true;
             break;
         }
+    }
+    if !complete {
+        return Err(CliError::Network(format!(
+            "the version list of {prompt_id} has more than {MAX_PAGES} pages, nothing was written"
+        )));
     }
     let mut entries = Vec::with_capacity(verified.len());
     for (number, file) in &verified {
@@ -680,15 +688,9 @@ fn checked_prompt_file(path: &Path, document: Value) -> CliResult<LocalFile> {
 }
 
 fn offline_check(file: &LocalFile) -> CliResult<String> {
-    let report = validate_version(file.content(), &file.kind, &NoFragments);
-    let unresolved_only = report
-        .errors
-        .iter()
-        .all(|item| item.code == "fragment_not_found");
-    if !unresolved_only || !report.secret_findings.is_empty() {
-        if let Some(error) = report.to_error() {
-            return Err(prompt_failure(error));
-        }
+    let report = validate_version_lenient(file.content(), &file.kind, &NoFragments);
+    if let Some(error) = report.to_error() {
+        return Err(prompt_failure(error));
     }
     for warning in &report.warnings {
         eprintln!("warning: {}", warning.describe());
@@ -1237,7 +1239,7 @@ fn channels_hand_off(
         return Ok(ExitCode::Success);
     }
     let state = response.get("channel").unwrap_or(&Value::Null);
-    println!("{action} preview for channel {channel} of agent {agent}");
+    println!("{action} preview for channel {channel}");
     println!(
         "channel:   generation {}, protected {}",
         cell(state.get("generation")),

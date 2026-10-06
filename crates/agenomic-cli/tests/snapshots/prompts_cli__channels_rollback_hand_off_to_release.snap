@@ -2,7 +2,7 @@
 source: crates/agenomic-cli/tests/prompts_cli.rs
 expression: text
 ---
-rollback preview for channel production of agent 2b1e5c3a-8d4f-4e6a-9b0c-1d2e3f4a5b6c
+rollback preview for channel production
 channel:   generation 12, protected true
 current:   av_0042 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d (production) genome sha256:3333333333333333333333333333333333333333333333333333333333333333 manifest sha256:4444444444444444444444444444444444444444444444444444444444444444
 target:    av_0043 8f0c2d4e-6a1b-4c3d-9e5f-7a8b9c0d1e2f (rolled_back) genome sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb manifest sha256:5555555555555555555555555555555555555555555555555555555555555555
