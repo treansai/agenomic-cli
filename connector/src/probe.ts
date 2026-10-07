@@ -274,7 +274,8 @@ export async function probeCodexCli(fake: FakeServer, home: string, machine: Con
       : { code: null, tail: 'error' in hooks ? hooks.error : 'codex did not report the installed hooks' };
     await until(() => api.has('session.ended'), 10000);
     const why = run.code === 0 ? '' : `; codex exec exited ${run.code}: ${clean(run.tail.split('\n').slice(-3).join(' '), 300)}`;
-    const reported = api.states.some((s) => s.mode_effective === 'enforce') && api.has('session.started') && api.has('tool.requested') && api.has('tool.completed') && api.has('turn.completed');
+    // Until this probe validated pre-tool control, the enforce session is reported blocked.
+    const reported = api.states.some((s) => s.mode_effective === 'enforce' || s.mode_effective === 'blocked') && api.has('session.started') && api.has('tool.requested') && api.has('tool.completed') && api.has('turn.completed');
     set('observe', run.code === 0 && reported, `hooks trusted ${hooks.trusted}; session, tool calls and turn end reported ${reported}${why}`);
     const inside = fs.existsSync(path.join(repo, 'inside.txt'));
     const denied = !fs.existsSync(path.join(repo, 'deny-me.txt'));

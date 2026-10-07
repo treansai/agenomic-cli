@@ -124,3 +124,12 @@ export function protection(runtime: Runtime, surface: Surface, mode: Mode): Prot
     'apply_patch edits get no decision before they apply',
   ]);
 }
+
+/**
+ * The coverage reported for a blocked session: the requested mode could
+ * not be established and the gateway refuses every call, so no tool id is
+ * protected; `reason` says why.
+ */
+export function blockedProtection(p: Protection, reason: string): Protection {
+  return { protected: [], not_covered: [...TOOL_IDS], notes: [...p.notes, `blocked: ${reason}`], limitations: p.limitations };
+}

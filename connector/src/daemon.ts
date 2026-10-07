@@ -9,7 +9,7 @@ import { ClaudeSession, claudeCodeVersion, readClaudeCodeVersion, sdkVersion } f
 import { CodexSession, codexVersion, readCodexVersion } from './codex.ts';
 import { DEFAULT_CAPTURE, paths, runtimeSecrets, type Capture, type ConnectorConfig, type Mode, type WorkspaceConfig } from './config.ts';
 import { EventSink } from './events.ts';
-import { protection, type Surface } from './protection.ts';
+import { blockedProtection, protection, type Surface } from './protection.ts';
 import { clean } from './redact.ts';
 import { SessionContext, type Runtime, type Verdict } from './session.ts';
 import { errorMessage, log, readJson, resolveExecutable, sleep, ulid, writeSecretFile } from './util.ts';
@@ -306,7 +306,9 @@ export class Daemon {
    * one the runtime reported meanwhile) together with the effective mode,
    * the protection and the capabilities, in one report, so that the
    * gateway never holds a connected status without a mode. It is retried
-   * until delivered.
+   * until delivered. Enforce needs pre-tool control validated on this
+   * machine (supported_tested or partial): without it the session is
+   * blocked, never reported as enforce.
    */
   private async connect(m: Managed, surface: Surface, extra: { limitations?: string[]; workspace?: unknown } = {}): Promise<void> {
     const status = m.held ?? 'running';
@@ -316,11 +318,16 @@ export class Daemon {
     const caps = surface === 'cli_hooks'
       ? manifest(m.runtime, 'cli_hooks', this.runtimes().find((r) => r.runtime === m.runtime)?.version ?? null)
       : this.runtimes().find((r) => r.runtime === m.runtime)?.capabilities ?? {};
-    const prot = protection(m.runtime, surface, m.ctx.mode);
+    const validated = (caps as Record<string, { validated?: string }>).pre_tool_control?.validated;
+    const blocked = m.ctx.mode === 'enforce' && validated !== 'supported_tested' && validated !== 'partial';
+    const requested = protection(m.runtime, surface, m.ctx.mode);
+    const prot = blocked
+      ? blockedProtection(requested, `enforce needs pre-tool control validated on this machine (agenomic-connector doctor --probe); it is ${validated ?? 'not reported'}`)
+      : requested;
     try {
       await this.report(m, {
         status,
-        mode_effective: m.ctx.mode,
+        mode_effective: blocked ? 'blocked' : m.ctx.mode,
         protection: { protected: prot.protected, not_covered: prot.not_covered, notes: prot.notes },
         limitations: [...prot.limitations, ...(extra.limitations ?? [])],
         capabilities: caps,

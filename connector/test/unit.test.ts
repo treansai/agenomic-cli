@@ -1223,9 +1223,23 @@ test('protection lists tool ids of the closed vocabulary; mechanisms go to notes
     const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
     cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
     cfg.local_sessions.mode = 'enforce';
+    // Enforce needs pre-tool control validated on this machine: without a probe, the session is blocked.
+    const unprobed = new ProbeApi();
+    await (new Daemon(cfg, unprobed) as any).onLocal({ op: 'hook', runtime: 'claude_code', input: { hook_event_name: 'SessionStart', session_id: 'cli-1', cwd: repo } });
+    const blocked = unprobed.states.find((s) => s.protection);
+    assert.equal(blocked.status, 'running');
+    assert.equal(blocked.mode_effective, 'blocked');
+    assert.equal(blocked.capabilities.pre_tool_control.validated, 'unknown');
+    assert.deepEqual(blocked.protection.protected, [], 'a blocked session protects nothing');
+    assert.deepEqual(blocked.protection.not_covered, VOCABULARY);
+    assert.ok(blocked.protection.notes.some((n: string) => n.startsWith('blocked: enforce needs pre-tool control validated')));
+    const ok = { ok: true, detail: 'probe' };
+    saveProbe({ runtime: 'claude_code', surface: 'cli_hooks', version: claudeCodeVersion(cfg.runtimes.claude_code)!, at: '', results: { observe: ok, pre_tool_control: ok } });
     const api = new ProbeApi();
     await (new Daemon(cfg, api) as any).onLocal({ op: 'hook', runtime: 'claude_code', input: { hook_event_name: 'SessionStart', session_id: 'cli-2', cwd: repo } });
     const state = api.states.find((s) => s.protection);
+    assert.equal(state.mode_effective, 'enforce');
+    assert.equal(state.capabilities.pre_tool_control.validated, 'partial');
     assert.deepEqual(state.protection.protected, VOCABULARY);
     assert.deepEqual(state.protection.not_covered, []);
     assert.ok(state.protection.notes.length > 0);
