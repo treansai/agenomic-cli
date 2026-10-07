@@ -182,7 +182,9 @@ export async function probeRuntime(runtime: 'claude_code' | 'codex', fake: FakeS
     set('pre_tool_control', idle1 && inside && denied && outsideBlocked, `allowed write ${inside}, denied write absent ${denied}, outside write blocked by sandbox ${outsideBlocked}`);
     set('remote_approval', approved, `approved action executed after the approval: ${approved}`);
     const humanSafe = fs.readFileSync(path.join(repo, 'human-wip.txt'), 'utf8') === 'uncommitted human work\n';
-    set('file_diffs', api.has('diff.snapshot', (e) => (e.payload.files ?? []).some((f: any) => f.path === 'inside.txt')) && humanSafe, `diff snapshot lists inside.txt; human checkout untouched ${humanSafe}`);
+    // inside.txt is created, not staged: the captured diff carries its content too.
+    const snapshot = (e: any) => (e.payload.files ?? []).some((f: any) => f.path === 'inside.txt') && /\+\+\+ b\/inside\.txt\n@@ -0,0 \+1 @@\n\+in\n/.test(e.payload.diff ?? '');
+    set('file_diffs', api.has('diff.snapshot', snapshot) && humanSafe, `diff snapshot lists inside.txt with its content; human checkout untouched ${humanSafe}`);
     if (runtime === 'codex') {
       // Codex offers apply_patch only for some model families; when it is
       // not offered, the fileChange approval path is not validated here.

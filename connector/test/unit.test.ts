@@ -355,6 +355,35 @@ test('workspace: dedicated worktree, existing branches and human changes untouch
   assert.equal(fs.readFileSync(path.join(repo, 'untracked.txt'), 'utf8'), 'human\n');
 });
 
+test('workspace: a captured diff includes untracked files as additions; ignored ones and the real index are untouched', () => {
+  const repo = tmp('agn-ws-');
+  const git = (...a: string[]) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8' });
+  git('init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
+  fs.writeFileSync(path.join(repo, '.gitignore'), '*.log\n');
+  git('add', '.');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'init');
+  const base = git('rev-parse', 'HEAD').trim();
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'a edited\n');
+  fs.mkdirSync(path.join(repo, 'src'));
+  fs.writeFileSync(path.join(repo, 'src', 'new file*.ts'), 'export const key = "agmrt_secretsecretsecretsecretsecret";\n');
+  fs.writeFileSync(path.join(repo, 'blob.bin'), Buffer.from([0, 1, 2, 0]));
+  // Over the bytes a diff reads (the cap plus the redaction slack).
+  fs.writeFileSync(path.join(repo, 'huge.txt'), 'x'.repeat(80 * 1024));
+  fs.writeFileSync(path.join(repo, 'debug.log'), 'ignored\n');
+  const before = git('status', '--porcelain=v1');
+  const d = ws.diff(repo, base, ['agmrt_secretsecretsecretsecretsecret'], 8 * 1024);
+  assert.match(d.text, /diff --git a\/a\.txt b\/a\.txt[\s\S]*\+a edited/, 'tracked changes are still there');
+  assert.match(d.text, /diff --git a\/src\/new file\*\.ts b\/src\/new file\*\.ts\nnew file mode 100644[\s\S]*\+\+\+ b\/src\/new file\*\.ts\t?\n@@ -0,0 \+1 @@\n\+export const key/, 'an untracked file is an addition with its content');
+  assert.ok(!d.text.includes('secretsecret'), 'untracked content is redacted');
+  assert.match(d.text, /Binary files \/dev\/null and b\/blob\.bin differ/, 'a binary untracked file is summarised by git');
+  assert.match(d.text, /b\/huge\.txt\nnew file mode 100644\n\(untracked file of 81920 bytes, not captured\)/, 'an untracked file over the cap is named, not read');
+  assert.ok(!d.text.includes('debug.log'), 'ignored files stay out');
+  assert.equal(git('status', '--porcelain=v1'), before, 'the checkout\'s own index is untouched');
+  const listed = ws.changes(repo, base).map((c) => c.path).filter((p) => p !== 'a.txt').sort();
+  for (const file of listed) assert.ok(d.text.includes(`b/${file}`), `${file}: every untracked file listed by changes() is in the diff`);
+});
+
 test('symlink escapes are detected on the real path', () => {
   const root = tmp('agn-root-');
   const outside = tmp('agn-out-');

@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { redact } from './redact.ts';
 
@@ -9,12 +10,13 @@ import { redact } from './redact.ts';
  * checkout: a launched session works in its own worktree, created from a
  * recorded base revision, and the human checkout is only read.
  */
-function git(cwd: string, args: string[], maxBuffer = 16 * 1024 * 1024): string {
+function git(cwd: string, args: string[], maxBuffer = 16 * 1024 * 1024, opts: { env?: Record<string, string>; input?: string } = {}): string {
   return execFileSync('git', ['-C', cwd, ...args], {
     encoding: 'utf8',
     maxBuffer,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', ...opts.env },
+    input: opts.input,
+    stdio: [opts.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
   });
 }
 
@@ -124,12 +126,54 @@ const REDACTION_SLACK = 64 * 1024;
  * captured field: a secret across the cut would otherwise leave a prefix
  * that no pattern recognises. It reads the cap plus a slack far longer
  * than any secret, so its cost stays bounded for a huge diff.
+ *
+ * Untracked files (those `changes()` lists, .gitignore respected) are
+ * part of it as additions: they are marked intent-to-add in a temporary
+ * copy of the index, so the checkout's own index is never touched. One
+ * larger than the bytes read is named, not read.
  */
 export function diff(dir: string, base: string, secrets: string[] = [], maxBytes = 256 * 1024): { text: string; truncated: boolean } {
-  const raw = git(dir, ['diff', '-M', base], 64 * 1024 * 1024);
   const window = maxBytes + REDACTION_SLACK;
-  const text = redact(raw.length > window ? raw.slice(0, window) : raw, secrets);
-  return text.length > maxBytes ? { text: text.slice(0, maxBytes), truncated: true } : { text, truncated: raw.length > window };
+  const { raw, oversized } = withUntracked(dir, window, (env) => git(dir, ['diff', '-M', base], 64 * 1024 * 1024, { env }));
+  const full = raw + oversized.map((f) => `diff --git a/${f.path} b/${f.path}\nnew file mode 100644\n(untracked file of ${f.size} bytes, not captured)\n`).join('');
+  const text = redact(full.length > window ? full.slice(0, window) : full, secrets);
+  return text.length > maxBytes ? { text: text.slice(0, maxBytes), truncated: true } : { text, truncated: full.length > window };
+}
+
+/**
+ * Runs `fn` with an environment whose index also holds the untracked
+ * files of `dir` as intent-to-add entries (those up to `maxFileBytes`),
+ * and returns the untracked files left out for their size.
+ */
+function withUntracked(dir: string, maxFileBytes: number, fn: (env: Record<string, string>) => string): { raw: string; oversized: { path: string; size: number }[] } {
+  const included: string[] = [];
+  const oversized: { path: string; size: number }[] = [];
+  for (const file of git(dir, ['ls-files', '-z', '--others', '--exclude-standard']).split('\0').filter(Boolean)) {
+    // A nested repository is listed as a directory: it has no content of its own here.
+    if (file.endsWith('/')) continue;
+    let size = 0;
+    try {
+      const st = fs.lstatSync(path.join(dir, file));
+      if (st.isFile()) size = st.size;
+      else if (!st.isSymbolicLink()) continue;
+    } catch {
+      continue;
+    }
+    if (size > maxFileBytes) oversized.push({ path: file, size });
+    else included.push(file);
+  }
+  if (included.length === 0) return { raw: fn({}), oversized };
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agn-index-'));
+  try {
+    const index = path.join(tmp, 'index');
+    const real = path.resolve(dir, git(dir, ['rev-parse', '--git-path', 'index']).trim());
+    if (fs.existsSync(real)) fs.copyFileSync(real, index);
+    const env = { GIT_INDEX_FILE: index };
+    git(dir, ['add', '--intent-to-add', '--pathspec-from-file=-', '--pathspec-file-nul'], undefined, { env: { ...env, GIT_LITERAL_PATHSPECS: '1' }, input: included.join('\0') });
+    return { raw: fn(env), oversized };
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 export function headRevision(dir: string): string | null {
