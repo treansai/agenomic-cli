@@ -1824,6 +1824,44 @@ test('a stop saves the outcomes its settlements could not deliver; the next star
   });
 });
 
+test('a stop saves the outcomes of a forgotten session whose final settlement ran out of budget', async () => {
+  await withHome(async () => {
+    const repo = tempRepo();
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+    const first = new FlakyReportApi();
+    const daemon: any = new Daemon(cfg, first);
+    daemon.finalSettleMs = 50;
+    daemon.shutdownSettleMs = 300;
+    const hook = (input: Record<string, unknown>) => daemon.onLocal({ op: 'hook', runtime: 'claude_code', input: { session_id: 'cli-10', cwd: repo, ...input } });
+    await hook({ hook_event_name: 'PreToolUse', tool_use_id: 'toolu_1', tool_name: 'Bash', tool_input: { command: 'ls' } });
+    await hook({ hook_event_name: 'PreToolUse', tool_use_id: 'toolu_2', tool_name: 'Bash', tool_input: { command: 'sleep 9' } });
+    await hook({ hook_event_name: 'PostToolUse', tool_use_id: 'toolu_1', tool_name: 'Bash' });
+    // The local session ends (and is forgotten) while the gateway is down,
+    // and stays down beyond the budget of its final settlement.
+    await hook({ hook_event_name: 'SessionEnd', reason: 'exit' });
+    assert.equal(daemon.sessions.size, 0);
+    const until = Date.now() + 10000;
+    while ([...daemon.settlingContexts].some((c: SessionContext) => (c as any).finals.size > 0) && Date.now() < until) await sleep(20);
+    assert.equal(daemon.settlingContexts.size, 1, 'the context is kept while its outcomes are unacknowledged');
+    await daemon.stop();
+    const saved = JSON.parse(fs.readFileSync(paths.outcomes(), 'utf8'));
+    assert.deepEqual(saved.map((o: any) => o.outcome).sort(), ['completed', 'unknown']);
+
+    const second = new RecordingApi();
+    const next = new Daemon(cfg, second);
+    await next.start();
+    try {
+      while (second.reports.length < 2 && Date.now() < until) await sleep(20);
+      await sleep(200);
+      assert.deepEqual(second.reports.map((r) => r.outcome).sort(), ['completed', 'unknown'], 'each saved outcome delivered once');
+      assert.equal(fs.existsSync(paths.outcomes()), false);
+    } finally {
+      await next.stop();
+    }
+  });
+});
+
 test('a runtime failure that quotes a runtime credential is redacted before it is logged or reported', async () => {
   await withHome(async () => {
     const passthrough = 'corp-provider-credential-7f3a9b2c4d5e';

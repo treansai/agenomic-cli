@@ -362,6 +362,17 @@ export class SessionContext {
   }
 
   /**
+   * Whether an outcome observed (or settled as `unknown`) is retained
+   * because the gateway has not acknowledged it.
+   *
+   * @example
+   * if (!ctx.unacknowledged()) contexts.delete(ctx);
+   */
+  unacknowledged(): boolean {
+    return [...this.open.values()].some((retained) => retained !== undefined);
+  }
+
+  /**
    * Stops delivering outcomes (the daemon shuts down) and hands over the
    * ones the gateway has not acknowledged, for the next daemon to deliver:
    * every retained outcome, and `unknown` (with `summary`) for the actions

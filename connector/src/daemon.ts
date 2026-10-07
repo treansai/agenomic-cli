@@ -149,7 +149,13 @@ export class Daemon {
    * saves the outcomes still unacknowledged for the next start.
    */
   shutdownSettleMs = 10000;
-  /** Contexts with a final settlement started, kept until it is done (a local session is forgotten at its end). */
+  /** How long a session's final settlement keeps delivering its outcomes again (10 min). */
+  finalSettleMs = 10 * 60 * 1000;
+  /**
+   * Contexts with a final settlement started, kept until it is done (a
+   * local session is forgotten at its end), and after it while outcomes
+   * it could not deliver are retained, so that a stop saves them.
+   */
   private readonly settlingContexts = new Set<SessionContext>();
   /** Saved outcomes of a previous run, not delivered yet. */
   private saved: PendingOutcome[] = [];
@@ -353,7 +359,11 @@ export class Daemon {
   /** The final settlement of a session's actions; a stop waits for it, bounded. */
   private settleFinal(ctx: SessionContext, summary: string): void {
     this.settlingContexts.add(ctx);
-    void ctx.settleFinal(summary).finally(() => this.settlingContexts.delete(ctx));
+    void ctx.settleFinal(summary, this.finalSettleMs).finally(() => {
+      // A settlement out of budget leaves its outcomes retained: the
+      // context is kept so that a stop hands them over for the next start.
+      if (!ctx.unacknowledged()) this.settlingContexts.delete(ctx);
+    });
   }
 
   /** Reads the configured runtime versions; true when one of them was not known yet. */
