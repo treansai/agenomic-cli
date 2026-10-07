@@ -55,8 +55,19 @@ export function claudeSettingsFile(scope: 'project' | 'user', dir?: string): str
   return path.join(path.resolve(dir), '.claude', 'settings.local.json');
 }
 
-function isOurs(entry: any): boolean {
-  return Array.isArray(entry?.hooks) && entry.hooks.some((h: any) => typeof h?.command === 'string' && h.command.includes(MARK) && h.command.includes(' hook '));
+function isOurs(hook: any): boolean {
+  return typeof hook?.command === 'string' && hook.command.includes(MARK) && hook.command.includes(' hook ');
+}
+
+/**
+ * A matcher entry without the command hooks this tool installed: hooks
+ * the developer added to the same entry stay, and only an entry left with
+ * no hook at all is dropped.
+ */
+function withoutOurs(entry: any): any | undefined {
+  if (!Array.isArray(entry?.hooks) || !entry.hooks.some(isOurs)) return entry;
+  const hooks = entry.hooks.filter((h: any) => !isOurs(h));
+  return hooks.length ? { ...entry, hooks } : undefined;
 }
 
 export function planClaude(file: string, failMode: FailMode, install: boolean): Plan {
@@ -66,7 +77,7 @@ export function planClaude(file: string, failMode: FailMode, install: boolean): 
   settings.hooks ??= {};
   for (const event of CLAUDE_EVENTS) {
     const list: any[] = Array.isArray(settings.hooks[event]) ? settings.hooks[event] : [];
-    const others = list.filter((e) => !isOurs(e));
+    const others = list.map(withoutOurs).filter((e) => e !== undefined);
     if (install) {
       others.push({
         matcher: event === 'PreToolUse' || event.startsWith('PostToolUse') ? '*' : undefined,

@@ -64,6 +64,26 @@ test('Claude Code hooks: preserve existing hooks, idempotent, exact uninstall, b
   assert.deepEqual(after.permissions, original.permissions);
 });
 
+test('Claude Code hooks: a user hook added to the Agenomic matcher entry survives reinstall and uninstall', () => {
+  const dir = tmp('agn-hooks-');
+  const file = path.join(dir, '.claude', 'settings.local.json');
+  fs.mkdirSync(path.dirname(file));
+  apply(planClaude(file, 'local', true));
+  const installed = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const user = { type: 'command', command: '/usr/local/bin/audit-log' };
+  installed.hooks.PreToolUse[0].hooks.push(user);
+  fs.writeFileSync(file, JSON.stringify(installed, null, 2));
+  apply(planClaude(file, 'local', true));
+  const reinstalled = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.deepEqual(reinstalled.hooks.PreToolUse[0], { matcher: '*', hooks: [user] }, 'the user hook keeps its entry');
+  assert.equal(reinstalled.hooks.PreToolUse.length, 2);
+  assert.match(reinstalled.hooks.PreToolUse[1].hooks[0].command, /agenomic-connector.* hook claude-code/);
+  assert.equal(planClaude(file, 'local', true).changed, false, 'reinstalling again changes nothing');
+  apply(planClaude(file, 'local', false));
+  const after = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.deepEqual(after.hooks, { PreToolUse: [{ matcher: '*', hooks: [user] }] }, 'only the Agenomic command hooks are removed');
+});
+
 test('Codex hooks: managed block only, exact uninstall, refuses a conflicting [hooks] table', () => {
   const dir = tmp('agn-codex-');
   const file = path.join(dir, 'config.toml');
