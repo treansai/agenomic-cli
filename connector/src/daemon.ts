@@ -12,7 +12,7 @@ import { EventSink } from './events.ts';
 import { blockedProtection, protection, type Surface } from './protection.ts';
 import { clean } from './redact.ts';
 import { SessionContext, type Runtime, type Verdict } from './session.ts';
-import { errorMessage, executableVersion, log, readJson, redactLogsWith, resolveExecutable, sleep, ulid, writeSecretFile } from './util.ts';
+import { errorMessage, executableVersion, log, readExecutableVersion, readJson, redactLogsWith, resolveExecutable, sleep, ulid, writeSecretFile } from './util.ts';
 import * as ws from './workspace.ts';
 
 const VERSION = '0.1.0';
@@ -35,6 +35,10 @@ interface Managed {
    * binary's version, never for the configured one's.
    */
   executable?: string;
+  /** The surface the session connected through, and the mode fields last reported for it. */
+  surface?: Surface;
+  limitations?: string[];
+  reportedMode?: string;
   /**
    * Whether the report that establishes the session's mode (connect) was
    * made. Until then a status the runtime reports is only held: no
@@ -92,6 +96,12 @@ export class Daemon {
 
   readonly cfg: ConnectorConfig;
   private readonly unredactLogs: () => void;
+  /**
+   * How long connecting a session waits for its runtime's `--version`.
+   * A session connected before it answered is reported with its version
+   * unknown, then reported again once it has answered.
+   */
+  versionWaitMs = 3000;
 
   constructor(cfg: ConnectorConfig, api?: RunnerApi) {
     this.cfg = cfg;
@@ -166,6 +176,58 @@ export class Daemon {
   private sessionVersion(m: Managed): string | null | undefined {
     if (m.origin === 'local_connected') return m.executable ? executableVersion(m.executable) : null;
     return m.runtime === 'claude_code' ? claudeCodeVersion(this.cfg.runtimes.claude_code) : codexVersion(this.cfg.runtimes.codex);
+  }
+
+  /** sessionVersion(), waiting for the binary's answer. */
+  private readSessionVersion(m: Managed): Promise<string | null> {
+    if (m.origin === 'local_connected') return m.executable ? readExecutableVersion(m.executable) : Promise.resolve(null);
+    return m.runtime === 'claude_code' ? readClaudeCodeVersion(this.cfg.runtimes.claude_code) : readCodexVersion(this.cfg.runtimes.codex);
+  }
+
+  /**
+   * The mode a connected session holds, with its protection, limitations
+   * and capabilities. Enforce needs pre-tool control validated on this
+   * machine (supported_tested or partial) for the version the session
+   * runs: without it the session is blocked, never reported as enforce.
+   */
+  private modeFields(m: Managed, version: string | null): Record<string, unknown> {
+    const surface = m.surface!;
+    const caps = this.capabilities(m.runtime, surface, version);
+    const validated = (caps as Record<string, { validated?: string }>).pre_tool_control?.validated;
+    const blocked = m.ctx.mode === 'enforce' && validated !== 'supported_tested' && validated !== 'partial';
+    const requested = protection(m.runtime, surface, m.ctx.mode);
+    const prot = blocked
+      ? blockedProtection(requested, `enforce needs pre-tool control validated on this machine (agenomic-connector doctor --probe); it is ${validated ?? 'not reported'}`)
+      : requested;
+    return {
+      mode_effective: blocked ? 'blocked' : m.ctx.mode,
+      protection: { protected: prot.protected, not_covered: prot.not_covered, notes: prot.notes },
+      limitations: [...prot.limitations, ...(m.limitations ?? [])],
+      capabilities: caps,
+    };
+  }
+
+  /**
+   * Reports a connected session's mode again once the version of its
+   * runtime, unknown when it connected, has answered: a session reported
+   * blocked only because `--version` had not answered yet becomes enforce
+   * when that version is validated, and its capabilities are those of the
+   * version it runs. Nothing is sent when nothing changed.
+   */
+  private async refreshMode(m: Managed): Promise<void> {
+    await this.readSessionVersion(m);
+    if (this.abort.signal.aborted || !m.connected || this.sessions.get(m.id) !== m || m.status === 'stopped' || m.status === 'failed') return;
+    const version = this.sessionVersion(m);
+    if (version === undefined) return;
+    const fields = this.modeFields(m, version);
+    const key = JSON.stringify(fields);
+    if (key === m.reportedMode) return;
+    m.reportedMode = key;
+    try {
+      await this.reportUntil(m, { status: m.status, ...fields }, true).first;
+    } catch (error) {
+      log('warn', 'refreshed mode report failed; retrying', { session: m.id, error: errorMessage(error) });
+    }
   }
 
   /**
@@ -397,32 +459,30 @@ export class Daemon {
    * one the runtime reported meanwhile) together with the effective mode,
    * the protection and the capabilities, in one report, so that the
    * gateway never holds a connected status without a mode. It is retried
-   * until delivered. Enforce needs pre-tool control validated on this
-   * machine (supported_tested or partial): without it the session is
-   * blocked, never reported as enforce. It resolves after the first
-   * attempt, with whether the report was delivered then (`now`) and
-   * whether it is in the end (`delivered`).
+   * until delivered. The mode follows modeFields(), for the version of
+   * the runtime the session runs: connecting waits up to `versionWaitMs`
+   * for a `--version` that has not answered yet, and a session connected
+   * without it is reported again once it has (refreshMode). It resolves
+   * after the first attempt, with whether the report was delivered then
+   * (`now`) and whether it is in the end (`delivered`).
    */
   private async connect(m: Managed, surface: Surface, extra: { limitations?: string[]; workspace?: unknown } = {}): Promise<{ now: boolean; delivered: Promise<boolean> }> {
+    if (this.sessionVersion(m) === undefined) {
+      let timer: NodeJS.Timeout | undefined;
+      await Promise.race([this.readSessionVersion(m), new Promise((resolve) => (timer = setTimeout(resolve, this.versionWaitMs)))]);
+      clearTimeout(timer);
+    }
     const status = m.held ?? 'running';
     m.connected = true;
     m.held = undefined;
     m.status = status;
-    const caps = this.capabilities(m.runtime, surface, this.sessionVersion(m) ?? null);
-    const validated = (caps as Record<string, { validated?: string }>).pre_tool_control?.validated;
-    const blocked = m.ctx.mode === 'enforce' && validated !== 'supported_tested' && validated !== 'partial';
-    const requested = protection(m.runtime, surface, m.ctx.mode);
-    const prot = blocked
-      ? blockedProtection(requested, `enforce needs pre-tool control validated on this machine (agenomic-connector doctor --probe); it is ${validated ?? 'not reported'}`)
-      : requested;
-    const r = this.reportUntil(m, {
-      status,
-      mode_effective: blocked ? 'blocked' : m.ctx.mode,
-      protection: { protected: prot.protected, not_covered: prot.not_covered, notes: prot.notes },
-      limitations: [...prot.limitations, ...(extra.limitations ?? [])],
-      capabilities: caps,
-      ...(extra.workspace ? { workspace: extra.workspace } : {}),
-    }, true);
+    m.surface = surface;
+    m.limitations = extra.limitations;
+    const version = this.sessionVersion(m);
+    const fields = this.modeFields(m, version ?? null);
+    m.reportedMode = JSON.stringify(fields);
+    const r = this.reportUntil(m, { status, ...fields, ...(extra.workspace ? { workspace: extra.workspace } : {}) }, true);
+    if (version === undefined) void this.refreshMode(m).catch((error) => log('warn', 'mode refresh failed', { session: m.id, error: errorMessage(error) }));
     try {
       await r.first;
       return { now: true, delivered: r.delivered };

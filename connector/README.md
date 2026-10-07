@@ -74,7 +74,10 @@ reads that binary's `--version`. When the hook cannot name it (other
 systems, or a binary replaced since it started), nothing is validated
 for the session and an enforce session is blocked. The daemon reads it in the
 background: until the binary has answered, it reports `unknown` and
-nothing is validated. The cockpit only offers an
+nothing is validated. Connecting a session waits up to 3 s for that
+answer; a session connected before it is reported again (its
+capabilities, and enforce instead of blocked when the version is
+validated) as soon as the binary has answered. The cockpit only offers an
 operation validated on the machine.
 
 ## Tests

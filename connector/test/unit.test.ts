@@ -1295,6 +1295,60 @@ test('a local session is validated for the CLI that runs it, never for the confi
   });
 });
 
+/** An executable that answers `--version` with `line` only after `seconds`. */
+function slowBinary(line: string, seconds: number): string {
+  const file = path.join(tmp('agn-bin-'), 'runtime');
+  fs.writeFileSync(file, `#!/bin/sh\nsleep ${seconds}\necho '${line}'\n`, { mode: 0o755 });
+  return file;
+}
+
+test('connecting a session waits, bounded, for its runtime version; one connected before it answered is reported again', async () => {
+  await withHome(async () => {
+    const repo = tempRepo();
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+    cfg.local_sessions.mode = 'enforce';
+    const ok = { ok: true, detail: 'probe' };
+    saveProbe({ runtime: 'codex', surface: 'cli_hooks', version: '6.6.1', at: '', results: { observe: ok, pre_tool_control: ok } });
+    saveProbe({ runtime: 'codex', surface: 'app_server', version: '6.6.1', at: '', results: { observe: ok, pre_tool_control: ok } });
+    const states = (api: ProbeApi) => api.states.filter((s) => s.capabilities);
+
+    // Within the wait: the first report already holds the validated mode.
+    const waited = new ProbeApi();
+    await (new Daemon(cfg, waited) as any).onLocal({ op: 'hook', runtime: 'codex', input: { hook_event_name: 'SessionStart', session_id: 'thread-a', cwd: repo }, invoker: slowBinary('codex-cli 6.6.1', 0.5) });
+    assert.deepEqual(states(waited).map((s) => s.mode_effective), ['enforce']);
+    assert.equal(states(waited)[0].capabilities.pre_tool_control.validated, 'partial');
+
+    // Past the wait: reported unknown, hence blocked, then enforce once `--version` answered.
+    const late = new ProbeApi();
+    const daemon: any = new Daemon(cfg, late);
+    daemon.versionWaitMs = 50;
+    await daemon.onLocal({ op: 'hook', runtime: 'codex', input: { hook_event_name: 'SessionStart', session_id: 'thread-b', cwd: repo }, invoker: slowBinary('codex-cli 6.6.1', 1) });
+    assert.deepEqual(states(late).map((s) => s.mode_effective), ['blocked']);
+    assert.equal(states(late)[0].capabilities.pre_tool_control.validated, 'unknown');
+    const until = Date.now() + 10000;
+    while (states(late).length < 2 && Date.now() < until) await sleep(50);
+    assert.deepEqual(states(late).map((s) => s.mode_effective), ['blocked', 'enforce']);
+    assert.equal(states(late)[1].status, 'running');
+    assert.equal(states(late)[1].capabilities.pre_tool_control.validated, 'partial');
+    assert.deepEqual(states(late)[1].protection.not_covered.length < states(late)[0].protection.not_covered.length, true);
+
+    // A launched session of a configured executable follows the same rule.
+    cfg.runtimes.codex.executable = slowBinary('codex-cli 6.6.1', 1);
+    const launched = new ProbeApi();
+    const d2: any = new Daemon(cfg, launched);
+    d2.versionWaitMs = 50;
+    const m = d2.manage('s-launched', 'codex', 'launched', 'enforce', { conversation: false, commands: false, diffs: false, outputs: false }, repo, null);
+    await d2.connect(m, 'app_server');
+    const until2 = Date.now() + 10000;
+    while (states(launched).length < 2 && Date.now() < until2) await sleep(50);
+    assert.deepEqual(states(launched).map((s) => s.mode_effective), ['blocked', 'enforce']);
+    assert.equal(states(launched)[1].capabilities.pre_tool_control.validated, 'supported_tested');
+    await d2.stop();
+    await daemon.stop();
+  });
+});
+
 test('the hook names the runtime executable that ran it: past shells, and the script of a Node process', () => {
   const proc = tmp('agn-proc-');
   const bin = tmp('agn-bin-');
