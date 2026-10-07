@@ -811,6 +811,52 @@ test('a launch or resume whose start fails after the spawn stops the process and
   });
 });
 
+test('a Claude Code launch is applied only once the runtime initialized and its native session is registered', { timeout: 120000 }, async () => {
+  await withHome(async () => {
+    const repo = tempRepo();
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+    cfg.runtimes.claude_code.extra_env = { ANTHROPIC_BASE_URL: 'http://127.0.0.1:9' };
+    const registered: any[] = [];
+    const api = new (class extends ProbeApi {
+      override async request<T = any>(method: string, p: string, opts: { body?: any } = {}): Promise<T> {
+        if (p === '/v1/coding/runner/sessions') {
+          registered.push(opts.body);
+          return { session: {} } as T;
+        }
+        return super.request<T>(method, p, opts);
+      }
+    })();
+    const launch = async (daemon: any, session: string) => {
+      const id = ulid();
+      await daemon.handleCommand({ id, kind: 'launch', coding_session_id: session, payload: { runtime: 'claude_code', workspace_id: 'w', mode: 'observe' } });
+      return api.results.get(id);
+    };
+    // A runtime that cannot start: refused, not applied with no native id.
+    cfg.runtimes.claude_code.executable = path.join(tmp('agn-bin-'), 'missing-claude');
+    const broken: any = new Daemon(cfg, api);
+    const failed = randomUUID();
+    const r1 = await launch(broken, failed);
+    assert.equal(r1?.status, 'refused', JSON.stringify(r1));
+    assert.match(r1.error, /missing-claude/);
+    assert.equal(broken.sessions.has(failed), false);
+    assert.equal(registered.length, 0);
+    // The bundled runtime, launched without a prompt: no turn runs, yet the
+    // native id is known and registered before the launch is applied.
+    delete cfg.runtimes.claude_code.executable;
+    const daemon: any = new Daemon(cfg, api);
+    const session = randomUUID();
+    try {
+      const r2 = await launch(daemon, session);
+      assert.equal(r2?.status, 'applied', JSON.stringify(r2));
+      assert.match(r2.result.native_session_id, /^[0-9a-f-]{36}$/);
+      assert.deepEqual(registered.map((b) => [b.coding_session_id, b.runtime_session_id]), [[session, r2.result.native_session_id]]);
+    } finally {
+      await daemon.sessions.get(session)?.adapter?.stop();
+    }
+  });
+});
+
 test('a local Codex terminal session reports the codex:cli_hooks capabilities, validated by its own probe', async () => {
   await withHome(async () => {
     const version = codexVersion(defaultConfig('x', 'x').runtimes.codex)!;

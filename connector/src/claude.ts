@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -90,6 +91,8 @@ export interface LaunchOptions {
   runtime: RuntimeConfig;
   onNativeSession: (nativeId: string) => Promise<void>;
   onStatus: (status: string) => void;
+  /** How long start() waits for Claude Code to initialize. */
+  initTimeoutMs?: number;
 }
 
 /** A Claude Code session driven through the Claude Agent SDK. */
@@ -102,6 +105,9 @@ export class ClaudeSession {
   private readonly questions = new Map<string, (answer: string) => void>();
   private readonly toolStart = new Map<string, number>();
   private ended = false;
+  private started = false;
+  /** Why the SDK stream ended with an error, if it did. */
+  private failure: string | undefined;
   readonly done: Promise<void>;
   private resolveDone!: () => void;
 
@@ -144,6 +150,14 @@ export class ClaudeSession {
     };
   }
 
+  /**
+   * Starts Claude Code and resolves once it has initialized and its native
+   * session is registered (onNativeSession). The session id is chosen
+   * here (or is the resumed one), so it is known before the first turn,
+   * which a launch without a prompt does not start. A runtime that fails
+   * or exits before it initialized, or does not within initTimeoutMs,
+   * rejects the start instead of being reported running.
+   */
   async start(): Promise<void> {
     const { query } = await loadSdk();
     const ctx = this.o.ctx;
@@ -201,6 +215,8 @@ export class ClaudeSession {
       ctx.sink.emit(type, 'runtime', 'native', { agent_id: input.agent_id, agent_type: input.agent_type });
       return {};
     };
+    const nativeId = this.o.resume ?? randomUUID();
+    this.nativeId = nativeId;
     if (this.o.prompt) this.pushUser(this.o.prompt);
     this.query = query({
       prompt: this.inbox,
@@ -229,6 +245,8 @@ export class ClaudeSession {
           SubagentStart: [{ hooks: [lifecycle('subagent.started')] }],
           SubagentStop: [{ hooks: [lifecycle('subagent.stopped')] }],
         },
+        // A new session's id is fixed by the connector; a resumed one keeps its own.
+        sessionId: this.o.resume ? undefined : nativeId,
         pathToClaudeCodeExecutable: this.o.runtime.executable,
         spawnClaudeCodeProcess: (opts: any) => {
           const child = spawn(opts.command, opts.args, { cwd: opts.cwd, env: opts.env, signal: opts.signal, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -239,6 +257,21 @@ export class ClaudeSession {
       } as any,
     });
     void this.pump();
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        this.query.initializationResult(),
+        this.done.then(() => {
+          throw new Error(`claude code ended before it initialized${this.failure ? `: ${this.failure}` : ''}`);
+        }),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('claude code did not initialize in time')), this.o.initTimeoutMs ?? 60000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+    await this.o.onNativeSession(nativeId);
   }
 
   /** PostToolUse / PostToolUseFailure: the observed outcome of a call, correlated with its action. */
@@ -274,10 +307,16 @@ export class ClaudeSession {
     const ctx = this.o.ctx;
     try {
       for await (const m of this.query) {
-        if (m.type === 'system' && m.subtype === 'init' && m.session_id && m.session_id !== this.nativeId) {
-          this.nativeId = m.session_id;
-          await this.o.onNativeSession(m.session_id);
-          ctx.sink.emit('session.started', 'runtime', 'native', { model: m.model, permission_mode: m.permissionMode, tools: (m.tools ?? []).length });
+        if (m.type === 'system' && m.subtype === 'init') {
+          // The id start() registered, unless the runtime chose another one.
+          if (m.session_id && m.session_id !== this.nativeId) {
+            this.nativeId = m.session_id;
+            await this.o.onNativeSession(m.session_id);
+          }
+          if (!this.started) {
+            this.started = true;
+            ctx.sink.emit('session.started', 'runtime', 'native', { model: m.model, permission_mode: m.permissionMode, tools: (m.tools ?? []).length });
+          }
           this.o.onStatus('running');
         } else if (m.type === 'assistant') {
           const text = (m.message?.content ?? []).filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n');
@@ -300,7 +339,8 @@ export class ClaudeSession {
         }
       }
     } catch (error) {
-      ctx.sink.emit('error', 'adapter', 'native', { code: 'runtime_error', message: ctx.cleanText(errorMessage(error), 500) });
+      this.failure = ctx.cleanText(errorMessage(error), 500);
+      ctx.sink.emit('error', 'adapter', 'native', { code: 'runtime_error', message: this.failure });
       log('warn', 'claude session ended with an error', { session: ctx.id, error: errorMessage(error) });
     } finally {
       this.ended = true;
