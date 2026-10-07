@@ -21,7 +21,7 @@ import { clean, redact } from '../src/redact.ts';
 import { protection, TOOL_IDS } from '../src/protection.ts';
 import { ProbeApi, probeConfig, probedVersion, runProbe, tempRepo } from '../src/probe.ts';
 import { isTestCommand, type SessionContext } from '../src/session.ts';
-import { absolutePath, log, readExecutableVersion, realPathEscapes, resolveExecutable, sleep, ulid } from '../src/util.ts';
+import { absolutePath, executableNames, log, readExecutableVersion, realPathEscapes, resolveExecutable, sleep, ulid } from '../src/util.ts';
 import * as ws from '../src/workspace.ts';
 
 const tmp = (p: string) => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), p)));
@@ -1110,6 +1110,20 @@ test('a runtime executable given as a command name is looked up once on the abso
       process.env.PATH = prevPath;
     }
   });
+});
+
+test('a bare command name finds its PATHEXT form on Windows', () => {
+  assert.deepEqual(executableNames('codex', 'win32', '.EXE;.CMD'), ['codex', 'codex.EXE', 'codex.CMD']);
+  assert.deepEqual(executableNames('codex.cmd', 'win32', '.EXE;.CMD'), ['codex.cmd'], 'an extension already given is kept');
+  assert.deepEqual(executableNames('codex', 'win32', undefined), ['codex', 'codex.COM', 'codex.EXE', 'codex.BAT', 'codex.CMD']);
+  assert.deepEqual(executableNames('codex', 'linux', '.EXE'), ['codex']);
+  const dir = tmp('agn-pathext-');
+  fs.writeFileSync(path.join(dir, 'my-claude.CMD'), '@echo off\r\n');
+  const env = { PATH: dir, PATHEXT: '.EXE;.CMD' } as NodeJS.ProcessEnv;
+  // Windows has no execute bit: the .CMD file is found although it is not executable here.
+  assert.equal(resolveExecutable('my-claude', 'win32', env), path.join(dir, 'my-claude.CMD'));
+  assert.equal(resolveExecutable('my-claude', 'linux', env), null, 'no PATHEXT lookup elsewhere');
+  assert.equal(resolveExecutable('missing', 'win32', env), null);
 });
 
 test('a runtime process gets only the absolute PATH directories, so a script interpreter is never found in a worktree', async () => {

@@ -179,22 +179,55 @@ export function absolutePath(value: string | undefined = process.env.PATH): stri
 }
 
 /**
+ * The names a command may have on disk: itself, and on Windows, unless it
+ * already ends in one of them, itself with each `PATHEXT` extension
+ * (`.COM;.EXE;.BAT;.CMD` when unset), as the Windows shell looks it up.
+ *
+ * @example
+ * executableNames('codex', 'win32', '.EXE;.CMD'); // ['codex', 'codex.EXE', 'codex.CMD']
+ * executableNames('codex', 'linux'); // ['codex']
+ */
+export function executableNames(exe: string, platform: NodeJS.Platform = process.platform, pathext: string | undefined = process.env.PATHEXT): string[] {
+  if (platform !== 'win32') return [exe];
+  const exts = (pathext || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean);
+  const lower = exe.toLowerCase();
+  return exts.some((ext) => lower.endsWith(ext.toLowerCase())) ? [exe] : [exe, ...exts.map((ext) => exe + ext)];
+}
+
+function executableFile(candidate: string, platform: NodeJS.Platform): boolean {
+  try {
+    // Windows has no execute bit: an existing file is runnable.
+    if (platform !== 'win32') fs.accessSync(candidate, fs.constants.X_OK);
+    return fs.statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Path of an executable, looked up on PATH when it is a bare command name.
  * Only the absolute directories of PATH are searched: a relative one (`.`,
- * `bin`) would name a different file from another working directory.
+ * `bin`) would name a different file from another working directory. On
+ * Windows a name without an extension also matches its `PATHEXT` forms, so
+ * `codex` finds `codex.exe` or `codex.cmd`.
  *
  * @example
  * resolveExecutable('git'); // '/usr/bin/git', or null
  */
-export function resolveExecutable(exe: string): string | null {
-  if (exe.includes('/')) return fs.existsSync(exe) ? path.resolve(exe) : null;
-  for (const dir of absolutePath().split(path.delimiter)) {
-    const candidate = path.join(dir, exe);
-    try {
-      fs.accessSync(candidate, fs.constants.X_OK);
-      if (fs.statSync(candidate).isFile()) return candidate;
-    } catch {
-      /* not here */
+export function resolveExecutable(
+  exe: string,
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const names = executableNames(exe, platform, env.PATHEXT);
+  if (exe.includes('/') || (platform === 'win32' && exe.includes('\\'))) {
+    for (const name of names) if (fs.existsSync(name)) return path.resolve(name);
+    return null;
+  }
+  for (const dir of absolutePath(env.PATH).split(path.delimiter)) {
+    for (const name of names) {
+      const candidate = path.join(dir, name);
+      if (executableFile(candidate, platform)) return candidate;
     }
   }
   return null;
