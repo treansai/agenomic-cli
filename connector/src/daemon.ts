@@ -695,20 +695,29 @@ export class Daemon {
     return m;
   }
 
+  /**
+   * Records the native session id a launched runtime uses: the routing,
+   * the persisted record (a resume uses it) and the gateway's session. A
+   * route to the id it replaces is dropped.
+   */
+  private async registerNative(m: Managed, nativeId: string): Promise<void> {
+    const stale = m.nativeId && m.nativeId !== nativeId ? `${m.runtime}:${m.nativeId}` : undefined;
+    if (stale && this.byNative.get(stale) === m) this.byNative.delete(stale);
+    m.nativeId = nativeId;
+    this.byNative.set(`${m.runtime}:${nativeId}`, m);
+    const rec = this.persisted[m.id];
+    if (rec) {
+      rec.native_id = nativeId;
+      this.persist();
+    }
+    await this.api.request('POST', '/v1/coding/runner/sessions', {
+      body: { coding_session_id: m.id, runtime: m.runtime, origin: 'launched', runtime_session_id: nativeId, base_revision: m.ctx.baseRevision ?? undefined },
+      retry: true,
+    });
+  }
+
   private async startAdapter(m: Managed, rcfg: ConnectorConfig['runtimes']['claude_code'], o: { model?: string; resume?: string }): Promise<void> {
-    const onNativeSession = async (nativeId: string) => {
-      m.nativeId = nativeId;
-      this.byNative.set(`${m.runtime}:${nativeId}`, m);
-      const rec = this.persisted[m.id];
-      if (rec) {
-        rec.native_id = nativeId;
-        this.persist();
-      }
-      await this.api.request('POST', '/v1/coding/runner/sessions', {
-        body: { coding_session_id: m.id, runtime: m.runtime, origin: 'launched', runtime_session_id: nativeId, base_revision: m.ctx.baseRevision ?? undefined },
-        retry: true,
-      });
-    };
+    const onNativeSession = (nativeId: string) => this.registerNative(m, nativeId);
     const onStatus = (status: string) => void this.adapterStatus(m, status);
     const common = { ctx: m.ctx, cwd: m.cwd, model: o.model ?? null, prompt: null, resume: o.resume ?? null, runtime: rcfg, onNativeSession, onStatus };
     const adapter: Adapter = m.runtime === 'claude_code' ? new ClaudeSession(common) : new CodexSession(common);

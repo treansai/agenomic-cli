@@ -113,6 +113,8 @@ export interface LaunchOptions {
   onStatus: (status: string) => void;
   /** How long start() waits for Claude Code to initialize. */
   initTimeoutMs?: number;
+  /** The SDK's query(); tests substitute a fake runtime. */
+  query?: Sdk['query'];
 }
 
 /**
@@ -128,6 +130,9 @@ export class ClaudeSession {
   private query: any;
   private child: ChildProcess | undefined;
   private nativeId: string | null = null;
+  /** The native id last registered, and the registrations, in order. */
+  private registered: string | null = null;
+  private registering: Promise<void> = Promise.resolve();
   private turnId = 0;
   private readonly questions = new Map<string, (answer: string) => void>();
   private readonly toolStart = new Map<string, number>();
@@ -190,7 +195,7 @@ export class ClaudeSession {
    * session.native(); // the registered native session id
    */
   async start(): Promise<void> {
-    const { query } = await loadSdk();
+    const query = this.o.query ?? (await loadSdk()).query;
     const ctx = this.o.ctx;
     const enforce = ctx.mode === 'enforce';
     const self = this;
@@ -312,7 +317,25 @@ export class ClaudeSession {
     } finally {
       clearTimeout(timer);
     }
-    await this.o.onNativeSession(nativeId);
+    // The id the runtime reported if it chose another one (pump), once.
+    await this.register();
+  }
+
+  /**
+   * Registers the current native id (onNativeSession), after the
+   * registrations before it and only when it changed: the last one
+   * recorded is always the id the runtime actually uses.
+   */
+  private register(): Promise<void> {
+    const next = this.registering.then(async () => {
+      const id = this.nativeId;
+      if (!id || id === this.registered) return;
+      this.registered = id;
+      await this.o.onNativeSession(id);
+    });
+    // A failed registration fails its caller, not the ones after it.
+    this.registering = next.catch(() => undefined);
+    return next;
   }
 
   /** PostToolUse / PostToolUseFailure: the observed outcome of a call, correlated with its action. */
@@ -349,10 +372,12 @@ export class ClaudeSession {
     try {
       for await (const m of this.query) {
         if (m.type === 'system' && m.subtype === 'init') {
-          // The id start() registered, unless the runtime chose another one.
+          // The id start() chose, unless the runtime chose another one:
+          // start() registers it once initialized; once it did, the change
+          // is registered here.
           if (m.session_id && m.session_id !== this.nativeId) {
             this.nativeId = m.session_id;
-            await this.o.onNativeSession(m.session_id);
+            if (this.registered) await this.register();
           }
           if (!this.started) {
             this.started = true;

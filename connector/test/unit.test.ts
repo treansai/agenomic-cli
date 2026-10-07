@@ -2119,6 +2119,76 @@ test('enroll refuses an insecure endpoint before the one time token is sent', as
   });
 });
 
+/** A fake SDK query(): Claude Code reports `reported` as its session id, before or after it initialized. */
+function fakeClaude(reported: string, initFirst: boolean) {
+  const gates = { emit: () => {}, end: () => {}, chosen: undefined as string | undefined };
+  const emit = new Promise<void>((r) => (gates.emit = r));
+  const end = new Promise<void>((r) => (gates.end = r));
+  let initialized!: () => void;
+  const init = new Promise<void>((r) => (initialized = r));
+  const query = (a: any) => {
+    gates.chosen = a.options.sessionId;
+    const q: any = (async function* () {
+      if (!initFirst) {
+        initialized();
+        await emit;
+      }
+      yield { type: 'system', subtype: 'init', session_id: reported, model: 'm', permissionMode: 'default', tools: [] };
+      initialized();
+      await end;
+    })();
+    q.initializationResult = () => init;
+    q.close = () => gates.end();
+    return q;
+  };
+  return { query, gates };
+}
+
+test('a launched Claude session registers the session id the runtime reports, whenever it reports it', async () => {
+  const prev = process.env.AGENOMIC_CONNECTOR_HOME;
+  process.env.AGENOMIC_CONNECTOR_HOME = tmp('agn-home-');
+  const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+  const daemon: any = new Daemon(cfg, new ProbeApi());
+  const capture = { conversation: false, commands: false, diffs: false, outputs: false };
+  try {
+    for (const initFirst of [true, false]) {
+      const m = daemon.manage(randomUUID(), 'claude_code', 'launched', 'observe', capture, tmp('agn-wt-'), null);
+      daemon.persisted[m.id] = { runtime: 'claude_code', cwd: m.cwd, base_revision: null, mode: 'observe', capture };
+      const registered: string[] = [];
+      const { query, gates } = fakeClaude(`runtime-${initFirst}`, initFirst);
+      const claude = new ClaudeSession({
+        ctx: m.ctx, cwd: m.cwd, runtime: cfg.runtimes.claude_code, onStatus: () => undefined, query: query as any,
+        onNativeSession: async (id) => {
+          registered.push(id);
+          await sleep(20);
+          await daemon.registerNative(m, id);
+        },
+      });
+      await claude.start();
+      gates.emit();
+      const deadline = Date.now() + 5000;
+      while (claude.native() !== `runtime-${initFirst}` && Date.now() < deadline) await sleep(10);
+      await sleep(100);
+      const actual = `runtime-${initFirst}`;
+      // Reported before it initialized: registered once; after: the change follows the first registration.
+      assert.deepEqual(registered, initFirst ? [actual] : [gates.chosen, actual]);
+      assert.equal(claude.native(), actual);
+      assert.equal(m.nativeId, actual);
+      assert.equal(daemon.persisted[m.id].native_id, actual, 'a resume uses the session that exists');
+      assert.equal(JSON.parse(fs.readFileSync(paths.sessions(), 'utf8'))[m.id].native_id, actual);
+      assert.equal(daemon.byNative.get(`claude_code:${actual}`), m);
+      assert.equal(daemon.byNative.has(`claude_code:${gates.chosen}`), false, 'no route to the id the runtime did not use');
+      gates.end();
+      await claude.done;
+      await m.ctx.sink.close();
+    }
+  } finally {
+    await daemon.stop();
+    if (prev === undefined) delete process.env.AGENOMIC_CONNECTOR_HOME;
+    else process.env.AGENOMIC_CONNECTOR_HOME = prev;
+  }
+});
+
 test('every public function, class and method of the connector has a doc comment with an example', () => {
   const dir = path.resolve(import.meta.dirname, '../src');
   const missing: string[] = [];
