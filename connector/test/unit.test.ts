@@ -1409,8 +1409,12 @@ test('the hook names the runtime executable that ran it: past shells, and the sc
     fs.symlinkSync(exe, path.join(dir, 'exe'));
     fs.symlinkSync(cwd, path.join(dir, 'cwd'));
     fs.writeFileSync(path.join(dir, 'cmdline'), argv.join('\0') + '\0');
-    fs.writeFileSync(path.join(dir, 'stat'), `${pid} (${path.basename(exe)} x) S ${ppid} 1 1 0`);
+    fs.writeFileSync(path.join(dir, 'stat'), `${pid} (${path.basename(exe)} x) S ${ppid} 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ${startTicks} 0 0`);
   };
+  // Every fake process started a minute after the files above were written.
+  const boot = Math.floor(Date.now() / 1000) - 3600;
+  let startTicks = (3600 + 60) * 100;
+  fs.writeFileSync(path.join(proc, 'stat'), `cpu 1 2 3\nbtime ${boot}\nprocesses 9\n`);
   ps(10, codex, [codex, 'exec'], 1);
   ps(11, shell, ['sh', '-c', 'hook'], 10);
   ps(20, node, ['node', '--no-warnings', 'cli.js'], 1);
@@ -1421,6 +1425,28 @@ test('the hook names the runtime executable that ran it: past shells, and the sc
   assert.equal(invokingExecutable(20, proc), cli);
   assert.equal(invokingExecutable(31, proc), undefined, 'a binary replaced since it started is not read');
   assert.equal(invokingExecutable(99, proc), undefined);
+  // Options given as two arguments are not taken for the script.
+  ps(40, node, ['node', '-r', 'dotenv/config', 'cli.js'], 1);
+  ps(41, node, ['node', '--import', 'tsx', '--no-warnings', 'cli.js', '--flag'], 1);
+  ps(42, path.join(bin, 'bun'), ['bun', 'run', 'cli.js'], 1);
+  ps(43, path.join(bin, 'bun'), ['bun', '--preload', './x.js', 'cli.js'], 1);
+  assert.equal(invokingExecutable(40, proc), cli);
+  assert.equal(invokingExecutable(41, proc), cli);
+  assert.equal(invokingExecutable(42, proc), cli);
+  assert.equal(invokingExecutable(43, proc), cli);
+  // No script, or an option whose arity is unknown: nothing is guessed.
+  ps(44, node, ['node', '-e', 'require("./cli.js")'], 1);
+  ps(45, node, ['node', '--some-future-option', 'x.js', 'cli.js'], 1);
+  ps(46, path.join(bin, 'bun'), ['bun', 'x', 'cli.js'], 1);
+  assert.equal(invokingExecutable(44, proc), undefined);
+  assert.equal(invokingExecutable(45, proc), undefined);
+  assert.equal(invokingExecutable(46, proc), undefined);
+  // A script (an npm update of a running CLI) or binary changed after the process started is not read.
+  startTicks = (3600 - 60) * 100;
+  ps(50, node, ['node', 'cli.js'], 1);
+  ps(51, codex, [codex], 1);
+  assert.equal(invokingExecutable(50, proc), undefined, 'a script newer than its process is not read');
+  assert.equal(invokingExecutable(51, proc), undefined, 'a binary newer than its process is not read');
 });
 
 test('every event envelope carries its coding_session_id, spooled and synthesized ones included', async () => {

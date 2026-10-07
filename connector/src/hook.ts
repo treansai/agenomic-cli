@@ -89,9 +89,13 @@ const WRAPPERS = new Set(['sh', 'bash', 'dash', 'zsh', 'ksh', 'mksh', 'fish', 'b
 /**
  * The executable of the runtime process that ran this hook: the first
  * ancestor that is not a shell, and for a Node or Bun process the script
- * it runs. Read from `/proc` (Linux); undefined elsewhere, or when the
- * executable was replaced since the process started, so that the daemon
- * never validates a session with another binary's version.
+ * it runs (see `scriptOf`). Read from `/proc` (Linux); undefined
+ * elsewhere, when the command line is not one whose script is known, or
+ * when the executable or script was replaced or changed since the process
+ * started (a deleted binary, or a file changed after the process start
+ * time of `/proc/<pid>/stat`, as an npm update of a running Node CLI
+ * does), so that the daemon never validates a session with another
+ * binary's version.
  *
  * @example
  * invokingExecutable(); // '/usr/lib/node_modules/@openai/codex/vendor/x86_64-unknown-linux-musl/codex/codex', or undefined
@@ -117,18 +121,113 @@ export function invokingExecutable(pid = process.ppid, proc = '/proc'): string |
       }
       continue;
     }
+    let file = exe;
     if (/^(node|nodejs|bun)$/.test(name)) {
-      const script = argv.slice(1).find((a) => !a.startsWith('-'));
+      const script = scriptOf(name === 'bun' ? 'bun' : 'node', argv.slice(1));
       if (!script) return undefined;
       try {
-        return path.resolve(fs.readlinkSync(path.join(proc, String(pid), 'cwd')), script);
+        file = path.resolve(fs.readlinkSync(path.join(proc, String(pid), 'cwd')), script);
       } catch {
-        return path.isAbsolute(script) ? script : undefined;
+        if (!path.isAbsolute(script)) return undefined;
+        file = script;
       }
     }
-    return exe;
+    return changedSince(file, startedAt(pid, proc)) ? undefined : file;
   }
   return undefined;
+}
+
+/** Node options whose value is the next argument (`--opt value`); `--opt=value` needs no entry. */
+const NODE_VALUE_OPTIONS = new Set([
+  '-r', '--require', '--import', '--loader', '--experimental-loader', '-C', '--conditions',
+  '--env-file', '--env-file-if-exists', '--input-type', '--inspect-port', '--debug-port', '--title',
+  '--icu-data-dir', '--openssl-config', '--redirect-warnings', '--disable-warning', '--stack-trace-limit',
+  '--diagnostic-dir', '--report-dir', '--report-directory', '--report-filename', '--report-signal',
+  '--secure-heap', '--secure-heap-min', '--max-http-header-size', '--heapsnapshot-signal', '--cpu-prof-dir',
+  '--cpu-prof-name', '--heap-prof-dir', '--heap-prof-name', '--watch-path', '--experimental-config-file',
+]);
+/** Node options that run code other than a script file: no script is named. */
+const NODE_NO_SCRIPT = new Set(['-e', '--eval', '-p', '--print', '-i', '--interactive', '-c', '--check', '-v', '--version', '-h', '--help', '--test', '--run', '--prof-process']);
+/** Bun options whose value is the next argument. */
+const BUN_VALUE_OPTIONS = new Set(['-r', '--preload', '--require', '--import', '-c', '--config', '--cwd', '--env-file', '--tsconfig-override', '--define', '-d', '--loader', '-l', '--conditions', '--main-fields', '--extension-order', '--jsx-factory', '--jsx-fragment', '--jsx-import-source', '--jsx-runtime', '--port', '--origin', '--install', '--elide-lines', '--filter', '-F']);
+/** Bun subcommands other than `run`: they run no script of the command line. */
+const BUN_COMMANDS = new Set(['x', 'test', 'install', 'i', 'add', 'a', 'remove', 'rm', 'update', 'link', 'unlink', 'pm', 'build', 'init', 'create', 'c', 'upgrade', 'repl', 'exec', 'outdated', 'publish', 'patch', 'patch-commit', 'audit', 'info', 'why', 'completions', 'discord', 'help']);
+
+/**
+ * The script a `node` or `bun` command line runs: the first argument that
+ * is neither an option nor the value of an option given as a separate
+ * argument (`node -r dotenv/config cli.js`), after `bun run`. Undefined
+ * when the command line runs no script file (`node -e …`, `bun x …`), or
+ * names an option this reader does not know, since its value could be
+ * taken for the script.
+ *
+ * @example
+ * scriptOf('node', ['--require', 'x.js', 'cli.js', '--flag']); // 'cli.js'
+ * scriptOf('bun', ['run', 'cli.js']); // 'cli.js'
+ */
+export function scriptOf(runtime: 'node' | 'bun', args: string[]): string | undefined {
+  const values = runtime === 'node' ? NODE_VALUE_OPTIONS : BUN_VALUE_OPTIONS;
+  let command = runtime === 'node';
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--') return args[i + 1];
+    if (a === '-') return undefined;
+    if (a.startsWith('-')) {
+      const option = a.split('=')[0];
+      if (runtime === 'node' && NODE_NO_SCRIPT.has(option)) return undefined;
+      if (a.includes('=')) continue;
+      if (values.has(a)) {
+        i++;
+        continue;
+      }
+      // A flag known to take no value: anything else might take one.
+      if (runtime === 'node' ? NODE_FLAG.test(a) : BUN_FLAG.test(a)) continue;
+      return undefined;
+    }
+    if (!command) {
+      command = true;
+      if (a === 'run') continue;
+      if (BUN_COMMANDS.has(a)) return undefined;
+    }
+    return a;
+  }
+  return undefined;
+}
+
+/** Node flags that take no value: the boolean `--[no-]…` and `--expose-…`/`--experimental-…`/`--trace-…` switches, and `--inspect[-brk|-wait]` without a port. */
+const NODE_FLAG = /^--(no-[\w-]+|experimental-[\w-]+|harmony[\w-]*|trace-[\w-]+|expose[\w-]+|inspect(-brk|-wait)?|enable-source-maps|preserve-symlinks(-main)?|pending-deprecation|throw-deprecation|abort-on-uncaught-exception|frozen-intrinsics|use-openssl-ca|use-bundled-ca|use-system-ca|insecure-http-parser|zero-fill-buffers|cpu-prof|heap-prof|watch|watch-preserve-output|report-on-signal|report-on-fatalerror|report-uncaught-exception|report-compact|force-fips|enable-fips|prof)$/;
+/** Bun flags that take no value. */
+const BUN_FLAG = /^(--(watch|hot|no-clear-screen|smol|bun|silent|if-present|no-install|prefer-offline|prefer-latest|no-macros|no-env-file|no-deprecation|throw-deprecation|expose-gc|inspect(-brk|-wait)?)|-b)$/;
+
+/**
+ * Milliseconds since the epoch at which process `pid` started: field 22 of
+ * `/proc/<pid>/stat` (clock ticks since boot, `USER_HZ` = 100 on Linux)
+ * plus the boot time `btime` of `/proc/stat`. The boot time is truncated
+ * to the second, so the result is at most a second early: a file changed
+ * just before the process started is taken as changed after it, which
+ * only makes the version unknown. Undefined if either cannot be read.
+ */
+function startedAt(pid: number, proc: string): number | undefined {
+  try {
+    const stat = fs.readFileSync(path.join(proc, String(pid), 'stat'), 'utf8');
+    const ticks = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]);
+    const boot = Number(/^btime (\d+)$/m.exec(fs.readFileSync(path.join(proc, 'stat'), 'utf8'))?.[1]);
+    if (!Number.isFinite(ticks) || !Number.isFinite(boot)) return undefined;
+    return boot * 1000 + ticks * 10;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether `file` was modified or replaced after `since` (or either is unknown). */
+function changedSince(file: string, since: number | undefined): boolean {
+  if (since === undefined) return true;
+  try {
+    const st = fs.statSync(file);
+    return Math.max(st.mtimeMs, st.ctimeMs) > since;
+  } catch {
+    return true;
+  }
 }
 
 /**
