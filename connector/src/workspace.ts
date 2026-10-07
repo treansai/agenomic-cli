@@ -51,6 +51,12 @@ function gitBounded(cwd: string, args: string[], limit: number, env: Record<stri
   }
 }
 
+/** The complete lines of a bounded output: a line cut at the bound is dropped. */
+function lines(r: { out: string; more: boolean }): string[] {
+  const text = r.more ? r.out.slice(0, r.out.lastIndexOf('\n') + 1) : r.out;
+  return text.split('\n').filter(Boolean);
+}
+
 export interface WorkspaceState {
   base_revision: string | null;
   branch: string | null;
@@ -155,28 +161,30 @@ export interface FileChange {
 }
 
 /**
- * Changes in `dir` relative to `base` (committed, staged, unstaged and untracked).
+ * Changes in `dir` relative to `base` (committed, staged, unstaged and
+ * untracked), at most 2000. Each git listing is read up to `maxBytes`:
+ * a change set of any size lists the files that fit, never an error.
  *
  * @example
  * const files = changes(worktree, baseRevision); // [{ path: 'src/app.ts', status: 'modified', added: 3, deleted: 1 }, …]
  */
-export function changes(dir: string, base: string): FileChange[] {
+export function changes(dir: string, base: string, maxBytes = 4 * 1024 * 1024): FileChange[] {
   const out = new Map<string, FileChange>();
-  const numstat = git(dir, ['diff', '--numstat', '-M', base]);
-  const names = git(dir, ['diff', '--name-status', '-M', base]);
+  const numstat = lines(gitBounded(dir, ['diff', '--numstat', '-M', base], maxBytes));
+  const names = lines(gitBounded(dir, ['diff', '--name-status', '-M', base], maxBytes));
   const counts = new Map<string, [number | null, number | null]>();
-  for (const line of numstat.split('\n').filter(Boolean)) {
+  for (const line of numstat) {
     const [a, d, ...rest] = line.split('\t');
     counts.set(rest[rest.length - 1]!, [a === '-' ? null : Number(a), d === '-' ? null : Number(d)]);
   }
-  for (const line of names.split('\n').filter(Boolean)) {
+  for (const line of names) {
     const [code, ...files] = line.split('\t');
     const file = files[files.length - 1]!;
     const status = code!.startsWith('A') ? 'added' : code!.startsWith('D') ? 'deleted' : code!.startsWith('R') ? 'renamed' : 'modified';
     const [added, deleted] = counts.get(file) ?? [null, null];
     out.set(file, { path: file, status, added, deleted });
   }
-  for (const file of git(dir, ['ls-files', '--others', '--exclude-standard']).split('\n').filter(Boolean)) {
+  for (const file of lines(gitBounded(dir, ['ls-files', '--others', '--exclude-standard'], maxBytes))) {
     if (!out.has(file)) out.set(file, { path: file, status: 'untracked', added: null, deleted: null });
   }
   return [...out.values()].slice(0, 2000);
@@ -221,13 +229,21 @@ export function diff(dir: string, base: string, secrets: string[] = [], maxBytes
 /**
  * Payload of a `diff.snapshot` event: the changed files against `base`
  * and, when diffs are captured, the bounded redacted diff. A diff that
- * cannot be read leaves the file list in place, with the reason.
+ * cannot be read leaves the file list in place, with the reason; a file
+ * list that cannot be read is empty, with its reason: the snapshot itself
+ * is always made.
  *
  * @example
  * sink.emit('diff.snapshot', 'filesystem', 'observed', snapshot(worktree, baseRevision, capture.diffs, ctx.secrets()));
  */
 export function snapshot(dir: string, base: string, captureDiff: boolean, secrets: string[] = []): Record<string, unknown> {
-  const payload: Record<string, unknown> = { base_revision: base, files: changes(dir, base) };
+  const payload: Record<string, unknown> = { base_revision: base };
+  try {
+    payload.files = changes(dir, base);
+  } catch (error) {
+    payload.files = [];
+    payload.files_error = redact(error instanceof Error ? error.message : String(error), secrets).slice(0, 500);
+  }
   if (!captureDiff) return payload;
   try {
     const d = diff(dir, base, secrets);

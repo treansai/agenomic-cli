@@ -471,6 +471,29 @@ test('workspace: a diff larger than any buffer is read only up to its window; th
   }
 });
 
+test('workspace: a change set larger than a listing reads lists the files that fit; a snapshot is made even when no list can be read', () => {
+  const repo = tempRepo();
+  const base = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  try {
+    for (let i = 0; i < 200; i++) fs.writeFileSync(path.join(repo, `file-${String(i).padStart(3, '0')}-${'n'.repeat(40)}.txt`), 'x\n');
+    fs.writeFileSync(path.join(repo, 'README.md'), 'changed\n');
+    const all = ws.changes(repo, base);
+    assert.equal(all.length, 202);
+    // Each listing is read up to 2 KiB: the files that fit, whole names only.
+    const some = ws.changes(repo, base, 2048);
+    assert.ok(some.length > 1 && some.length < all.length, String(some.length));
+    for (const f of some) assert.ok(all.some((a) => a.path === f.path), f.path);
+    assert.deepEqual(some.find((f) => f.path === 'README.md'), { path: 'README.md', status: 'modified', added: 1, deleted: 1 });
+    // A base git cannot read: the snapshot is still made, with the reasons.
+    const snap = ws.snapshot(repo, '0'.repeat(40), true);
+    assert.deepEqual(snap.files, []);
+    assert.match(String(snap.files_error), /git diff failed/);
+    assert.equal(snap.diff, null);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test('workspace: a verbose stderr of a diff that succeeds is not read as a cut diff', () => {
   const repo = tempRepo();
   const git = (...a: string[]) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8' });
