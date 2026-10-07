@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { redactValue } from './redact.ts';
 
@@ -244,7 +245,10 @@ function runVersion(file: string, timeoutMs = 10000): Promise<string | null> {
     const script = /\.[cm]?js$/.test(file);
     let child: ChildProcess;
     try {
-      child = spawn(script ? process.execPath : file, script ? [file, '--version'] : ['--version'], { stdio: ['ignore', 'pipe', 'ignore'] });
+      // Only PATH and HOME of the daemon's environment: the runtime asked
+      // its version never sees the daemon's or the developer's credentials.
+      const env = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: os.homedir() };
+      child = spawn(script ? process.execPath : file, script ? [file, '--version'] : ['--version'], { env, stdio: ['ignore', 'pipe', 'ignore'] });
     } catch {
       return resolve(null);
     }

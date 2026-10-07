@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { createRequire } from 'node:module';
-import { paths, type RuntimeConfig } from './config.ts';
+import { paths, runtimeEnv, type RuntimeConfig } from './config.ts';
 import { installCodex } from './hooks-install.ts';
 import { isTestCommand, type SessionContext } from './session.ts';
 import { errorMessage, executableVersion, log, readExecutableVersion } from './util.ts';
@@ -127,14 +127,7 @@ export class CodexSession {
   private home = '';
 
   private env(): Record<string, string> {
-    const env: Record<string, string> = {
-      PATH: process.env.PATH ?? '/usr/bin:/bin',
-      HOME: paths.runtimeHome('codex'),
-      CODEX_HOME: this.home,
-    };
-    for (const k of this.o.runtime.env_passthrough) if (process.env[k]) env[k] = process.env[k]!;
-    Object.assign(env, this.o.runtime.extra_env);
-    return env;
+    return runtimeEnv(this.o.runtime, { HOME: paths.runtimeHome('codex'), CODEX_HOME: this.home });
   }
 
   private call(method: string, params: unknown, timeoutMs = 60000): Promise<any> {
@@ -208,7 +201,7 @@ export class CodexSession {
       // (outside the worktree, workspace-write sandbox). Codex must report
       // that PreToolUse entry itself as trusted: other trusted hooks only
       // observe, and an untrusted PreToolUse hook never runs.
-      const r = await installCodex(path.join(this.home, 'config.toml'), this.o.ctx.mode === 'enforce' ? 'closed' : 'open', exe, this.o.cwd, false, 900, paths.socket());
+      const r = await installCodex(path.join(this.home, 'config.toml'), this.o.ctx.mode === 'enforce' ? 'closed' : 'open', exe, this.o.cwd, false, 900, paths.socket(), this.env());
       if (!r.preToolUse) throw new Error(`codex did not report the Agenomic PreToolUse hook as trusted (${r.trusted} Agenomic hook entries trusted); refusing to start without pre-tool control`);
     }
     const args = ['app-server', '--listen', 'stdio://'];

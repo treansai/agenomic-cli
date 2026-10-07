@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { paths, type RuntimeConfig } from './config.ts';
+import { paths, runtimeEnv, type RuntimeConfig } from './config.ts';
 import { commandText, isTestCommand, type SessionContext, type Verdict } from './session.ts';
 import { errorMessage, executableVersion, log, readExecutableVersion, realPathEscapes } from './util.ts';
 import * as ws from './workspace.ts';
@@ -153,17 +153,13 @@ export class ClaudeSession {
   private env(): Record<string, string> {
     const home = paths.runtimeHome('claude_code');
     fs.mkdirSync(path.join(home, 'config'), { recursive: true, mode: 0o700 });
-    const env: Record<string, string> = {
-      PATH: process.env.PATH ?? '/usr/bin:/bin',
+    return runtimeEnv(this.o.runtime, {
       HOME: home,
       CLAUDE_CONFIG_DIR: path.join(home, 'config'),
       DISABLE_AUTOUPDATER: '1',
       // Telemetry stays opt-in: no prompt or tool detail export by default.
       CLAUDE_CODE_ENABLE_TELEMETRY: '0',
-    };
-    for (const k of this.o.runtime.env_passthrough) if (process.env[k]) env[k] = process.env[k]!;
-    Object.assign(env, this.o.runtime.extra_env);
-    return env;
+    });
   }
 
   private context(input: Record<string, unknown>, tool: string): Record<string, unknown> {

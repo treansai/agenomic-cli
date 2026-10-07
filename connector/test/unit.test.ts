@@ -11,12 +11,12 @@ import { ApiError, RunnerApi } from '../src/api.ts';
 import { manifest, saveProbe } from '../src/capabilities.ts';
 import { ClaudeSession, claudeCodeVersion, readClaudeCodeVersion, sdkPackage } from '../src/claude.ts';
 import { CodexSession, codexVersion, readCodexVersion } from '../src/codex.ts';
-import { defaultConfig, localFailMode, paths, runtimeSecrets, saveConfig } from '../src/config.ts';
+import { defaultConfig, localFailMode, paths, runtimeEnv, runtimeSecrets, saveConfig } from '../src/config.ts';
 import { main } from '../src/cli.ts';
 import { Daemon } from '../src/daemon.ts';
 import { EventSink } from '../src/events.ts';
 import { eventOf, invokingExecutable } from '../src/hook.ts';
-import { apply, codexBlock, codexPreToolCommand, hookCommand, installCodex, planClaude, planCodex } from '../src/hooks-install.ts';
+import { apply, auxiliaryEnv, codexBlock, codexPreToolCommand, hookCommand, installCodex, planClaude, planCodex } from '../src/hooks-install.ts';
 import { clean, redact } from '../src/redact.ts';
 import { protection, TOOL_IDS } from '../src/protection.ts';
 import { ProbeApi, probeConfig, probedVersion, runProbe, tempRepo } from '../src/probe.ts';
@@ -969,6 +969,7 @@ function fakeHookingCodex(): string {
     "rl.on('line', (line) => {",
     '  const m = JSON.parse(line);',
     '  if (m.id === undefined) return;',
+    "  if (m.method === 'hooks/list' && process.env.FAKE_ENV_OUT) fs.writeFileSync(process.env.FAKE_ENV_OUT, JSON.stringify(process.env));",
     "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : m.method === 'hooks/list' ? { data: [{ cwd: m.params.cwds[0], hooks: hooks(), warnings: [], errors: [] }] } : m.method.startsWith('thread/') ? { thread: { id: 'thread-fake' } } : {};",
     "  process.stdout.write(JSON.stringify({ id: m.id, result }) + '\\n');",
     '});',
@@ -986,7 +987,7 @@ test('Codex pre-tool control needs the PreToolUse hook itself listed and trusted
       for (const [mode, preToolUse] of [['all', true], ['no-pre', false], ['never-trust', false]] as const) {
         process.env.FAKE_HOOKS = mode;
         const file = path.join(tmp('agn-codex-home-'), 'config.toml');
-        const r = await installCodex(file, 'closed', fake, repo, false, 900);
+        const r = await installCodex(file, 'closed', fake, repo, false, 900, undefined, runtimeEnv({ env_passthrough: ['FAKE_HOOKS'], extra_env: {} }, { HOME: os.homedir() }));
         assert.equal(r.preToolUse, preToolUse, mode);
         assert.equal(r.trusted, mode === 'no-pre' ? 5 : 6, mode);
         assert.ok(fs.readFileSync(file, 'utf8').includes(codexPreToolCommand('closed', 900).replace(/["\\]/g, (c) => '\\' + c)));
@@ -997,6 +998,7 @@ test('Codex pre-tool control needs the PreToolUse hook itself listed and trusted
         const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
         cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
         cfg.runtimes.codex.executable = fake;
+        cfg.runtimes.codex.env_passthrough = ['FAKE_HOOKS'];
         const api = new ProbeApi();
         const daemon = new Daemon(cfg, api);
         const session = randomUUID();
@@ -1013,6 +1015,53 @@ test('Codex pre-tool control needs the PreToolUse hook itself listed and trusted
     } finally {
       if (prev === undefined) delete process.env.FAKE_HOOKS;
       else process.env.FAKE_HOOKS = prev;
+    }
+  });
+});
+
+test('the hooks/list App Server and a runtime asked its version get a minimal environment, never the daemon\'s', async () => {
+  await withHome(async () => {
+    const repo = tempRepo();
+    const fake = fakeHookingCodex();
+    const out = path.join(tmp('agn-env-'), 'env.json');
+    process.env.AGN_UNIT_DAEMON_ONLY = 'daemon-only-credential-5c1e9a7b';
+    process.env.AGN_UNIT_PASSED = 'passed-through';
+    try {
+      const seen = () => JSON.parse(fs.readFileSync(out, 'utf8')) as Record<string, string>;
+      // `hooks install`: the installer's default, then the configured runtime's.
+      await installCodex(path.join(tmp('agn-codex-home-'), 'config.toml'), 'closed', fake, repo, false, 900, undefined, { ...auxiliaryEnv(), FAKE_ENV_OUT: out });
+      assert.equal(seen().AGN_UNIT_DAEMON_ONLY, undefined);
+      assert.equal(seen().HOME, os.homedir());
+      const file = path.join(tmp('agn-codex-home-'), 'config.toml');
+      await installCodex(file, 'closed', fake, repo, false, 900, undefined, runtimeEnv({ env_passthrough: ['AGN_UNIT_PASSED'], extra_env: { FAKE_ENV_OUT: out } }, { HOME: os.homedir() }));
+      assert.equal(seen().AGN_UNIT_PASSED, 'passed-through');
+      assert.equal(seen().CODEX_HOME, path.dirname(file));
+      assert.deepEqual(Object.keys(seen()).sort(), ['AGN_UNIT_PASSED', 'CODEX_HOME', 'FAKE_ENV_OUT', 'HOME', 'PATH']);
+
+      // A launched session: its own App Server's environment.
+      const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+      cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+      cfg.runtimes.codex.executable = fake;
+      cfg.runtimes.codex.env_passthrough = ['AGN_UNIT_PASSED'];
+      cfg.runtimes.codex.extra_env = { FAKE_ENV_OUT: out };
+      fs.rmSync(out);
+      const daemon = new Daemon(cfg, new ProbeApi());
+      try {
+        await daemon.handleCommand({ id: ulid(), kind: 'launch', coding_session_id: randomUUID(), payload: { runtime: 'codex', workspace_id: 'w', mode: 'shadow' } });
+      } finally {
+        await daemon.stop();
+      }
+      assert.equal(seen().AGN_UNIT_PASSED, 'passed-through');
+      assert.equal(seen().HOME, paths.runtimeHome('codex'));
+      assert.deepEqual(Object.keys(seen()).sort(), ['AGN_UNIT_PASSED', 'CODEX_HOME', 'FAKE_ENV_OUT', 'HOME', 'PATH']);
+
+      // `--version`: a runtime that would answer otherwise with the daemon's environment.
+      const exe = path.join(tmp('agn-bin-'), 'codex.js');
+      fs.writeFileSync(exe, "console.log(process.env.AGN_UNIT_DAEMON_ONLY ? 'codex-cli 6.6.6' : 'codex-cli 1.2.3');\n");
+      assert.equal(await readExecutableVersion(exe), '1.2.3');
+    } finally {
+      delete process.env.AGN_UNIT_DAEMON_ONLY;
+      delete process.env.AGN_UNIT_PASSED;
     }
   });
 });

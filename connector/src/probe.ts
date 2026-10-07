@@ -7,7 +7,7 @@ import { RunnerApi } from './api.ts';
 import { saveProbe, type CapName, type ProbeResult } from './capabilities.ts';
 import { readClaudeCodeVersion } from './claude.ts';
 import { codexExecutable, readCodexVersion } from './codex.ts';
-import { defaultConfig, loadConfig, runtimeSecrets, type ConnectorConfig } from './config.ts';
+import { defaultConfig, loadConfig, runtimeEnv, runtimeSecrets, type ConnectorConfig } from './config.ts';
 import { Daemon } from './daemon.ts';
 import { codexProviderToml, fakeAnthropic, fakeResponses, script, type FakeServer } from './fakes.ts';
 import { installCodex } from './hooks-install.ts';
@@ -306,7 +306,7 @@ export async function probeCodexCli(fake: FakeServer, home: string, machine: Con
   fs.writeFileSync(file, codexProviderToml(fake.url) + '\n', { mode: 0o600 });
   const exe = codexExecutable(cfg.runtimes.codex);
   try {
-    const hooks = await installCodex(file, 'closed', exe, repo, false).catch((e: Error) => ({ trusted: 0, preToolUse: false, error: e.message }));
+    const hooks = await installCodex(file, 'closed', exe, repo, false, undefined, undefined, runtimeEnv(cfg.runtimes.codex, { HOME: codexHome })).catch((e: Error) => ({ trusted: 0, preToolUse: false, error: e.message }));
     const shell = (cmd: string) => ({ tool: 'exec_command', input: { cmd } });
     const steps = [shell('echo in > inside.txt'), shell('echo deny-me > deny-me.txt'), shell('echo approve-me > approved.txt')];
     const run = hooks.preToolUse

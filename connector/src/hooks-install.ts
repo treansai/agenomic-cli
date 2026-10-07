@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { paths } from './config.ts';
+import { paths, runtimeEnv } from './config.ts';
 
 /**
  * Installation of the connector's hooks into a scope the developer chose
@@ -207,15 +207,29 @@ export function planCodex(file: string, failMode: FailMode, install: boolean, tr
 }
 
 /**
- * Asks Codex for the hooks it sees and their hashes (`hooks/list`).
+ * The environment of an auxiliary Codex the installer starts when the
+ * caller gives none: PATH and the developer's HOME, nothing else of the
+ * daemon's environment.
  *
  * @example
- * const hooks = await codexListHooks(codexExecutable(cfg.runtimes.codex), codexHome, repo);
+ * codexListHooks(exe, codexHome, repo, auxiliaryEnv());
  */
-export async function codexListHooks(exe: string, codexHome: string, cwd: string): Promise<any[]> {
+export function auxiliaryEnv(): Record<string, string> {
+  return runtimeEnv({ env_passthrough: [], extra_env: {} }, { HOME: os.homedir() });
+}
+
+/**
+ * Asks Codex for the hooks it sees and their hashes (`hooks/list`). The
+ * App Server runs with `env` (the minimal environment of the runtime,
+ * `runtimeEnv`) and CODEX_HOME, never with the daemon's environment.
+ *
+ * @example
+ * const hooks = await codexListHooks(codexExecutable(cfg.runtimes.codex), codexHome, repo, runtimeEnv(cfg.runtimes.codex, { HOME: os.homedir() }));
+ */
+export async function codexListHooks(exe: string, codexHome: string, cwd: string, env: Record<string, string> = auxiliaryEnv()): Promise<any[]> {
   const command = exe.endsWith('.js') ? process.execPath : exe;
   const argv = exe.endsWith('.js') ? [exe, 'app-server'] : ['app-server'];
-  const child = spawn(command, argv, { cwd, env: { ...process.env, CODEX_HOME: codexHome }, stdio: ['pipe', 'pipe', 'ignore'] });
+  const child = spawn(command, argv, { cwd, env: { ...env, CODEX_HOME: codexHome }, stdio: ['pipe', 'pipe', 'ignore'] });
   // A missing or non-executable binary emits 'error' (never 'exit'):
   // every call fails at once instead of crashing the process.
   let failure: Error | undefined;
@@ -279,16 +293,17 @@ export async function codexListHooks(exe: string, codexHome: string, cwd: string
  * then asked again: `preToolUse` is true only when it reports the exact
  * PreToolUse command this block declares, from this file, enabled and
  * trusted. Pre-tool control depends on that one entry; trusting the
- * other hooks does not give it.
+ * other hooks does not give it. Codex is started with `env`, the minimal
+ * environment of the runtime (see codexListHooks).
  *
  * @example
  * const { trusted, preToolUse } = await installCodex(codexConfigFile(), 'local', codexExecutable(cfg.runtimes.codex), repo, false);
  */
-export async function installCodex(file: string, failMode: FailMode, exe: string, cwd: string, dryRun: boolean, timeoutSec = 600, socket = paths.socket()): Promise<{ plan: Plan; backup: string | null; trusted: number; preToolUse: boolean }> {
+export async function installCodex(file: string, failMode: FailMode, exe: string, cwd: string, dryRun: boolean, timeoutSec = 600, socket = paths.socket(), env: Record<string, string> = auxiliaryEnv()): Promise<{ plan: Plan; backup: string | null; trusted: number; preToolUse: boolean }> {
   const first = planCodex(file, failMode, true, {}, timeoutSec, socket);
   if (dryRun) return { plan: first, backup: null, trusted: 0, preToolUse: false };
   const backup = apply(first);
-  const hooks = await codexListHooks(exe, path.dirname(file), cwd);
+  const hooks = await codexListHooks(exe, path.dirname(file), cwd, env);
   const trust: Record<string, string> = {};
   for (const h of hooks) {
     if (h.handlerType === 'command' && typeof h.command === 'string' && h.command.includes(MARK) && h.command.includes(' hook codex ') && h.sourcePath === file) trust[h.key] = h.currentHash;
@@ -296,7 +311,7 @@ export async function installCodex(file: string, failMode: FailMode, exe: string
   const second = planCodex(file, failMode, true, trust, timeoutSec, socket);
   apply(second);
   const pre = codexPreToolCommand(failMode, timeoutSec, socket);
-  const listed = Object.keys(trust).length ? await codexListHooks(exe, path.dirname(file), cwd) : [];
+  const listed = Object.keys(trust).length ? await codexListHooks(exe, path.dirname(file), cwd, env) : [];
   const preToolUse = listed.some((h) =>
     String(h.eventName ?? '').toLowerCase() === 'pretooluse' && h.handlerType === 'command' && h.command === pre && h.sourcePath === file && h.enabled !== false && h.trustStatus === 'trusted');
   return { plan: second, backup, trusted: Object.keys(trust).length, preToolUse };

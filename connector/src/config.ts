@@ -106,6 +106,22 @@ export function defaultConfig(endpoint: string, name: string): ConnectorConfig {
 const SECRET_NAME = /KEY|TOKEN|SECRET|PASSW|CREDENTIAL|AUTH/i;
 
 /**
+ * The whole environment of a process the connector starts for a runtime
+ * (the runtime itself, or an auxiliary one such as the `hooks/list` App
+ * Server): PATH, the given base variables, the configured variables
+ * passed through and the configured extra_env. Nothing else of the
+ * daemon's environment (its own or the developer's credentials) reaches it.
+ *
+ * @example
+ * runtimeEnv(cfg.runtimes.codex, { HOME: paths.runtimeHome('codex'), CODEX_HOME: home }); // { PATH, HOME, CODEX_HOME, ...passthrough, ...extra_env }
+ */
+export function runtimeEnv(runtime: Pick<RuntimeConfig, 'env_passthrough' | 'extra_env'>, base: Record<string, string>, env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const out: Record<string, string> = { PATH: env.PATH ?? '/usr/bin:/bin', ...base };
+  for (const k of runtime.env_passthrough) if (env[k]) out[k] = env[k]!;
+  return Object.assign(out, runtime.extra_env);
+}
+
+/**
  * Credential values of a runtime: the variables passed through to it
  * (provider authentication) and the extra_env values whose name says they
  * are secret. They are redacted from every event before it is buffered.

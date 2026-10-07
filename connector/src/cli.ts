@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { RunnerApi } from './api.ts';
-import { defaultConfig, loadConfig, paths, saveConfig, saveCredentials, validateConfig, type ConnectorConfig, type Mode } from './config.ts';
+import { defaultConfig, loadConfig, paths, saveConfig, saveCredentials, runtimeEnv, validateConfig, type ConnectorConfig, type Mode } from './config.ts';
 import { codexExecutable } from './codex.ts';
 import { Daemon, sandboxAvailable } from './daemon.ts';
 import { runHook } from './hook.ts';
@@ -156,8 +156,9 @@ export async function main(argv: string[]): Promise<number> {
           out(`removed Codex hooks from ${file}${backup ? ` (backup: ${backup})` : ''}`);
           return 0;
         }
-        const exe = codexExecutable(cfg?.runtimes.codex ?? { enabled: true, env_passthrough: [], extra_env: {}, allowed_domains: [] });
-        const r = await installCodex(file, failMode, exe, one(f, 'dir') ?? process.cwd(), dry);
+        const codex = cfg?.runtimes.codex ?? { enabled: true, env_passthrough: [], extra_env: {}, allowed_domains: [] };
+        const exe = codexExecutable(codex);
+        const r = await installCodex(file, failMode, exe, one(f, 'dir') ?? process.cwd(), dry, undefined, undefined, runtimeEnv(codex, { HOME: os.homedir() }));
         out(dry ? `would write ${file}:\n${r.plan.after}` : `installed Codex hooks in ${file}; trusted ${r.trusted} hook entries${r.backup ? ` (backup: ${r.backup})` : ''}`);
         if (dry || r.preToolUse) return 0;
         out('codex does not report the Agenomic PreToolUse hook as trusted: shell calls are not controlled');
