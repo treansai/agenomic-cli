@@ -10,8 +10,8 @@ import { test } from 'node:test';
 import { ApiError, RunnerApi } from '../src/api.ts';
 import { manifest, saveProbe } from '../src/capabilities.ts';
 import { ClaudeSession, claudeCodeVersion, readClaudeCodeVersion, sdkPackage } from '../src/claude.ts';
-import { CodexSession, codexVersion, readCodexVersion } from '../src/codex.ts';
-import { defaultConfig, localFailMode, paths, runtimeEnv, runtimeSecrets, saveConfig } from '../src/config.ts';
+import { CODEX_PERMISSION_PROFILE, CodexSession, codexExecutable, codexSessionConfig, codexVersion, readCodexVersion } from '../src/codex.ts';
+import { defaultConfig, loadConfig, localFailMode, paths, resolveRuntimeExecutable, runtimeEnv, runtimeSecrets, runtimeUnavailable, saveConfig, spellings, validateConfig } from '../src/config.ts';
 import { main } from '../src/cli.ts';
 import { Daemon } from '../src/daemon.ts';
 import { EventSink } from '../src/events.ts';
@@ -21,7 +21,7 @@ import { clean, redact } from '../src/redact.ts';
 import { protection, TOOL_IDS } from '../src/protection.ts';
 import { ProbeApi, probeConfig, probedVersion, runProbe, tempRepo } from '../src/probe.ts';
 import { isTestCommand, type SessionContext } from '../src/session.ts';
-import { log, readExecutableVersion, realPathEscapes, sleep, ulid } from '../src/util.ts';
+import { absolutePath, executableNames, log, readExecutableVersion, realPathEscapes, resolveExecutable, sleep, ulid } from '../src/util.ts';
 import * as ws from '../src/workspace.ts';
 
 const tmp = (p: string) => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), p)));
@@ -640,6 +640,42 @@ test('workspace: a change set larger than a listing reads lists the files that f
   }
 });
 
+test('workspace: an untracked listing or a status larger than any buffer is read only in part; the diff and the changes are still captured', () => {
+  const repo = tempRepo();
+  const base = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  fs.writeFileSync(path.join(repo, 'README.md'), 'probe\nchanged\n');
+  fs.writeFileSync(path.join(repo, 'real-untracked.txt'), 'kept\n');
+  // A git whose untracked listing and status are 20 MiB, past the 16 MiB a
+  // buffered read accepted (a huge generated tree, without making it).
+  const realGit = resolveExecutable('git')!;
+  const bin = tmp('agn-git-stub-');
+  const name = 'generated/' + 'n'.repeat(100);
+  fs.writeFileSync(path.join(bin, 'git'), [
+    '#!/bin/sh',
+    'for a in "$@"; do case "$a" in --others) others=1;; -z) z=1;; status) status=1;; esac; done',
+    `if [ -n "$others" ] && [ -n "$z" ]; then "${realGit}" "$@"; yes '${name}' | head -c 20971520 | tr '\\n' '\\000'; exit 0; fi`,
+    `if [ -n "$status" ]; then "${realGit}" "$@"; yes '?? ${name}' | head -c 20971520; exit 0; fi`,
+    `exec "${realGit}" "$@"`,
+  ].join('\n') + '\n', { mode: 0o755 });
+  const prevPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${prevPath}`;
+  try {
+    const snap = ws.snapshot(repo, base, true);
+    assert.equal(snap.diff_error, undefined, String(snap.diff_error));
+    assert.match(snap.diff as string, /^\+changed$/m, 'the tracked change is captured');
+    assert.match(snap.diff as string, /\+\+\+ b\/real-untracked\.txt\n@@ -0,0 \+1 @@\n\+kept/, 'the untracked files listed first are captured');
+    assert.equal(snap.truncated, true, 'a listing read in part marks the diff truncated');
+    assert.ok((snap.diff as string).length <= 256 * 1024);
+    const state = ws.inspect(repo);
+    assert.equal(state.preexisting_changes.length, 500, 'a huge status still lists the first changes');
+    assert.ok(state.preexisting_changes.includes('README.md'));
+  } finally {
+    process.env.PATH = prevPath;
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(bin, { recursive: true, force: true });
+  }
+});
+
 test('workspace: a verbose stderr of a diff that succeeds is not read as a cut diff', () => {
   const repo = tempRepo();
   const git = (...a: string[]) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8' });
@@ -932,6 +968,210 @@ test('a diff snapshot is redacted before it is cut: a secret across the cut leav
   });
 });
 
+test('a relative runtime executable is refused: the daemon never validates one file and spawns another in the worktree', async () => {
+  await withHome(async (home) => {
+    const cwd = process.cwd();
+    // The daemon's directory holds a binary answering --version; the
+    // repository (so the session's worktree) commits another at the same
+    // relative path, which must never run.
+    const daemonDir = tmp('agn-daemon-cwd-');
+    fs.mkdirSync(path.join(daemonDir, 'bin'));
+    fs.writeFileSync(path.join(daemonDir, 'bin', 'codex'), "#!/bin/sh\necho 'codex-cli 7.7.7'\n", { mode: 0o755 });
+    const repo = tempRepo();
+    const marker = path.join(home, 'repository-binary-ran');
+    fs.mkdirSync(path.join(repo, 'bin'));
+    fs.writeFileSync(path.join(repo, 'bin', 'codex'), `#!/bin/sh\ntouch ${marker}\necho 'codex-cli 7.7.7'\n`, { mode: 0o755 });
+    execFileSync('git', ['-C', repo, 'add', 'bin/codex']);
+    execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@e', 'commit', '-qm', 'bin']);
+    process.chdir(daemonDir);
+    try {
+      for (const relative of ['./bin/codex', 'bin/codex', '../bin/codex']) {
+        const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+        cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+        cfg.runtimes.codex.executable = relative;
+        // A configuration file or a saved one is refused with a configuration error.
+        assert.throws(() => validateConfig(cfg), /runtimes\.codex\.executable: .* must be an absolute path or a command name/);
+        fs.writeFileSync(paths.config(), JSON.stringify(cfg));
+        assert.throws(() => loadConfig(), /runtimes\.codex\.executable/);
+        assert.throws(() => saveConfig(cfg), /runtimes\.codex\.executable/);
+        // A configuration built in code: no version is read from the daemon's
+        // directory, and a launch is refused before anything is spawned.
+        assert.equal(codexVersion(cfg.runtimes.codex), null, relative);
+        assert.equal(await readCodexVersion(cfg.runtimes.codex), null, relative);
+        assert.throws(() => codexExecutable(cfg.runtimes.codex), /must be an absolute path/);
+        cfg.runtimes.claude_code.executable = relative;
+        assert.equal(await readClaudeCodeVersion(cfg.runtimes.claude_code), null, relative);
+        const api = new ProbeApi();
+        const daemon = new Daemon(cfg, api);
+        assert.equal(daemon.runtimes().find((r) => r.runtime === 'codex'), undefined, 'not offered: nothing can be validated for it');
+        for (const runtime of ['codex', 'claude_code']) {
+          const launch = ulid();
+          await daemon.handleCommand({ id: launch, kind: 'launch', coding_session_id: randomUUID(), payload: { runtime, workspace_id: 'w', mode: 'observe' } });
+          const r = api.results.get(launch);
+          assert.equal(r?.status, 'refused', `${runtime} ${relative}: ${JSON.stringify(r)}`);
+          assert.match(r.error, /must be an absolute path/);
+        }
+        await daemon.stop();
+      }
+      assert.equal(fs.existsSync(marker), false, 'the repository binary never ran');
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+});
+
+test('a runtime executable given as a command name is looked up once on the absolute PATH directories; one not found is unavailable', async () => {
+  await withHome(async () => {
+    const dir = tmp('agn-path-');
+    const exe = path.join(dir, 'my-codex');
+    fs.writeFileSync(exe, "#!/bin/sh\necho 'codex-cli 8.1.2'\n", { mode: 0o755 });
+    const elsewhere = tmp('agn-path-rel-');
+    fs.writeFileSync(path.join(elsewhere, 'my-codex'), "#!/bin/sh\necho 'codex-cli 0.0.1'\n", { mode: 0o755 });
+    const cwd = process.cwd();
+    const prevPath = process.env.PATH;
+    process.chdir(path.dirname(elsewhere));
+    // A relative PATH entry would name another file from another directory: it is skipped.
+    process.env.PATH = [path.basename(elsewhere), '.', dir, prevPath].join(path.delimiter);
+    try {
+      assert.equal(resolveExecutable('my-codex'), exe);
+      const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+      cfg.runtimes.codex.executable = 'my-codex';
+      saveConfig(cfg);
+      const loaded = loadConfig();
+      assert.equal(loaded.runtimes.codex.executable, exe, 'resolved once, to an absolute path');
+      assert.equal(codexExecutable(loaded.runtimes.codex), exe, 'the file spawned');
+      assert.equal(await readCodexVersion(loaded.runtimes.codex), '8.1.2', 'the file whose version is read');
+      // Saving the loaded configuration keeps the name the developer wrote.
+      loaded.local_sessions.mode = 'shadow';
+      saveConfig(loaded);
+      assert.equal(JSON.parse(fs.readFileSync(paths.config(), 'utf8')).runtimes.codex.executable, 'my-codex');
+      // A command not found on PATH makes that runtime unavailable; the
+      // configuration still loads and the other runtime is still offered.
+      const repo = tempRepo();
+      cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+      cfg.runtimes.codex.executable = 'agn-no-such-codex';
+      saveConfig(cfg);
+      const missing = loadConfig();
+      const why = /runtimes\.codex\.executable: "agn-no-such-codex" was not found on PATH/;
+      assert.match(runtimeUnavailable(missing.runtimes.codex) ?? '', why);
+      assert.equal(runtimeUnavailable(missing.runtimes.claude_code), undefined);
+      assert.equal(missing.runtimes.codex.executable, 'agn-no-such-codex');
+      assert.throws(() => codexExecutable(missing.runtimes.codex), why);
+      // Never looked up again: one installed later is not used until the configuration is loaded again.
+      fs.writeFileSync(path.join(dir, 'agn-no-such-codex'), "#!/bin/sh\necho 'codex-cli 9.9.9'\n", { mode: 0o755 });
+      assert.throws(() => codexExecutable(missing.runtimes.codex), why);
+      assert.equal(await readCodexVersion(missing.runtimes.codex), null);
+      fs.rmSync(path.join(dir, 'agn-no-such-codex'));
+      const api = new ProbeApi();
+      const daemon = new Daemon(missing, api);
+      try {
+        const offered = daemon.runtimes().map((r) => r.runtime);
+        assert.equal(offered.includes('codex'), false, 'codex is not offered');
+        assert.equal(offered.includes('claude_code'), true, 'Claude Code still is');
+        const launch = ulid();
+        await daemon.handleCommand({ id: launch, kind: 'launch', coding_session_id: randomUUID(), payload: { runtime: 'codex', workspace_id: 'w', mode: 'observe' } });
+        assert.equal(api.results.get(launch)?.status, 'refused');
+        assert.match(api.results.get(launch).error, why);
+      } finally {
+        await daemon.stop();
+      }
+      // The commands that load the configuration still work and say why.
+      const lines: string[] = [];
+      const write = process.stdout.write;
+      process.stdout.write = ((chunk: string) => (lines.push(String(chunk)), true)) as typeof process.stdout.write;
+      try {
+        assert.equal(await main(['status']), 0);
+      } finally {
+        process.stdout.write = write;
+      }
+      assert.match(lines.join(''), /runtime codex: unavailable: runtimes\.codex\.executable: "agn-no-such-codex" was not found on PATH/);
+      // doctor --probe skips it instead of failing.
+      const onlyCodex = loadConfig();
+      onlyCodex.runtimes.claude_code.enabled = false;
+      assert.deepEqual(await runProbe(onlyCodex), []);
+      // The same for Claude Code: it is not offered, Codex is.
+      missing.runtimes.codex.executable = exe;
+      missing.runtimes.claude_code.executable = 'agn-no-such-claude';
+      saveConfig(missing);
+      const noClaude = loadConfig();
+      assert.match(runtimeUnavailable(noClaude.runtimes.claude_code) ?? '', /runtimes\.claude_code\.executable: "agn-no-such-claude" was not found on PATH/);
+      const d2 = new Daemon(noClaude, new ProbeApi());
+      try {
+        assert.deepEqual(d2.runtimes().map((r) => r.runtime), ['codex']);
+      } finally {
+        await d2.stop();
+      }
+      // A disabled runtime loads the same way.
+      cfg.runtimes.codex.enabled = false;
+      saveConfig(cfg);
+      assert.equal(loadConfig().runtimes.codex.executable, 'agn-no-such-codex');
+    } finally {
+      process.chdir(cwd);
+      process.env.PATH = prevPath;
+    }
+  });
+});
+
+test('a bare command name finds its PATHEXT form on Windows, never a batch file', () => {
+  assert.deepEqual(executableNames('codex', 'win32', '.EXE;.CMD'), ['codex', 'codex.EXE'], 'batch files are skipped');
+  assert.deepEqual(executableNames('codex.exe', 'win32', '.EXE;.CMD'), ['codex.exe'], 'an extension already given is kept');
+  assert.deepEqual(executableNames('codex', 'win32', undefined), ['codex', 'codex.COM', 'codex.EXE']);
+  assert.deepEqual(executableNames('codex', 'linux', '.EXE'), ['codex']);
+  const dir = tmp('agn-pathext-');
+  fs.writeFileSync(path.join(dir, 'my-claude.EXE'), 'MZ');
+  fs.writeFileSync(path.join(dir, 'my-codex.CMD'), '@echo off\r\n');
+  const env = { PATH: dir, PATHEXT: '.EXE;.CMD' } as NodeJS.ProcessEnv;
+  // Windows has no execute bit: the .EXE file is found although it is not executable here.
+  assert.equal(resolveExecutable('my-claude', 'win32', env), path.join(dir, 'my-claude.EXE'));
+  assert.equal(resolveExecutable('my-claude', 'linux', env), null, 'no PATHEXT lookup elsewhere');
+  // An npm .cmd shim is not something spawn can start: not found as a command name...
+  assert.equal(resolveExecutable('my-codex', 'win32', env), null);
+  // ...and refused when configured by its path.
+  assert.throws(() => resolveRuntimeExecutable(path.join(dir, 'my-codex.CMD'), 'runtimes.codex.executable', 'win32'), /batch file/);
+  assert.equal(resolveRuntimeExecutable(path.join(dir, 'my-codex.CMD'), 'runtimes.codex.executable', 'linux'), path.join(dir, 'my-codex.CMD'));
+});
+
+test('a runtime process gets only the absolute PATH directories, so a script interpreter is never found in a worktree', async () => {
+  assert.equal(absolutePath(['.', '', '/usr/bin', 'bin', '/bin', ''].join(path.delimiter)), ['/usr/bin', '/bin'].join(path.delimiter));
+  assert.equal(absolutePath(':.:'), ['/usr/bin', '/bin'].join(path.delimiter));
+  const env = { PATH: `:.${path.delimiter}/usr/bin${path.delimiter}` } as NodeJS.ProcessEnv;
+  assert.equal(runtimeEnv({ env_passthrough: [], extra_env: {} }, { HOME: '/h' }, env).PATH, '/usr/bin');
+  assert.equal(runtimeEnv({ env_passthrough: [], extra_env: { PATH: `bin${path.delimiter}/opt/x` } }, { HOME: '/h' }, env).PATH, '/opt/x', 'whichever set it');
+  await withHome(async () => {
+    // A runtime installed as a script run by `env`: the interpreter is looked up on PATH.
+    const repo = tempRepo();
+    const marker = path.join(tmp('agn-interp-'), 'ran');
+    fs.writeFileSync(path.join(repo, 'agn-interp'), `#!/bin/sh\ntouch ${marker}\necho 'codex-cli 6.6.6'\n`, { mode: 0o755 });
+    execFileSync('git', ['-C', repo, 'add', 'agn-interp']);
+    execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@e', 'commit', '-qm', 'interp']);
+    const exe = path.join(tmp('agn-bin-'), 'codex');
+    fs.writeFileSync(exe, '#!/usr/bin/env agn-interp\n', { mode: 0o755 });
+    const cwd = process.cwd();
+    const prevPath = process.env.PATH;
+    // An empty entry (leading, doubled or trailing colon) and `.` both mean the current directory.
+    process.env.PATH = ['', '.', prevPath, ''].join(path.delimiter);
+    process.chdir(repo);
+    try {
+      assert.equal(await readExecutableVersion(exe), null, 'the version read does not run the directory\'s interpreter');
+      const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+      cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+      cfg.runtimes.codex.executable = exe;
+      const api = new ProbeApi();
+      const daemon = new Daemon(cfg, api);
+      try {
+        await daemon.handleCommand({ id: ulid(), kind: 'launch', coding_session_id: randomUUID(), payload: { runtime: 'codex', workspace_id: 'w', mode: 'observe' } });
+        await sleep(300);
+      } finally {
+        await daemon.stop();
+      }
+    } finally {
+      process.chdir(cwd);
+      process.env.PATH = prevPath;
+    }
+    assert.equal(fs.existsSync(marker), false, 'the repository\'s interpreter never ran');
+  });
+});
+
 test('a Codex executable that cannot be spawned refuses the launch; the daemon stays up', async () => {
   await withHome(async (home) => {
     const repo = tempRepo();
@@ -991,7 +1231,7 @@ function fakeHookingCodex(): string {
     '  const m = JSON.parse(line);',
     '  if (m.id === undefined) return;',
     "  if (m.method === 'hooks/list' && process.env.FAKE_ENV_OUT) fs.writeFileSync(process.env.FAKE_ENV_OUT, JSON.stringify(process.env));",
-    "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : m.method === 'hooks/list' ? { data: [{ cwd: m.params.cwds[0], hooks: hooks(), warnings: [], errors: [] }] } : m.method.startsWith('thread/') ? { thread: { id: 'thread-fake' } } : {};",
+    "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : m.method === 'hooks/list' ? { data: [{ cwd: m.params.cwds[0], hooks: hooks(), warnings: [], errors: [] }] } : m.method.startsWith('thread/') ? { thread: { id: 'thread-fake' }, activePermissionProfile: { id: 'agenomic-session', extends: ':workspace' } } : {};",
     "  process.stdout.write(JSON.stringify({ id: m.id, result }) + '\\n');",
     '});',
     "rl.on('close', () => process.exit(0));",
@@ -1087,6 +1327,84 @@ test('the hooks/list App Server and a runtime asked its version get a minimal en
   });
 });
 
+test('a launched Codex session runs under a permissions profile that cannot read the connector credentials', { timeout: 60000 }, async () => {
+  await withHome(async (home) => {
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.runtimes.codex.extra_config_toml = 'model = "m"\n[model_providers.p]\nname = "p"';
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(paths.credentials(), '{"access_token":"runner-secret-token"}\n', { mode: 0o600 });
+    fs.writeFileSync(paths.config(), '{}\n');
+    const id = randomUUID();
+    const cwd = path.join(paths.worktrees(), id);
+    const other = path.join(paths.worktrees(), randomUUID());
+    fs.mkdirSync(cwd, { recursive: true });
+    fs.mkdirSync(other, { recursive: true });
+    fs.writeFileSync(path.join(cwd, 'README.md'), 'own checkout\n');
+    fs.writeFileSync(path.join(other, 'README.md'), 'another session\n');
+    const codexHome = path.join(paths.runtimeHome('codex'), id);
+    fs.mkdirSync(codexHome, { recursive: true });
+    const toml = codexSessionConfig(cfg.runtimes.codex);
+    fs.writeFileSync(path.join(codexHome, 'config.toml'), toml);
+    // The profile is the default, set before the first table (the extra config ends in one).
+    const lines = toml.split('\n');
+    const key = lines.indexOf(`default_permissions = "${CODEX_PERMISSION_PROFILE}"`);
+    assert.ok(key >= 0 && key < lines.findIndex((l) => l.startsWith('[')), toml);
+    assert.ok(lines.includes(`${JSON.stringify(path.resolve(home))} = "deny"`), toml);
+    assert.ok(!toml.includes('sandbox_workspace_write'), 'not the legacy mode, which reads the whole disk');
+    if (spawnSync('bwrap', ['--version']).status !== 0) return;
+    // The real Codex sandbox, under the session's profile.
+    const exe = codexExecutable(cfg.runtimes.codex);
+    const run = (cmd: string) => spawnSync(process.execPath, [exe, 'sandbox', '-P', CODEX_PERMISSION_PROFILE, '-C', cwd, 'sh', '-c', cmd], {
+      cwd, env: { PATH: process.env.PATH!, HOME: paths.runtimeHome('codex'), CODEX_HOME: codexHome }, encoding: 'utf8', timeout: 30000,
+    });
+    const own = run('cat README.md && echo changed > new.txt && cat new.txt');
+    assert.equal(own.stdout, 'own checkout\nchanged\n', own.stderr);
+    for (const secret of [paths.credentials(), paths.config(), path.join(other, 'README.md')]) {
+      const r = run(`cat ${JSON.stringify(secret)}`);
+      assert.notEqual(r.status, 0, `${secret} was readable`);
+      assert.ok(!r.stdout.includes('runner-secret-token') && !r.stdout.includes('another session'), r.stdout);
+    }
+    assert.notEqual(run(`echo x > ${JSON.stringify(path.join(other, 'planted'))}`).status, 0);
+  });
+});
+
+test('a launched Codex thread is started without a sandbox override, and refused unless it runs under the session profile', { timeout: 30000 }, async () => {
+  await withHome(async () => {
+    for (const applied of [true, false]) {
+      const bin = tmp('agn-bin-');
+      const fake = path.join(bin, 'codex.js');
+      const seen = path.join(bin, 'seen.jsonl');
+      fs.writeFileSync(fake, [
+        "const fs = require('node:fs');",
+        "const rl = require('node:readline').createInterface({ input: process.stdin });",
+        "rl.on('line', (line) => {",
+        '  const m = JSON.parse(line);',
+        `  fs.appendFileSync(${JSON.stringify(seen)}, line + '\\n');`,
+        '  if (m.id === undefined) return;',
+        `  const profile = ${applied} ? { activePermissionProfile: { id: 'agenomic-session', extends: ':workspace' } } : { activePermissionProfile: null };`,
+        "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : m.method.startsWith('thread/') ? { thread: { id: 'thread-fake' }, ...profile } : {};",
+        "  process.stdout.write(JSON.stringify({ id: m.id, result }) + '\\n');",
+        '});',
+      ].join('\n'));
+      const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+      cfg.runtimes.codex.executable = fake;
+      const { ctx } = codexHarness(cfg, 'observe');
+      const session = new CodexSession({ ctx, cwd: tmp('agn-wt-'), runtime: cfg.runtimes.codex, onNativeSession: async () => undefined, onStatus: () => undefined });
+      try {
+        if (applied) await session.start();
+        else await assert.rejects(session.start(), /permissions profile agenomic-session/);
+        const start = fs.readFileSync(seen, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).find((m) => m.method === 'thread/start');
+        assert.equal('sandbox' in start.params, false, 'a sandbox override would replace the profile');
+        const written = fs.readFileSync(path.join(paths.runtimeHome('codex'), ctx.id, 'config.toml'), 'utf8');
+        assert.match(written, /^default_permissions = "agenomic-session"$/m);
+      } finally {
+        await session.stop();
+        await ctx.sink.close();
+      }
+    }
+  });
+});
+
 test('an App Server that closes its input fails the pending call at once and ends the session; the daemon stays up', { timeout: 30000 }, async () => {
   await withHome(async () => {
     // Answers initialize and thread/start, then closes its stdin and keeps running.
@@ -1098,7 +1416,7 @@ test('an App Server that closes its input fails the pending call at once and end
       "rl.on('line', (line) => {",
       '  const m = JSON.parse(line);',
       '  if (m.id === undefined) return;',
-      "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : { thread: { id: 'thread-fake' } };",
+      "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : { thread: { id: 'thread-fake' }, activePermissionProfile: { id: 'agenomic-session', extends: ':workspace' } };",
       "  process.stdout.write(JSON.stringify({ id: m.id, result }) + '\\n');",
       "  if (m.method === 'thread/start') { rl.close(); process.stdin.destroy(); fs.closeSync(0); }",
       '});',
@@ -1142,7 +1460,7 @@ test('a launch or resume whose start fails after the spawn stops the process and
       "rl.on('line', (line) => {",
       '  const m = JSON.parse(line);',
       '  if (m.id === undefined) return;',
-      "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : m.method.startsWith('thread/') ? { thread: { id: 'thread-fake' } } : {};",
+      "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : m.method.startsWith('thread/') ? { thread: { id: 'thread-fake' }, activePermissionProfile: { id: 'agenomic-session', extends: ':workspace' } } : {};",
       "  process.stdout.write(JSON.stringify({ id: m.id, result }) + '\\n');",
       '});',
       "rl.on('close', () => process.exit(0));",
@@ -1334,7 +1652,7 @@ function fakeAppServer(turns?: string): string {
     '  const m = JSON.parse(line);',
     '  if (m.id === undefined) return;',
     ...(turns ? [`  if (m.method === 'turn/start') require('node:fs').appendFileSync(${JSON.stringify(turns)}, m.params.input[0].text + '\\n');`] : []),
-    "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : m.method.startsWith('thread/') ? { thread: { id: 'thread-fake' } } : {};",
+    "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : m.method.startsWith('thread/') ? { thread: { id: 'thread-fake' }, activePermissionProfile: { id: 'agenomic-session', extends: ':workspace' } } : {};",
     "  process.stdout.write(JSON.stringify({ id: m.id, result }) + '\\n');",
     '});',
     "rl.on('close', () => process.exit(0));",
@@ -2400,6 +2718,51 @@ test('a launched Claude session registers the session id the runtime reports, wh
     if (prev === undefined) delete process.env.AGENOMIC_CONNECTOR_HOME;
     else process.env.AGENOMIC_CONNECTOR_HOME = prev;
   }
+});
+
+test('a launched Claude session can read its own worktree, below the denied connector home, and nothing else of it', async () => {
+  await withHome(async (home) => {
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    const daemon: any = new Daemon(cfg, new ProbeApi());
+    const capture = { conversation: false, commands: false, diffs: false, outputs: false };
+    // A launched session works in state/worktrees/<id>, below the connector home.
+    const id = randomUUID();
+    const cwd = path.join(paths.worktrees(), id);
+    const other = path.join(paths.worktrees(), randomUUID());
+    fs.mkdirSync(cwd, { recursive: true });
+    fs.mkdirSync(other, { recursive: true });
+    const m = daemon.manage(id, 'claude_code', 'launched', 'observe', capture, cwd, null);
+    let options: any;
+    const { query, gates } = fakeClaude('runtime-sandbox', true);
+    const claude = new ClaudeSession({
+      ctx: m.ctx, cwd, runtime: cfg.runtimes.claude_code, onStatus: () => undefined, onNativeSession: async () => undefined,
+      query: ((a: any) => {
+        options = a.options;
+        return query(a);
+      }) as any,
+    });
+    try {
+      await claude.start();
+      const fsRules = options.sandbox.filesystem;
+      const under = (p: string, root: string) => p === root || p.startsWith(root + path.sep);
+      const covered = (p: string, roots: string[]) => roots.some((r) => under(p, r));
+      // The credentials, the configuration and every other session stay unreadable...
+      for (const secret of [paths.credentials(), paths.config(), paths.sessions(), paths.runtimeHome('claude_code'), other]) {
+        assert.ok(covered(secret, fsRules.denyRead), `${secret} is denied`);
+        assert.ok(!covered(secret, fsRules.allowRead ?? []), `${secret} is not re-allowed`);
+      }
+      // ...but the session's own checkout, which the denied home contains, is re-allowed.
+      assert.ok(covered(cwd, fsRules.denyRead), 'the worktree lies in the denied hierarchy');
+      assert.deepEqual(fsRules.allowRead, spellings(cwd));
+      assert.ok(covered(path.join(cwd, 'README.md'), fsRules.allowRead));
+      assert.ok(fsRules.denyRead.includes(path.resolve(home)));
+    } finally {
+      gates.end();
+      await claude.done;
+      await m.ctx.sink.close();
+      await daemon.stop();
+    }
+  });
 });
 
 test('every public function, class and method of the connector has a doc comment with an example', () => {

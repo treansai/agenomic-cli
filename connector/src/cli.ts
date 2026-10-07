@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { RunnerApi } from './api.ts';
-import { defaultConfig, loadConfig, paths, saveConfig, saveCredentials, runtimeEnv, validateConfig, type ConnectorConfig, type Mode } from './config.ts';
+import { defaultConfig, loadConfig, paths, saveConfig, saveCredentials, runtimeEnv, runtimeUnavailable, validateConfig, type ConnectorConfig, type Mode } from './config.ts';
 import { codexExecutable } from './codex.ts';
 import { Daemon, sandboxAvailable } from './daemon.ts';
 import { runHook } from './hook.ts';
@@ -186,6 +186,7 @@ export async function main(argv: string[]): Promise<number> {
         if (!fs.existsSync(paths.config())) out('not enrolled: probing the default runtime configuration');
         for (const runtime of ['claude_code', 'codex'] as const) {
           if (!cfg.runtimes[runtime].enabled) out(`${runtime}: disabled in ${paths.config()}, not probed`);
+          else if (runtimeUnavailable(cfg.runtimes[runtime])) out(`${runtime}: unavailable, not probed: ${runtimeUnavailable(cfg.runtimes[runtime])}`);
         }
         for (const r of await runProbe(cfg)) {
           out(`${r.runtime}/${r.surface} ${r.version}:`);
@@ -198,6 +199,10 @@ export async function main(argv: string[]): Promise<number> {
       const cfg = loadConfig();
       out(`endpoint: ${cfg.endpoint}\nrunner: ${cfg.runner_id ?? '(not enrolled)'}\nlocal sessions: ${cfg.local_sessions.mode}`);
       for (const w of cfg.workspaces) out(`workspace ${w.id}: ${w.path}`);
+      for (const [name, runtime] of Object.entries(cfg.runtimes)) {
+        const why = runtime.enabled ? runtimeUnavailable(runtime) : undefined;
+        if (why) out(`runtime ${name}: unavailable: ${why}`);
+      }
       for (const p of loadProbes()) out(`validated ${p.runtime}/${p.surface} ${p.version} at ${p.at}`);
       return 0;
     }

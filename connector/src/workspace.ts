@@ -9,6 +9,11 @@ import { redact } from './redact.ts';
  * runs `reset --hard`, `clean`, `stash` or `checkout -- .` on a human
  * checkout: a launched session works in its own worktree, created from a
  * recorded base revision, and the human checkout is only read.
+ *
+ * git() buffers the whole output: it is only for commands whose output is
+ * small whatever the checkout (rev-parse, worktree, update-ref, add).
+ * Listings, status and diffs, which grow with the change set, are read
+ * with gitBounded().
  */
 function git(cwd: string, args: string[], maxBuffer = 16 * 1024 * 1024, opts: { env?: Record<string, string>; input?: string } = {}): string {
   return execFileSync('git', ['-C', cwd, ...args], {
@@ -57,6 +62,9 @@ function lines(r: { out: string; more: boolean }): string[] {
   return text.split('\n').filter(Boolean);
 }
 
+/** Bytes of `git status` read for the preexisting changes: far more than the 500 entries kept. */
+const STATUS_BYTES = 1024 * 1024;
+
 export interface WorkspaceState {
   base_revision: string | null;
   branch: string | null;
@@ -87,15 +95,17 @@ export function inspect(dir: string): WorkspaceState {
   })();
   const status = (() => {
     try {
-      return git(dir, ['status', '--porcelain=v1', '--untracked-files=normal']);
+      // Read only up to what is kept (500 entries): a checkout with a huge
+      // status (a venv, generated data) still lists its first changes.
+      return lines(gitBounded(dir, ['status', '--porcelain=v1', '--untracked-files=normal'], STATUS_BYTES));
     } catch {
-      return '';
+      return [];
     }
   })();
   return {
     base_revision: rev,
     branch,
-    preexisting_changes: status.split('\n').filter(Boolean).map((l) => l.slice(3)).slice(0, 500),
+    preexisting_changes: status.map((l) => l.slice(3)).slice(0, 500),
   };
 }
 
@@ -205,7 +215,8 @@ const REDACTION_SLACK = 64 * 1024;
  * part of it as additions: they are marked intent-to-add in a temporary
  * copy of the index, so the checkout's own index is never touched. They
  * are read only up to the bytes a diff reads, in total: one larger than
- * that, or past it, is named, not read.
+ * that, or past it, is named, not read. Their listing is read only up to
+ * those bytes too: one cut there marks the diff truncated.
  *
  * @example
  * const { text, truncated } = diff(worktree, baseRevision, ctx.secrets());
@@ -214,14 +225,15 @@ export function diff(dir: string, base: string, secrets: string[] = [], maxBytes
   const window = maxBytes + REDACTION_SLACK;
   // git output is read only up to the window: a diff of any size costs
   // the window, never the whole diff.
-  const { raw, uncaptured } = withUntracked(dir, window, (env) => gitBounded(dir, ['diff', '-M', base], window + 1, env));
+  const { raw, uncaptured, listingCut } = withUntracked(dir, window, (env) => gitBounded(dir, ['diff', '-M', base], window + 1, env));
   let full = raw.out;
   for (const f of uncaptured) {
     // Past the bytes read, the rest would only be cut off.
     if (raw.more || full.length > window) break;
     full += `diff --git ${quotePath(`a/${f.path}`)} ${quotePath(`b/${f.path}`)}\nnew file mode 100644\n(untracked file of ${f.size} bytes, not captured)\n`;
   }
-  const cut = raw.more || full.length > window;
+  // An untracked listing read only in part leaves files out of the diff.
+  const cut = raw.more || full.length > window || listingCut;
   const text = redact(full.length > window ? full.slice(0, window) : full, secrets);
   return text.length > maxBytes ? { text: text.slice(0, maxBytes), truncated: true } : { text, truncated: cut };
 }
@@ -284,12 +296,22 @@ export function quotePath(name: string): string {
  * (their sizes plus their headers), and returns the untracked files left
  * out. Many untracked files (a venv, generated data) are thereby neither
  * read nor diffed beyond what the capture keeps.
+ *
+ * The listing itself is read only up to `maxBytes` (`listingCut` past
+ * it, the entry cut at the bound dropped): each file costs the capture
+ * more than its name costs the listing, so the files past it could only
+ * be named past the bytes a diff keeps. A listing of any size is never
+ * buffered whole, nor an error that would leave the snapshot without a
+ * diff.
  */
-function withUntracked<T>(dir: string, maxBytes: number, fn: (env: Record<string, string>) => T): { raw: T; uncaptured: { path: string; size: number }[] } {
+function withUntracked<T>(dir: string, maxBytes: number, fn: (env: Record<string, string>) => T): { raw: T; uncaptured: { path: string; size: number }[]; listingCut: boolean } {
   const included: string[] = [];
   let budget = maxBytes;
   const uncaptured: { path: string; size: number }[] = [];
-  for (const file of git(dir, ['ls-files', '-z', '--others', '--exclude-standard']).split('\0').filter(Boolean)) {
+  const listing = gitBounded(dir, ['ls-files', '-z', '--others', '--exclude-standard'], maxBytes);
+  const names = listing.more ? listing.out.slice(0, listing.out.lastIndexOf('\0') + 1) : listing.out;
+  const listingCut = listing.more;
+  for (const file of names.split('\0').filter(Boolean)) {
     // A nested repository is listed as a directory: it has no content of its own here.
     if (file.endsWith('/')) continue;
     let size = 0;
@@ -308,7 +330,7 @@ function withUntracked<T>(dir: string, maxBytes: number, fn: (env: Record<string
       included.push(file);
     }
   }
-  if (included.length === 0) return { raw: fn({}), uncaptured };
+  if (included.length === 0) return { raw: fn({}), uncaptured, listingCut };
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agn-index-'));
   try {
     const index = path.join(tmp, 'index');
@@ -316,7 +338,7 @@ function withUntracked<T>(dir: string, maxBytes: number, fn: (env: Record<string
     if (fs.existsSync(real)) fs.copyFileSync(real, index);
     const env = { GIT_INDEX_FILE: index };
     git(dir, ['add', '--intent-to-add', '--pathspec-from-file=-', '--pathspec-file-nul'], undefined, { env: { ...env, GIT_LITERAL_PATHSPECS: '1' }, input: included.join('\0') });
-    return { raw: fn(env), uncaptured };
+    return { raw: fn(env), uncaptured, listingCut };
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

@@ -162,20 +162,87 @@ export function realPathEscapes(p: string, cwd: string, root: string): boolean {
 }
 
 /**
+ * A PATH with only its absolute directories, for every runtime process
+ * the connector starts: a relative entry (`.`, `bin`, or the empty one of
+ * `:/usr/bin` or a trailing colon, which means the current directory)
+ * would name a file in the daemon's directory when a version is read and
+ * a repository-controlled one in the session's worktree at spawn, such as
+ * the `node` of a script's `#!/usr/bin/env node`. `/usr/bin:/bin` when
+ * nothing absolute is left.
+ *
+ * @example
+ * absolutePath('.:/usr/bin::bin:'); // '/usr/bin'
+ */
+export function absolutePath(value: string | undefined = process.env.PATH): string {
+  const dirs = (value ?? '').split(path.delimiter).filter((d) => path.isAbsolute(d));
+  return dirs.length ? dirs.join(path.delimiter) : ['/usr/bin', '/bin'].join(path.delimiter);
+}
+
+/**
+ * A Windows batch file (`.bat`, `.cmd`): not something `spawn` can start
+ * without `cmd.exe`.
+ *
+ * @example
+ * isBatchFile('C:\\npm\\codex.cmd'); // true
+ */
+export function isBatchFile(file: string): boolean {
+  return /\.(bat|cmd)$/i.test(file);
+}
+
+/**
+ * The names a command may have on disk: itself, and on Windows, unless it
+ * already has an extension of `PATHEXT` (`.COM;.EXE;.BAT;.CMD` when
+ * unset), itself with each extension `spawn` can start directly. Batch
+ * files (`.bat`, `.cmd`, such as npm's `codex.cmd` shims) are skipped: they
+ * run only through `cmd.exe`, whose argument quoting the connector does not
+ * trust, so a runtime is given as its `.exe` or as an absolute path.
+ *
+ * @example
+ * executableNames('codex', 'win32', '.EXE;.CMD'); // ['codex', 'codex.EXE']
+ * executableNames('codex', 'linux'); // ['codex']
+ */
+export function executableNames(exe: string, platform: NodeJS.Platform = process.platform, pathext: string | undefined = process.env.PATHEXT): string[] {
+  if (platform !== 'win32') return [exe];
+  const exts = (pathext || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean);
+  const lower = exe.toLowerCase();
+  if (exts.some((ext) => lower.endsWith(ext.toLowerCase()))) return [exe];
+  return [exe, ...exts.filter((ext) => !isBatchFile(ext)).map((ext) => exe + ext)];
+}
+
+function executableFile(candidate: string, platform: NodeJS.Platform): boolean {
+  try {
+    // Windows has no execute bit: an existing file is runnable.
+    if (platform !== 'win32') fs.accessSync(candidate, fs.constants.X_OK);
+    return fs.statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Path of an executable, looked up on PATH when it is a bare command name.
+ * Only the absolute directories of PATH are searched: a relative one (`.`,
+ * `bin`) would name a different file from another working directory. On
+ * Windows a name without an extension also matches its `PATHEXT` forms, so
+ * `codex` finds `codex.exe` or `codex.cmd`.
  *
  * @example
  * resolveExecutable('git'); // '/usr/bin/git', or null
  */
-export function resolveExecutable(exe: string): string | null {
-  if (exe.includes('/')) return fs.existsSync(exe) ? path.resolve(exe) : null;
-  for (const dir of (process.env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
-    const candidate = path.join(dir, exe);
-    try {
-      fs.accessSync(candidate, fs.constants.X_OK);
-      if (fs.statSync(candidate).isFile()) return candidate;
-    } catch {
-      /* not here */
+export function resolveExecutable(
+  exe: string,
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const names = executableNames(exe, platform, env.PATHEXT);
+  if (exe.includes('/') || (platform === 'win32' && exe.includes('\\'))) {
+    for (const name of names) if (fs.existsSync(name)) return path.resolve(name);
+    return null;
+  }
+  for (const dir of absolutePath(env.PATH).split(path.delimiter)) {
+    for (const name of names) {
+      const candidate = path.join(dir, name);
+      if (executableFile(candidate, platform)) return candidate;
     }
   }
   return null;
@@ -245,9 +312,10 @@ function runVersion(file: string, timeoutMs = 10000): Promise<string | null> {
     const script = /\.[cm]?js$/.test(file);
     let child: ChildProcess;
     try {
-      // Only PATH and HOME of the daemon's environment: the runtime asked
-      // its version never sees the daemon's or the developer's credentials.
-      const env = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: os.homedir() };
+      // Only PATH (its absolute directories, absolutePath) and HOME of the
+      // daemon's environment: the runtime asked its version never sees the
+      // daemon's or the developer's credentials.
+      const env = { PATH: absolutePath(), HOME: os.homedir() };
       child = spawn(script ? process.execPath : file, script ? [file, '--version'] : ['--version'], { env, stdio: ['ignore', 'pipe', 'ignore'] });
     } catch {
       return resolve(null);

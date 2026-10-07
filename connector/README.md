@@ -2,7 +2,8 @@
 
 The Agenomic machine connector. It connects Claude Code and Codex sessions
 on a machine to Agenomic: sessions you launch from agenomic.io run here,
-in a dedicated git worktree, under the runtime's own sandbox; sessions you
+in a dedicated git worktree, under the runtime's own sandbox, which cannot
+read the connector's credentials, configuration or other sessions; sessions you
 start yourself in a terminal are reported through hooks you install
 explicitly. AGPL-3.0-only.
 
@@ -52,6 +53,15 @@ Local hooks are cooperative, not a security boundary (see
 `agenomic-cloud/docs/coding/threat-model.md`).
 
 ## What is validated
+
+A runtime's `executable` in `connector.json` is an absolute path or a
+command name looked up on the daemon's PATH when the configuration is
+loaded; a relative path such as `./bin/codex` is refused, since a session
+starts the runtime in its worktree. A command not found on PATH makes only
+that runtime unavailable (`status` and `doctor` say why); the connector
+still runs the others. For the same reason a runtime process
+is given only the absolute directories of PATH (`.` and empty entries are
+dropped), so a script's interpreter is never taken from a worktree.
 
 `doctor --probe` runs the runtimes this machine is configured with (the
 enabled ones, with their configured `executable`) against local scripted
