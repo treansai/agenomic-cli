@@ -314,23 +314,31 @@ export class Daemon {
    * gateway refuses it.
    */
   private report(m: Managed, body: Record<string, unknown>, persistent = false): Promise<void> {
+    return this.reportUntil(m, body, persistent).first;
+  }
+
+  /** report(), with `delivered`: whether the report was, in the end, delivered. */
+  private reportUntil(m: Managed, body: Record<string, unknown>, persistent: boolean): { first: Promise<void>; delivered: Promise<boolean> } {
     let settle!: (error?: unknown) => void;
     const first = new Promise<void>((resolve, reject) => (settle = (error) => (error === undefined ? resolve() : reject(error))));
+    let done!: (delivered: boolean) => void;
+    const delivered = new Promise<boolean>((resolve) => (done = resolve));
     m.reports = m.reports.then(async () => {
       for (let attempt = 0; ; attempt++) {
         try {
           await m.ctx.state(body);
-          return settle();
+          settle();
+          return done(true);
         } catch (error) {
           settle(error);
           const refused = error instanceof ApiError && error.status >= 400 && error.status < 500;
-          if (!persistent || refused || this.abort.signal.aborted) return;
+          if (!persistent || refused || this.abort.signal.aborted) return done(false);
           log('warn', 'state report failed; retrying', { session: m.id, error: errorMessage(error) });
           await sleep(Math.min(1000 * 2 ** attempt, 30000), this.abort.signal);
         }
       }
     });
-    return first;
+    return { first, delivered };
   }
 
   /** A status the runtime reports: held until the session is connected. */
@@ -350,9 +358,11 @@ export class Daemon {
    * gateway never holds a connected status without a mode. It is retried
    * until delivered. Enforce needs pre-tool control validated on this
    * machine (supported_tested or partial): without it the session is
-   * blocked, never reported as enforce.
+   * blocked, never reported as enforce. It resolves after the first
+   * attempt, with whether the report was delivered then (`now`) and
+   * whether it is in the end (`delivered`).
    */
-  private async connect(m: Managed, surface: Surface, extra: { limitations?: string[]; workspace?: unknown } = {}): Promise<void> {
+  private async connect(m: Managed, surface: Surface, extra: { limitations?: string[]; workspace?: unknown } = {}): Promise<{ now: boolean; delivered: Promise<boolean> }> {
     const status = m.held ?? 'running';
     m.connected = true;
     m.held = undefined;
@@ -366,18 +376,47 @@ export class Daemon {
     const prot = blocked
       ? blockedProtection(requested, `enforce needs pre-tool control validated on this machine (agenomic-connector doctor --probe); it is ${validated ?? 'not reported'}`)
       : requested;
+    const r = this.reportUntil(m, {
+      status,
+      mode_effective: blocked ? 'blocked' : m.ctx.mode,
+      protection: { protected: prot.protected, not_covered: prot.not_covered, notes: prot.notes },
+      limitations: [...prot.limitations, ...(extra.limitations ?? [])],
+      capabilities: caps,
+      ...(extra.workspace ? { workspace: extra.workspace } : {}),
+    }, true);
     try {
-      await this.report(m, {
-        status,
-        mode_effective: blocked ? 'blocked' : m.ctx.mode,
-        protection: { protected: prot.protected, not_covered: prot.not_covered, notes: prot.notes },
-        limitations: [...prot.limitations, ...(extra.limitations ?? [])],
-        capabilities: caps,
-        ...(extra.workspace ? { workspace: extra.workspace } : {}),
-      }, true);
+      await r.first;
+      return { now: true, delivered: r.delivered };
     } catch (error) {
       log('warn', 'connected state report failed; retrying', { session: m.id, error: errorMessage(error) });
+      return { now: false, delivered: r.delivered };
     }
+  }
+
+  /**
+   * Hands the launch or resume prompt to the runtime once the gateway
+   * holds the session's effective mode: the first turn's tool calls are
+   * authorized under that mode, never under the `none` of a session that
+   * is not connected yet (which enforce denies). A connecting report still
+   * being retried delays the prompt until it is delivered, without
+   * holding the command's result; one the gateway refused leaves the
+   * prompt undelivered, reported as an error event.
+   */
+  private async deliverPrompt(m: Managed, adapter: Adapter, prompt: string | undefined, connected: { now: boolean; delivered: Promise<boolean> }): Promise<void> {
+    if (!prompt) return;
+    const deliver = async () => {
+      const why = !(await connected.delivered)
+        ? 'the session could not be connected'
+        : await Promise.resolve(adapter.send(prompt)).then(
+            (r) => (r === 'applied' ? undefined : 'the session no longer runs'),
+            (error) => errorMessage(error),
+          );
+      if (!why) return;
+      log('warn', 'prompt not delivered', { session: m.id, reason: why });
+      m.ctx.sink.emit('error', 'adapter', 'native', { code: 'prompt_not_delivered', message: m.ctx.cleanText(why, 500) });
+    };
+    if (connected.now) await deliver();
+    else void deliver();
   }
 
   private async launch(cmd: any): Promise<void> {
@@ -414,7 +453,8 @@ export class Daemon {
       workspace: { base_revision: tree.base_revision, branch: tree.branch, preexisting_changes: tree.preexisting_changes.length, worktree: 'dedicated' },
     });
     try {
-      await this.startAdapter(managed, rcfg, { model: p.model, prompt: p.prompt });
+      // The prompt waits for the connected report (deliverPrompt).
+      await this.startAdapter(managed, rcfg, { model: p.model });
     } catch (error) {
       // The partial adapter is stopped (startAdapter); the session is no
       // longer managed, so no later command reaches it.
@@ -423,7 +463,8 @@ export class Daemon {
       await managed.ctx.sink.close();
       return this.result(cmd.id, 'refused', undefined, errorMessage(error));
     }
-    await this.connect(managed, runtime === 'claude_code' ? 'sdk' : 'app_server');
+    const connected = await this.connect(managed, runtime === 'claude_code' ? 'sdk' : 'app_server');
+    await this.deliverPrompt(managed, managed.adapter!, p.prompt ?? undefined, connected);
     return this.result(cmd.id, 'applied', { worktree: 'dedicated', native_session_id: managed.nativeId ?? null });
   }
 
@@ -441,7 +482,7 @@ export class Daemon {
     return m;
   }
 
-  private async startAdapter(m: Managed, rcfg: ConnectorConfig['runtimes']['claude_code'], o: { model?: string; prompt?: string; resume?: string }): Promise<void> {
+  private async startAdapter(m: Managed, rcfg: ConnectorConfig['runtimes']['claude_code'], o: { model?: string; resume?: string }): Promise<void> {
     const onNativeSession = async (nativeId: string) => {
       m.nativeId = nativeId;
       this.byNative.set(`${m.runtime}:${nativeId}`, m);
@@ -456,7 +497,7 @@ export class Daemon {
       });
     };
     const onStatus = (status: string) => void this.adapterStatus(m, status);
-    const common = { ctx: m.ctx, cwd: m.cwd, model: o.model ?? null, prompt: o.prompt ?? null, resume: o.resume ?? null, runtime: rcfg, onNativeSession, onStatus };
+    const common = { ctx: m.ctx, cwd: m.cwd, model: o.model ?? null, prompt: null, resume: o.resume ?? null, runtime: rcfg, onNativeSession, onStatus };
     const adapter: Adapter = m.runtime === 'claude_code' ? new ClaudeSession(common) : new CodexSession(common);
     m.adapter = adapter;
     try {
@@ -491,7 +532,8 @@ export class Daemon {
     m.held = undefined;
     // Resume is always by explicit native id, never "the last session".
     try {
-      await this.startAdapter(m, rcfg, { resume: rec.native_id, prompt: cmd.payload?.prompt ?? undefined });
+      // The prompt waits for the connected report (deliverPrompt).
+      await this.startAdapter(m, rcfg, { resume: rec.native_id });
     } catch (error) {
       if (!live) {
         this.sessions.delete(m.id);
@@ -499,7 +541,8 @@ export class Daemon {
       } else Object.assign(m, before);
       return this.result(cmd.id, 'refused', undefined, errorMessage(error));
     }
-    await this.connect(m, rec.runtime === 'claude_code' ? 'sdk' : 'app_server');
+    const connected = await this.connect(m, rec.runtime === 'claude_code' ? 'sdk' : 'app_server');
+    await this.deliverPrompt(m, m.adapter!, cmd.payload?.prompt ?? undefined, connected);
     return this.result(cmd.id, 'applied');
   }
 

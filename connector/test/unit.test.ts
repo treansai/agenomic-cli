@@ -857,14 +857,19 @@ test('a Claude Code launch is applied only once the runtime initialized and its 
   });
 });
 
-/** A Codex App Server that initializes and starts or resumes a thread, and exits when its stdin closes. */
-function fakeAppServer(): string {
+/**
+ * A Codex App Server that initializes and starts or resumes a thread, and
+ * exits when its stdin closes. With `turns`, it appends the text of every
+ * turn/start it receives to that file.
+ */
+function fakeAppServer(turns?: string): string {
   const fake = path.join(tmp('agn-bin-'), 'codex.js');
   fs.writeFileSync(fake, [
     "const rl = require('node:readline').createInterface({ input: process.stdin });",
     "rl.on('line', (line) => {",
     '  const m = JSON.parse(line);',
     '  if (m.id === undefined) return;',
+    ...(turns ? [`  if (m.method === 'turn/start') require('node:fs').appendFileSync(${JSON.stringify(turns)}, m.params.input[0].text + '\\n');`] : []),
     "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : m.method.startsWith('thread/') ? { thread: { id: 'thread-fake' } } : {};",
     "  process.stdout.write(JSON.stringify({ id: m.id, result }) + '\\n');",
     '});',
@@ -957,6 +962,51 @@ test('the first connected status carries the effective mode, after the native se
       const from = log.length;
       assert.equal((await command('resume_session'))?.status, 'applied');
       connectedAfterRegistration(from);
+    } finally {
+      await daemon.sessions.get(session)?.adapter?.stop();
+    }
+  });
+});
+
+test('a launch or resume prompt reaches the runtime only once the gateway holds the session\'s mode', async () => {
+  await withHome(async () => {
+    const repo = tempRepo();
+    const turns = path.join(tmp('agn-turns-'), 'turns');
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+    cfg.runtimes.codex.executable = fakeAppServer(turns);
+    const started = () => (fs.existsSync(turns) ? fs.readFileSync(turns, 'utf8').split('\n').filter(Boolean) : []);
+    const connected: string[][] = [];
+    let failConnected = 1;
+    const api = new (class extends ProbeApi {
+      override async request<T = any>(method: string, p: string, opts: { body?: any } = {}): Promise<T> {
+        if (p === '/v1/coding/runner/sessions') return { session: {} } as T;
+        if (p.endsWith('/state') && opts.body?.mode_effective) {
+          if (failConnected-- > 0) throw new ApiError(0, 'network', 'gateway unavailable');
+          // The turns the runtime had started when the gateway learnt the mode.
+          connected.push(started());
+        }
+        return super.request<T>(method, p, opts);
+      }
+    })();
+    const daemon: any = new Daemon(cfg, api);
+    const session = randomUUID();
+    const command = async (kind: string, payload: unknown = {}) => {
+      const id = ulid();
+      await daemon.handleCommand({ id, kind, coding_session_id: session, payload });
+      return api.results.get(id);
+    };
+    try {
+      // The connecting report fails once: the launch is applied, and the
+      // prompt waits until the retried report is delivered.
+      assert.equal((await command('launch', { runtime: 'codex', workspace_id: 'w', mode: 'observe', prompt: 'first' }))?.status, 'applied');
+      for (let i = 0; i < 50 && started().length === 0; i++) await sleep(100);
+      assert.deepEqual(connected, [[]], 'no turn had started when the mode was delivered');
+      assert.deepEqual(started(), ['first']);
+      assert.equal((await command('stop_process'))?.status, 'applied');
+      assert.equal((await command('resume_session', { prompt: 'again' }))?.status, 'applied');
+      assert.deepEqual(connected, [[], ['first']], 'the resume prompt had not started when the mode was delivered');
+      assert.deepEqual(started(), ['first', 'again']);
     } finally {
       await daemon.sessions.get(session)?.adapter?.stop();
     }
