@@ -11,7 +11,7 @@ import { ApiError, RunnerApi } from '../src/api.ts';
 import { manifest, saveProbe } from '../src/capabilities.ts';
 import { ClaudeSession, claudeCodeVersion, readClaudeCodeVersion, sdkPackage } from '../src/claude.ts';
 import { CodexSession, codexVersion, readCodexVersion } from '../src/codex.ts';
-import { defaultConfig, localFailMode, paths, runtimeEnv, runtimeSecrets, saveConfig } from '../src/config.ts';
+import { defaultConfig, localFailMode, paths, runtimeEnv, runtimeSecrets, saveConfig, spellings } from '../src/config.ts';
 import { main } from '../src/cli.ts';
 import { Daemon } from '../src/daemon.ts';
 import { EventSink } from '../src/events.ts';
@@ -2400,6 +2400,51 @@ test('a launched Claude session registers the session id the runtime reports, wh
     if (prev === undefined) delete process.env.AGENOMIC_CONNECTOR_HOME;
     else process.env.AGENOMIC_CONNECTOR_HOME = prev;
   }
+});
+
+test('a launched Claude session can read its own worktree, below the denied connector home, and nothing else of it', async () => {
+  await withHome(async (home) => {
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    const daemon: any = new Daemon(cfg, new ProbeApi());
+    const capture = { conversation: false, commands: false, diffs: false, outputs: false };
+    // A launched session works in state/worktrees/<id>, below the connector home.
+    const id = randomUUID();
+    const cwd = path.join(paths.worktrees(), id);
+    const other = path.join(paths.worktrees(), randomUUID());
+    fs.mkdirSync(cwd, { recursive: true });
+    fs.mkdirSync(other, { recursive: true });
+    const m = daemon.manage(id, 'claude_code', 'launched', 'observe', capture, cwd, null);
+    let options: any;
+    const { query, gates } = fakeClaude('runtime-sandbox', true);
+    const claude = new ClaudeSession({
+      ctx: m.ctx, cwd, runtime: cfg.runtimes.claude_code, onStatus: () => undefined, onNativeSession: async () => undefined,
+      query: ((a: any) => {
+        options = a.options;
+        return query(a);
+      }) as any,
+    });
+    try {
+      await claude.start();
+      const fsRules = options.sandbox.filesystem;
+      const under = (p: string, root: string) => p === root || p.startsWith(root + path.sep);
+      const covered = (p: string, roots: string[]) => roots.some((r) => under(p, r));
+      // The credentials, the configuration and every other session stay unreadable...
+      for (const secret of [paths.credentials(), paths.config(), paths.sessions(), paths.runtimeHome('claude_code'), other]) {
+        assert.ok(covered(secret, fsRules.denyRead), `${secret} is denied`);
+        assert.ok(!covered(secret, fsRules.allowRead ?? []), `${secret} is not re-allowed`);
+      }
+      // ...but the session's own checkout, which the denied home contains, is re-allowed.
+      assert.ok(covered(cwd, fsRules.denyRead), 'the worktree lies in the denied hierarchy');
+      assert.deepEqual(fsRules.allowRead, spellings(cwd));
+      assert.ok(covered(path.join(cwd, 'README.md'), fsRules.allowRead));
+      assert.ok(fsRules.denyRead.includes(path.resolve(home)));
+    } finally {
+      gates.end();
+      await claude.done;
+      await m.ctx.sink.close();
+      await daemon.stop();
+    }
+  });
 });
 
 test('every public function, class and method of the connector has a doc comment with an example', () => {

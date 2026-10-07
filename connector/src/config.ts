@@ -81,6 +81,25 @@ export const paths = {
   localFailMode: () => path.join(home(), 'state', 'local-sessions.fail'),
 };
 
+/**
+ * A path and, when it differs (a symlink on the way, such as macOS's
+ * /tmp), its real path. A sandbox rule names every spelling, so that
+ * neither one escapes it; a path that does not exist yet has one.
+ *
+ * @example
+ * spellings('/tmp/agn'); // ['/tmp/agn', '/private/tmp/agn'] on macOS, ['/tmp/agn'] on Linux
+ */
+export function spellings(p: string): string[] {
+  const abs = path.resolve(p);
+  let real = abs;
+  try {
+    real = fs.realpathSync(abs);
+  } catch {
+    // Not created yet: only the spelling given.
+  }
+  return real === abs ? [abs] : [abs, real];
+}
+
 const defaultRuntime = (): RuntimeConfig => ({ enabled: true, env_passthrough: [], extra_env: {}, allowed_domains: [] });
 
 /**

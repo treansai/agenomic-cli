@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { paths, runtimeEnv, type RuntimeConfig } from './config.ts';
+import { home as connectorHome, paths, runtimeEnv, spellings, type RuntimeConfig } from './config.ts';
 import { commandText, isTestCommand, type SessionContext, type Verdict } from './session.ts';
 import { errorMessage, executableVersion, log, readExecutableVersion, realPathEscapes } from './util.ts';
 import * as ws from './workspace.ts';
@@ -115,6 +115,24 @@ export interface LaunchOptions {
   initTimeoutMs?: number;
   /** The SDK's query(); tests substitute a fake runtime. */
   query?: Sdk['query'];
+}
+
+/**
+ * The filesystem rules of a launched Claude Code session's sandbox. The
+ * connector's home (credentials, configuration, and under `state/` the
+ * other sessions' worktrees, runtime homes and spool) is unreadable; the
+ * session's own worktree, which lives below `state/worktrees/`, is
+ * re-allowed by `allowRead`, which takes precedence over `denyRead` for
+ * the paths it names. Without it a sandbox that applies `denyRead` to
+ * every descendant (macOS Seatbelt) would deny the session its own
+ * checkout. Every spelling of each path is named (see `spellings`).
+ *
+ * @example
+ * claudeSandboxFilesystem(path.join(paths.worktrees(), id));
+ * // { denyRead: ['~/.config/agenomic/connector'], allowRead: ['~/.config/agenomic/connector/state/worktrees/<id>'] }
+ */
+export function claudeSandboxFilesystem(cwd: string): { denyRead: string[]; allowRead: string[] } {
+  return { denyRead: spellings(connectorHome()), allowRead: spellings(cwd) };
 }
 
 /**
@@ -266,7 +284,7 @@ export class ClaudeSession {
           failIfUnavailable: true,
           autoAllowBashIfSandboxed: !enforce,
           allowUnsandboxedCommands: false,
-          filesystem: { denyRead: [paths.state(), path.dirname(paths.credentials())] },
+          filesystem: claudeSandboxFilesystem(this.o.cwd),
           network: { allowedDomains: this.o.runtime.allowed_domains },
         },
         canUseTool,
