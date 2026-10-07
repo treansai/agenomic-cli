@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { RunnerApi } from './api.ts';
-import { defaultConfig, loadConfig, paths, saveConfig, saveCredentials, type ConnectorConfig, type Mode } from './config.ts';
+import { defaultConfig, loadConfig, paths, saveConfig, saveCredentials, validateConfig, type ConnectorConfig, type Mode } from './config.ts';
 import { codexExecutable } from './codex.ts';
 import { Daemon, sandboxAvailable } from './daemon.ts';
 import { runHook } from './hook.ts';
@@ -72,6 +72,9 @@ export async function main(argv: string[]): Promise<number> {
       cfg.endpoint = endpoint;
       cfg.name = name;
       cfg.kind = kind;
+      // The one time token only goes to an endpoint the saved configuration
+      // would accept (https, or plain http on loopback).
+      validateConfig(cfg);
       const r = await RunnerApi.enroll(endpoint, { enrollment_token: token, name, kind, os: process.platform, arch: process.arch, connector_version: '0.1.0' });
       cfg.runner_id = r.runner.id;
       saveConfig(cfg);

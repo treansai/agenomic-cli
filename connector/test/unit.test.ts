@@ -11,6 +11,7 @@ import { manifest, saveProbe } from '../src/capabilities.ts';
 import { ClaudeSession, claudeCodeVersion, readClaudeCodeVersion, sdkPackage } from '../src/claude.ts';
 import { CodexSession, codexVersion, readCodexVersion } from '../src/codex.ts';
 import { defaultConfig, localFailMode, paths, runtimeSecrets, saveConfig } from '../src/config.ts';
+import { main } from '../src/cli.ts';
 import { Daemon } from '../src/daemon.ts';
 import { EventSink } from '../src/events.ts';
 import { eventOf } from '../src/hook.ts';
@@ -1030,5 +1031,25 @@ test('protection lists tool ids of the closed vocabulary; mechanisms go to notes
     assert.deepEqual(state.protection.not_covered, []);
     assert.ok(state.protection.notes.length > 0);
     assert.ok(state.limitations.some((l: string) => l.startsWith('hooks are cooperative')));
+  });
+});
+
+test('enroll refuses an insecure endpoint before the one time token is sent', async () => {
+  await withHome(async () => {
+    const realFetch = globalThis.fetch;
+    const calls: string[] = [];
+    globalThis.fetch = (async (url: string | URL) => {
+      calls.push(String(url));
+      throw new Error('no network in this test');
+    }) as typeof fetch;
+    try {
+      await assert.rejects(main(['enroll', '--token', 'agmcen_onetime', '--endpoint', 'http://gateway.example.com']), /plain http is only accepted for a loopback endpoint/);
+      assert.deepEqual(calls, [], 'the token was not posted');
+      assert.equal(fs.existsSync(paths.config()), false);
+      await assert.rejects(main(['enroll', '--token', 'agmcen_onetime', '--endpoint', 'https://gateway.example.com']), /no network in this test/);
+      assert.deepEqual(calls, ['https://gateway.example.com/v1/coding/runners/enroll'], 'an https endpoint is enrolled');
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 });
