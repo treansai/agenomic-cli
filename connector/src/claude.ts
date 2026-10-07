@@ -372,7 +372,7 @@ export class ClaudeSession {
     } catch (error) {
       this.failure = ctx.cleanText(errorMessage(error), 500);
       ctx.sink.emit('error', 'adapter', 'native', { code: 'runtime_error', message: this.failure });
-      log('warn', 'claude session ended with an error', { session: ctx.id, error: errorMessage(error) });
+      log('warn', 'claude session ended with an error', { session: ctx.id, error: this.failure });
     } finally {
       this.ended = true;
       ctx.sink.emit('session.ended', 'supervisor', 'native', { exit_code: this.child?.exitCode ?? null });
@@ -387,7 +387,7 @@ export class ClaudeSession {
       const payload = ws.snapshot(this.o.cwd, ctx.baseRevision, ctx.capture.diffs, ctx.secrets());
       ctx.sink.emit('diff.snapshot', 'filesystem', 'observed', payload, { runtime_turn_id: String(this.turnId) });
     } catch (error) {
-      log('warn', 'diff snapshot failed', { error: errorMessage(error) });
+      log('warn', 'diff snapshot failed', { session: ctx.id, error: ctx.cleanText(errorMessage(error), 500) });
     }
   }
 
@@ -456,7 +456,7 @@ export class ClaudeSession {
       this.o.ctx.sink.emit('turn.interrupted', 'adapter', 'native', { requested_by: 'agenomic' }, { runtime_turn_id: String(this.turnId) });
       return 'applied';
     } catch (error) {
-      log('warn', 'interrupt failed', { error: errorMessage(error) });
+      log('warn', 'interrupt failed', { session: this.o.ctx.id, error: this.o.ctx.cleanText(errorMessage(error), 500) });
       return 'unknown';
     }
   }

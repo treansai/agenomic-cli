@@ -191,7 +191,7 @@ export class SessionContext {
         signal: a.signal,
       });
     } catch (error) {
-      log('warn', 'authorize failed', { session: this.id, error: errorMessage(error) });
+      log('warn', 'authorize failed', { session: this.id, error: this.cleanText(errorMessage(error), 500) });
       const v = failClosed(errorMessage(error));
       this.sink.emit('error', 'adapter', 'native', { code: 'authorize_failed', native_request_id: a.nativeId, decision: v.decision });
       return v;
@@ -250,7 +250,7 @@ export class SessionContext {
         const s = r.approval_status as string | null;
         if (s === 'approved' || s === 'rejected' || s === 'expired' || s === 'consumed') return s;
       } catch (error) {
-        log('warn', 'approval poll failed', { session: this.id, error: errorMessage(error) });
+        log('warn', 'approval poll failed', { session: this.id, error: this.cleanText(errorMessage(error), 500) });
       }
       await sleep(1000, signal);
     }
@@ -291,7 +291,7 @@ export class SessionContext {
       });
       return true;
     } catch (error) {
-      log('warn', 'action report failed', { session: this.id, action: actionId, error: errorMessage(error) });
+      log('warn', 'action report failed', { session: this.id, action: actionId, error: this.cleanText(errorMessage(error), 500) });
       // A refusal of the report itself will not change on a retry.
       return refused(error);
     }

@@ -190,7 +190,7 @@ export class CodexSession {
     // A missing or non-executable binary emits 'error' (never 'exit'),
     // which would crash the daemon without a listener: the start is
     // refused instead.
-    child.on('error', (e) => log('warn', 'codex process error', { session: this.o.ctx.id, error: e.message }));
+    child.on('error', (e) => log('warn', 'codex process error', { session: this.o.ctx.id, error: this.o.ctx.cleanText(e.message, 500) }));
     try {
       await new Promise<void>((resolve, reject) => {
         child.once('spawn', resolve);
@@ -214,7 +214,7 @@ export class CodexSession {
     rl.on('line', (line) => void this.onLine(line));
 
     const init = await this.call('initialize', { clientInfo: { name: 'agenomic-connector', title: 'Agenomic', version: '0.1.0' } });
-    log('debug', 'codex initialized', { user_agent: init?.userAgent });
+    log('debug', 'codex initialized', { user_agent: this.o.ctx.cleanText(String(init?.userAgent ?? ''), 200) });
     this.write({ method: 'initialized' });
 
     const enforce = this.o.ctx.mode === 'enforce';
@@ -344,7 +344,7 @@ export class CodexSession {
       this.write({ id, error: { code: -32601, message: `agenomic-connector does not handle ${method}` } });
       ctx.sink.emit('error', 'adapter', 'native', { code: 'unsupported_server_request', method });
     } catch (error) {
-      log('warn', 'codex server request failed', { method, error: errorMessage(error) });
+      log('warn', 'codex server request failed', { session: this.o.ctx.id, method, error: this.o.ctx.cleanText(errorMessage(error), 500) });
       this.respond(id, { decision: 'decline' });
     }
   }
@@ -423,7 +423,7 @@ export class CodexSession {
       const payload = ws.snapshot(this.o.cwd, ctx.baseRevision, ctx.capture.diffs, ctx.secrets());
       ctx.sink.emit('diff.snapshot', 'filesystem', 'observed', payload, { runtime_turn_id: turn });
     } catch (error) {
-      log('warn', 'diff snapshot failed', { error: errorMessage(error) });
+      log('warn', 'diff snapshot failed', { session: ctx.id, error: ctx.cleanText(errorMessage(error), 500) });
     }
   }
 
@@ -474,7 +474,7 @@ export class CodexSession {
       await this.call('turn/interrupt', { threadId: this.threadId, turnId: this.activeTurn }, 15000);
       return 'applied';
     } catch (error) {
-      log('warn', 'codex interrupt failed', { error: errorMessage(error) });
+      log('warn', 'codex interrupt failed', { session: this.o.ctx.id, error: this.o.ctx.cleanText(errorMessage(error), 500) });
       return 'unknown';
     }
   }

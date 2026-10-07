@@ -20,7 +20,7 @@ import { clean, redact } from '../src/redact.ts';
 import { protection, TOOL_IDS } from '../src/protection.ts';
 import { ProbeApi, probeConfig, probedVersion, runProbe, tempRepo } from '../src/probe.ts';
 import { isTestCommand, type SessionContext } from '../src/session.ts';
-import { realPathEscapes, sleep, ulid } from '../src/util.ts';
+import { log, realPathEscapes, sleep, ulid } from '../src/util.ts';
 import * as ws from '../src/workspace.ts';
 
 const tmp = (p: string) => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), p)));
@@ -1396,6 +1396,59 @@ test('the settlement at a session\'s end keeps delivering retained outcomes unti
     assert.deepEqual(flaky.reports, [{ action: before.actionId, outcome: 'failed' }]);
     assert.ok(!flaky.reports.some((r) => r.action === after.actionId));
     await ctx.sink.close();
+  });
+});
+
+test('a runtime failure that quotes a runtime credential is redacted before it is logged or reported', async () => {
+  await withHome(async () => {
+    const passthrough = 'corp-provider-credential-7f3a9b2c4d5e';
+    const extra = 'corp-gateway-credential-0a1b2c3d4e5f';
+    process.env.AGN_UNIT_LOG_CREDENTIAL = passthrough;
+    const lines: string[] = [];
+    const write = process.stderr.write;
+    process.stderr.write = ((chunk: string | Uint8Array) => (lines.push(String(chunk)), true)) as typeof process.stderr.write;
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.runtimes.claude_code.env_passthrough = ['AGN_UNIT_LOG_CREDENTIAL'];
+    cfg.runtimes.codex.extra_env = { CORP_GATEWAY_TOKEN: extra };
+    const api = new ProbeApi();
+    const daemon: any = new Daemon(cfg, api);
+    try {
+      const capture = { conversation: false, commands: false, diffs: false, outputs: false };
+      // The Claude Code SDK stream fails with the provider's message.
+      const m = daemon.manage(randomUUID(), 'claude_code', 'launched', 'observe', capture, tmp('agn-wt-'), null);
+      const claude: any = new ClaudeSession({ ctx: m.ctx, cwd: m.cwd, runtime: cfg.runtimes.claude_code, onNativeSession: async () => undefined, onStatus: () => undefined } as any);
+      claude.query = (async function* () {
+        throw new Error(`401 from provider: invalid x-key ${passthrough}`);
+      })();
+      await claude.pump();
+      // The App Server process fails; a daemon-level error quotes the other runtime's credential.
+      const cx = daemon.manage(randomUUID(), 'codex', 'launched', 'observe', capture, tmp('agn-wt-'), null);
+      const codex: any = new CodexSession({ ctx: cx.ctx, cwd: cx.cwd, runtime: cfg.runtimes.codex, onNativeSession: async () => undefined, onStatus: () => undefined } as any);
+      codex.threadId = 'thread-fake';
+      codex.activeTurn = 'turn-1';
+      codex.call = async () => {
+        throw new Error(`gateway refused ${extra}`);
+      };
+      assert.equal(await codex.interrupt(), 'unknown');
+      log('warn', 'command failed', { error: `spawn failed with ${passthrough} and ${extra}` });
+      // A refusal quoting a runtime failure reaches the gateway redacted too.
+      await daemon.result('cmd-1', 'refused', undefined, `claude code ended before it initialized: ${extra}`);
+      await m.ctx.sink.close();
+      await cx.ctx.sink.close();
+    } finally {
+      process.stderr.write = write;
+      delete process.env.AGN_UNIT_LOG_CREDENTIAL;
+      await daemon.stop();
+    }
+    const logged = lines.join('');
+    assert.match(logged, /claude session ended with an error/);
+    assert.match(logged, /codex interrupt failed/);
+    assert.match(logged, /command failed/);
+    for (const secret of [passthrough, extra]) {
+      assert.ok(!logged.includes(secret.slice(0, 12)), `${secret.slice(0, 12)} reached the log`);
+      assert.ok(!JSON.stringify([...api.results.values(), api.events]).includes(secret.slice(0, 12)), `${secret.slice(0, 12)} reached the gateway`);
+    }
+    assert.match(api.results.get('cmd-1')?.error, /initialized: \[REDACTED\]/);
   });
 });
 

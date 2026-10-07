@@ -12,7 +12,7 @@ import { EventSink } from './events.ts';
 import { blockedProtection, protection, type Surface } from './protection.ts';
 import { clean } from './redact.ts';
 import { SessionContext, type Runtime, type Verdict } from './session.ts';
-import { errorMessage, log, readJson, resolveExecutable, sleep, ulid, writeSecretFile } from './util.ts';
+import { errorMessage, log, readJson, redactLogsWith, resolveExecutable, sleep, ulid, writeSecretFile } from './util.ts';
 import * as ws from './workspace.ts';
 
 const VERSION = '0.1.0';
@@ -85,11 +85,22 @@ export class Daemon {
   private persisted: Persisted;
 
   readonly cfg: ConnectorConfig;
+  private readonly unredactLogs: () => void;
 
   constructor(cfg: ConnectorConfig, api?: RunnerApi) {
     this.cfg = cfg;
     this.api = api ?? new RunnerApi(cfg.endpoint);
     this.persisted = readJson<Persisted>(paths.sessions()) ?? {};
+    // Every log line of the process is redacted with the runner's tokens
+    // and the credential values of both runtimes.
+    this.unredactLogs = redactLogsWith(() => this.secrets());
+  }
+
+  /** The runner's tokens and the credential values given to the runtimes (one runtime's, or both). */
+  private secrets(runtime?: Runtime): string[] {
+    const creds = this.api.credentials();
+    const runtimes = runtime ? [runtime === 'claude_code' ? this.cfg.runtimes.claude_code : this.cfg.runtimes.codex] : [this.cfg.runtimes.claude_code, this.cfg.runtimes.codex];
+    return [creds?.access_token ?? '', creds?.refresh_token ?? '', ...runtimes.flatMap((r) => runtimeSecrets(r))].filter(Boolean);
   }
 
   private persist(): void {
@@ -196,6 +207,7 @@ export class Daemon {
       if (s.adapter?.alive()) await s.adapter.stop();
       await s.ctx.sink.close();
     }
+    this.unredactLogs();
   }
 
   private async loop(name: string, everyMs: number, fn: () => Promise<void>): Promise<void> {
@@ -240,11 +252,13 @@ export class Daemon {
     }
   }
 
-  private async result(id: string, status: 'applied' | 'refused' | 'unknown', result?: unknown, error?: string): Promise<void> {
+  private async result(id: string, status: 'applied' | 'refused' | 'unknown', result?: unknown, reason?: string): Promise<void> {
+    // A refusal can quote a runtime failure: redacted with every credential value.
+    const error = reason ? clean(reason, 500, this.secrets()) : undefined;
     this.finished.set(id, { status, result, error });
     if (this.finished.size > 500) this.finished.delete(this.finished.keys().next().value!);
     try {
-      await this.api.request('POST', `/v1/coding/runner/commands/${id}/result`, { body: { status, result, error: error ? clean(error, 500) : undefined }, retry: true });
+      await this.api.request('POST', `/v1/coding/runner/commands/${id}/result`, { body: { status, result, error }, retry: true });
     } catch (e) {
       log('warn', 'command result not recorded', { command: id, error: errorMessage(e) });
     }
@@ -481,8 +495,7 @@ export class Daemon {
   private manage(id: string, runtime: Runtime, origin: Managed['origin'], mode: Mode, capture: Capture, cwd: string, base: string | null, traceId?: string, workspaceId?: string): Managed {
     // Runner credentials and the runtime's own credential values, redacted
     // from every event of the session before it is buffered.
-    const rcfg = runtime === 'claude_code' ? this.cfg.runtimes.claude_code : this.cfg.runtimes.codex;
-    const secrets = () => [this.api.credentials()?.access_token ?? '', this.api.credentials()?.refresh_token ?? '', ...runtimeSecrets(rcfg)].filter(Boolean);
+    const secrets = () => this.secrets(runtime);
     const sink = new EventSink(this.api, id, secrets, paths.spool());
     const ctx = new SessionContext(this.api, id, runtime, mode, sink, capture, cwd, base, traceId, secrets);
     const m: Managed = { id, runtime, origin, ctx, status: 'starting', cwd, workspaceId, connected: false, reports: Promise.resolve() };
@@ -603,7 +616,8 @@ export class Daemon {
         try {
           reply = await this.onLocal(JSON.parse(line));
         } catch (error) {
-          reply = { error: errorMessage(error) };
+          // The reply reaches the runtime through its hook: redacted.
+          reply = { error: clean(errorMessage(error), 500, this.secrets()) };
         }
         conn.end(JSON.stringify(reply) + '\n');
       });

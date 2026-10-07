@@ -7,7 +7,7 @@ import { RunnerApi } from './api.ts';
 import { saveProbe, type CapName, type ProbeResult } from './capabilities.ts';
 import { readClaudeCodeVersion } from './claude.ts';
 import { codexExecutable, readCodexVersion } from './codex.ts';
-import { defaultConfig, loadConfig, type ConnectorConfig } from './config.ts';
+import { defaultConfig, loadConfig, runtimeSecrets, type ConnectorConfig } from './config.ts';
 import { Daemon } from './daemon.ts';
 import { codexProviderToml, fakeAnthropic, fakeResponses, script, type FakeServer } from './fakes.ts';
 import { installCodex } from './hooks-install.ts';
@@ -315,7 +315,7 @@ export async function probeCodexCli(fake: FakeServer, home: string, machine: Con
         })
       : { code: null, tail: 'error' in hooks ? hooks.error : 'codex did not report the installed hooks' };
     await until(() => api.has('session.ended'), 10000);
-    const why = run.code === 0 ? '' : `; codex exec exited ${run.code}: ${clean(run.tail.split('\n').slice(-3).join(' '), 300)}`;
+    const why = run.code === 0 ? '' : `; codex exec exited ${run.code}: ${clean(run.tail.split('\n').slice(-3).join(' '), 300, runtimeSecrets(cfg.runtimes.codex))}`;
     // Until this probe validated pre-tool control, the enforce session is reported blocked.
     const reported = api.states.some((s) => s.mode_effective === 'enforce' || s.mode_effective === 'blocked') && api.has('session.started') && api.has('tool.requested') && api.has('tool.completed') && api.has('turn.completed');
     set('observe', run.code === 0 && reported, `hooks trusted ${hooks.trusted}; session, tool calls and turn end reported ${reported}${why}`);

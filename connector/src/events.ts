@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { RunnerApi } from './api.ts';
-import { redactValue } from './redact.ts';
+import { clean, redactValue } from './redact.ts';
 import { errorMessage, log, ulid } from './util.ts';
 
 export type EventType =
@@ -213,7 +213,7 @@ export class EventSink {
       try {
         await this.send(batch);
       } catch (error) {
-        log('warn', 'event flush deferred', { session: this.sessionId, error: errorMessage(error) });
+        log('warn', 'event flush deferred', { session: this.sessionId, error: clean(errorMessage(error), 500, this.secrets()) });
         this.requeue(batch, mark);
         // Keep memory bounded while offline: evidence goes to disk.
         if (this.queue.length > this.opts.maxBuffered / 2) {
@@ -292,7 +292,7 @@ export class EventSink {
         }
         sent = data.length;
       } catch (error) {
-        log('warn', 'spool flush deferred', { session: this.sessionId, error: errorMessage(error) });
+        log('warn', 'spool flush deferred', { session: this.sessionId, error: clean(errorMessage(error), 500, this.secrets()) });
         return false;
       } finally {
         this.trimSpool(sent);

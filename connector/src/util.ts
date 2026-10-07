@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { redactValue } from './redact.ts';
 
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
@@ -71,8 +72,28 @@ export function readJson<T>(file: string): T | undefined {
 export type Level = 'debug' | 'info' | 'warn' | 'error';
 const LEVELS: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40 };
 
+/** Secret values every log line is redacted with, per registered source. */
+const logSecretSources = new Set<() => string[]>();
+
 /**
- * Structured logs on stderr. Never pass secrets: callers log ids only.
+ * Registers credential values (runner tokens, runtime credentials) that
+ * every log line is redacted with, as long as the source stays registered.
+ * Returns the function that unregisters it.
+ *
+ * @example
+ * const unregister = redactLogsWith(() => runtimeSecrets(cfg.runtimes.codex));
+ * unregister();
+ */
+export function redactLogsWith(source: () => string[]): () => void {
+  logSecretSources.add(source);
+  return () => void logSecretSources.delete(source);
+}
+
+/**
+ * Structured logs on stderr. Callers log ids, and bounded error text
+ * (`ctx.cleanText`); every line is redacted again here with the known
+ * credential patterns and the registered secret values, so a runtime, SDK
+ * or provider error that quotes a credential never reaches the log.
  *
  * @example
  * log('warn', 'command poll failed', { error: errorMessage(error) });
@@ -80,7 +101,16 @@ const LEVELS: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40
 export function log(level: Level, msg: string, fields: Record<string, unknown> = {}): void {
   const min = (process.env.AGENOMIC_CONNECTOR_LOG as Level) || 'info';
   if (LEVELS[level] < (LEVELS[min] ?? 20)) return;
-  process.stderr.write(JSON.stringify({ ts: new Date().toISOString(), level, msg, ...fields }) + '\n');
+  const secrets: string[] = [];
+  for (const source of logSecretSources) {
+    try {
+      secrets.push(...source());
+    } catch {
+      /* a source that cannot answer adds nothing */
+    }
+  }
+  const line = redactValue({ ts: new Date().toISOString(), level, msg, ...fields }, secrets);
+  process.stderr.write(JSON.stringify(line) + '\n');
 }
 
 /**
