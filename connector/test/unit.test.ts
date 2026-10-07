@@ -116,6 +116,52 @@ test('a fail-closed hook refuses explicitly when the daemon is unreachable; fail
   assert.equal(JSON.parse(garbage.stdout).hookSpecificOutput.permissionDecision, 'deny');
 });
 
+test('a fail-closed denial reaches a reader that is not draining the hook output yet', async () => {
+  // The runtime reads the hook's stdout pipe at its own pace. A pipe that
+  // is already full makes the hook's write asynchronous: exiting the
+  // process before it is flushed would leave the runtime with no decision.
+  const dir = tmp('agn-fifo-');
+  const fifo = path.join(dir, 'out');
+  execFileSync('mkfifo', [fifo]);
+  const reader = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+  const writer = fs.openSync(fifo, 'w');
+  const filler = 64 * 1024;
+  fs.writeSync(writer, Buffer.alloc(filler, 'x'));
+  const sock = path.join(dir, 'state', 'missing.sock');
+  const input = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', tool_name: 'Bash', tool_input: { command: 'rm -rf /' } });
+  const child = spawn(process.execPath, [BIN, 'hook', 'claude-code', '--fail', 'closed', '--deadline', '2000', '--socket', sock], { stdio: ['pipe', writer, 'ignore'] });
+  fs.closeSync(writer);
+  let exited = false;
+  const status = new Promise<number | null>((resolve) => child.on('exit', (code) => {
+    exited = true;
+    resolve(code);
+  }));
+  child.stdin!.end(input);
+  await sleep(1000);
+  const chunks: Buffer[] = [];
+  const buf = Buffer.alloc(64 * 1024);
+  try {
+    for (;;) {
+      let n: number;
+      try {
+        n = fs.readSync(reader, buf);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EAGAIN') throw error;
+        if (exited) break;
+        await sleep(20);
+        continue;
+      }
+      if (n === 0) break;
+      chunks.push(Buffer.from(buf.subarray(0, n)));
+    }
+  } finally {
+    fs.closeSync(reader);
+  }
+  assert.equal(await status, 0);
+  const out = Buffer.concat(chunks).subarray(filler).toString('utf8');
+  assert.equal(JSON.parse(out).hookSpecificOutput.permissionDecision, 'deny');
+});
+
 test('local-session hooks follow the current local-sessions mode, not the mode at install time', () => {
   const home = tmp('agn-home-');
   const env = { ...process.env, AGENOMIC_CONNECTOR_HOME: home };
