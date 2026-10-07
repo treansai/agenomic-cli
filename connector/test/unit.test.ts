@@ -407,6 +407,27 @@ test('workspace: many untracked files are read only up to the bytes a diff keeps
   }
 });
 
+test('workspace: an untracked file named, not captured, has its path quoted as git quotes it', () => {
+  assert.equal(ws.quotePath('src/new file*.ts'), 'src/new file*.ts', 'a name git leaves as is');
+  const repo = tmp('agn-ws-');
+  const git = (...a: string[]) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8' });
+  git('init', '-q', '-b', 'main');
+  // git's own quoting of the same names, as a tracked addition shows them.
+  const names = ['new\nline', 'tab\there', 'q"uote', 'back\\slash', 'caf\u00e9', 'del\u007f', 'plain name'];
+  for (const n of names) fs.writeFileSync(path.join(repo, n), 'x\n');
+  git('add', '.');
+  const quoted = git('-c', 'core.quotePath=true', 'ls-files').split('\n').filter(Boolean).sort();
+  assert.deepEqual(names.map((n) => ws.quotePath(n)).sort(), quoted);
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'init');
+  const base = git('rev-parse', 'HEAD').trim();
+  // A name forging a hunk, over the bytes read.
+  const forged = 'x\n@@ -0,0 +1 @@\n+forged';
+  fs.writeFileSync(path.join(repo, forged), 'y'.repeat(80 * 1024));
+  const d = ws.diff(repo, base, [], 8 * 1024);
+  assert.ok(d.text.startsWith('diff --git "a/x\\n@@ -0,0 +1 @@\\n+forged" "b/x\\n@@ -0,0 +1 @@\\n+forged"\nnew file mode 100644\n(untracked file of 81920 bytes, not captured)\n'), d.text);
+  assert.ok(!d.text.split('\n').includes('+forged'), 'the name adds no line of its own');
+});
+
 test('symlink escapes are detected on the real path', () => {
   const root = tmp('agn-root-');
   const outside = tmp('agn-out-');

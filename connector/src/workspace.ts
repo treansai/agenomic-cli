@@ -140,10 +140,29 @@ export function diff(dir: string, base: string, secrets: string[] = [], maxBytes
   for (const f of uncaptured) {
     // Past the bytes read, the rest would only be cut off.
     if (full.length > window) break;
-    full += `diff --git a/${f.path} b/${f.path}\nnew file mode 100644\n(untracked file of ${f.size} bytes, not captured)\n`;
+    full += `diff --git ${quotePath(`a/${f.path}`)} ${quotePath(`b/${f.path}`)}\nnew file mode 100644\n(untracked file of ${f.size} bytes, not captured)\n`;
   }
   const text = redact(full.length > window ? full.slice(0, window) : full, secrets);
   return text.length > maxBytes ? { text: text.slice(0, maxBytes), truncated: true } : { text, truncated: full.length > window };
+}
+
+const C_ESCAPES: Record<number, string> = { 7: 'a', 8: 'b', 9: 't', 10: 'n', 11: 'v', 12: 'f', 13: 'r', 34: '"', 92: '\\' };
+
+/**
+ * A path as git writes it in a diff header (core.quotePath): one with a
+ * control character, a quote, a backslash or a non-ASCII byte is quoted,
+ * C-style, so that it cannot read as a header or a hunk of its own.
+ */
+export function quotePath(name: string): string {
+  const bytes = Buffer.from(name, 'utf8');
+  if (!bytes.some((b) => b < 0x20 || b >= 0x7f || b === 34 || b === 92)) return name;
+  let out = '"';
+  for (const b of bytes) {
+    if (C_ESCAPES[b] !== undefined) out += `\\${C_ESCAPES[b]}`;
+    else if (b < 0x20 || b >= 0x7f) out += `\\${b.toString(8).padStart(3, '0')}`;
+    else out += String.fromCharCode(b);
+  }
+  return `${out}"`;
 }
 
 /**
