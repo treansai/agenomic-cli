@@ -245,10 +245,11 @@ export class Daemon {
     return this.cfg.workspaces.find((w) => w.id === id);
   }
 
-  private async setStatus(s: Managed, status: string): Promise<void> {
+  /** Reports a status (with `extra` fields); a failed report is logged, never fatal. */
+  private async setStatus(s: Managed, status: string, extra: Record<string, unknown> = {}): Promise<void> {
     s.status = status;
     try {
-      await s.ctx.state({ status });
+      await s.ctx.state({ status, ...extra });
     } catch (error) {
       log('warn', 'state update failed', { session: s.id, error: errorMessage(error) });
     }
@@ -281,8 +282,10 @@ export class Daemon {
     this.persisted[sessionId] = { runtime, cwd: tree.path, base_revision: tree.base_revision, mode, capture, workspace_id: workspace.id };
     this.persist();
     const managed = this.manage(sessionId, runtime, 'launched', mode, capture, tree.path, tree.base_revision, p.trace_id, workspace.id);
-    await managed.ctx.state({
-      status: 'starting',
+    // Best effort: a gateway that is briefly unavailable must not leave a
+    // worktree and a persisted launch without its adapter. Starting is not
+    // a connected status; the report after the start establishes the mode.
+    await this.setStatus(managed, 'starting', {
       workspace: { base_revision: tree.base_revision, branch: tree.branch, preexisting_changes: tree.preexisting_changes.length, worktree: 'dedicated' },
     });
     try {

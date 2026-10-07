@@ -857,6 +857,51 @@ test('a Claude Code launch is applied only once the runtime initialized and its 
   });
 });
 
+/** A Codex App Server that initializes and starts or resumes a thread, and exits when its stdin closes. */
+function fakeAppServer(): string {
+  const fake = path.join(tmp('agn-bin-'), 'codex.js');
+  fs.writeFileSync(fake, [
+    "const rl = require('node:readline').createInterface({ input: process.stdin });",
+    "rl.on('line', (line) => {",
+    '  const m = JSON.parse(line);',
+    '  if (m.id === undefined) return;',
+    "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : m.method.startsWith('thread/') ? { thread: { id: 'thread-fake' } } : {};",
+    "  process.stdout.write(JSON.stringify({ id: m.id, result }) + '\\n');",
+    '});',
+    "rl.on('close', () => process.exit(0));",
+  ].join('\n'));
+  return fake;
+}
+
+test('a launch whose starting report fails still starts, and is not left half handled', async () => {
+  await withHome(async () => {
+    const repo = tempRepo();
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+    cfg.runtimes.codex.executable = fakeAppServer();
+    const api = new (class extends ProbeApi {
+      override async request<T = any>(method: string, p: string, opts: { body?: any } = {}): Promise<T> {
+        if (p.endsWith('/state') && opts.body?.status === 'starting') throw new ApiError(0, 'network', 'gateway unavailable');
+        return super.request<T>(method, p, opts);
+      }
+    })();
+    const daemon: any = new Daemon(cfg, api);
+    const session = randomUUID();
+    const cmd = { id: ulid(), kind: 'launch', coding_session_id: session, payload: { runtime: 'codex', workspace_id: 'w', mode: 'observe' } };
+    try {
+      await daemon.deliver(cmd);
+      assert.equal(api.results.get(cmd.id)?.status, 'applied', JSON.stringify(api.results.get(cmd.id)));
+      assert.equal(daemon.sessions.get(session)?.adapter?.alive(), true, 'the session runs with its adapter');
+      // A redelivery of the same launch gets the same answer.
+      api.results.clear();
+      await daemon.deliver(cmd);
+      assert.equal(api.results.get(cmd.id)?.status, 'applied');
+    } finally {
+      await daemon.sessions.get(session)?.adapter?.stop();
+    }
+  });
+});
+
 test('a local Codex terminal session reports the codex:cli_hooks capabilities, validated by its own probe', async () => {
   await withHome(async () => {
     const version = codexVersion(defaultConfig('x', 'x').runtimes.codex)!;
