@@ -832,6 +832,12 @@ test('a launch or resume whose start fails after the spawn stops the process and
     try {
       for (const kind of ['launch', 'resume_session'] as const) {
         fs.rmSync(pidFile, { force: true });
+        if (kind === 'resume_session') {
+          // The refused launch left no record: the resume is of a session
+          // this runner launched earlier.
+          assert.equal(daemon.persisted[session], undefined);
+          daemon.persisted[session] = { runtime: 'codex', cwd: repo, base_revision: null, native_id: 'thread-fake', mode: 'observe', capture: { conversation: false, commands: false, diffs: false, outputs: false } };
+        }
         const r = await command(kind, kind === 'launch' ? { runtime: 'codex', workspace_id: 'w', mode: 'observe' } : {});
         assert.equal(r?.status, 'refused', kind);
         assert.match(r.error, /sessions timed out/, kind);
