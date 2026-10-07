@@ -11,7 +11,7 @@ import { DEFAULT_CAPTURE, paths, runtimeSecrets, type Capture, type ConnectorCon
 import { EventSink } from './events.ts';
 import { blockedProtection, protection, type Surface } from './protection.ts';
 import { clean } from './redact.ts';
-import { SessionContext, type Runtime, type Verdict } from './session.ts';
+import { SessionContext, sendOutcome, type PendingOutcome, type Runtime, type Verdict } from './session.ts';
 import { errorMessage, executableVersion, log, readExecutableVersion, readJson, redactLogsWith, resolveExecutable, sleep, ulid, writeSecretFile } from './util.ts';
 import * as ws from './workspace.ts';
 
@@ -144,6 +144,15 @@ export class Daemon {
    * unknown, then reported again once it has answered.
    */
   versionWaitMs = 3000;
+  /**
+   * How long a stop waits for the final settlements in flight before it
+   * saves the outcomes still unacknowledged for the next start.
+   */
+  shutdownSettleMs = 10000;
+  /** Contexts with a final settlement started, kept until it is done (a local session is forgotten at its end). */
+  private readonly settlingContexts = new Set<SessionContext>();
+  /** Saved outcomes of a previous run, not delivered yet. */
+  private saved: PendingOutcome[] = [];
 
   constructor(cfg: ConnectorConfig, api?: RunnerApi) {
     this.cfg = cfg;
@@ -315,6 +324,36 @@ export class Daemon {
       .catch((error) => log('warn', 'heartbeat failed', { error: errorMessage(error) }));
     void this.loop('heartbeat', 20000, () => this.heartbeat());
     void this.commandLoop();
+    void this.deliverSaved();
+  }
+
+  /**
+   * Delivers the outcomes a previous run saved at its stop, each until the
+   * gateway acknowledges it (or refuses it for good), and keeps the file
+   * in step so that none is delivered twice by a later start.
+   */
+  private async deliverSaved(): Promise<void> {
+    this.saved = readJson<PendingOutcome[]>(paths.outcomes()) ?? [];
+    for (let delay = 2000; this.saved.length > 0 && !this.abort.signal.aborted; delay = Math.min(delay * 2, 60000)) {
+      for (const o of [...this.saved]) {
+        if (!(await sendOutcome(this.api, o, this.abort.signal, this.secrets()))) continue;
+        if (this.abort.signal.aborted) return;
+        this.saved = this.saved.filter((x) => x !== o);
+        this.saveOutcomes(this.saved);
+      }
+      if (this.saved.length > 0) await sleep(delay, this.abort.signal);
+    }
+  }
+
+  private saveOutcomes(outcomes: PendingOutcome[]): void {
+    if (outcomes.length === 0) fs.rmSync(paths.outcomes(), { force: true });
+    else writeSecretFile(paths.outcomes(), JSON.stringify(outcomes, null, 2));
+  }
+
+  /** The final settlement of a session's actions; a stop waits for it, bounded. */
+  private settleFinal(ctx: SessionContext, summary: string): void {
+    this.settlingContexts.add(ctx);
+    void ctx.settleFinal(summary).finally(() => this.settlingContexts.delete(ctx));
   }
 
   /** Reads the configured runtime versions; true when one of them was not known yet. */
@@ -336,8 +375,22 @@ export class Daemon {
     this.server?.close();
     for (const s of this.sessions.values()) {
       if (s.adapter?.alive()) await s.adapter.stop();
-      await s.ctx.sink.close();
     }
+    // The final settlements (of the runtimes just stopped too) are waited
+    // for, bounded; the outcomes still unacknowledged are saved and
+    // delivered by the next start instead of being lost with the process.
+    const contexts = new Set([...this.sessions.values()].map((s) => s.ctx).concat([...this.settlingContexts]));
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      Promise.all([...contexts].map((c) => c.finalsSettled())),
+      new Promise<void>((resolve) => (timer = setTimeout(resolve, this.shutdownSettleMs))),
+    ]);
+    clearTimeout(timer);
+    const left = [...contexts].flatMap((c) => c.close('connector stopped before the tool reported'));
+    const keep = this.saved.filter((o) => !left.some((l) => l.action_id === o.action_id));
+    if (left.length > 0) log('warn', 'action outcomes saved for the next start', { actions: left.map((o) => o.action_id) });
+    if (left.length > 0 || keep.length !== this.saved.length) this.saveOutcomes([...keep, ...left]);
+    for (const s of this.sessions.values()) await s.ctx.sink.close();
     this.unredactLogs();
   }
 
@@ -667,7 +720,7 @@ export class Daemon {
       // or a kill), the actions it admitted get their final settlement:
       // retained outcomes are delivered, unreported ones settle as
       // unknown. After a stop this is the stop's own settlement.
-      void m.ctx.settleFinal('runtime exited before the tool reported');
+      this.settleFinal(m.ctx, 'runtime exited before the tool reported');
       if (m.status !== 'stopped') await this.adapterStatus(m, 'stopped');
       await m.ctx.sink.flush();
     });
@@ -825,7 +878,7 @@ export class Daemon {
         return {};
       case 'SessionEnd':
         ctx.sink.emit('session.ended', 'runtime', 'native', { reason: input.reason });
-        void ctx.settleFinal('session ended before the tool reported');
+        this.settleFinal(ctx, 'session ended before the tool reported');
         if (m.origin === 'local_connected') {
           await this.setStatus(m, 'stopped');
           await ctx.sink.close();

@@ -65,6 +65,8 @@ export class SessionContext {
   /** Final settlements in flight, and the actions they cover. */
   private readonly finals = new Set<Promise<void>>();
   private readonly settling = new Set<string>();
+  /** Aborted by close(): no outcome is sent after it, and reports in flight are cut. */
+  private readonly closing = new AbortController();
 
   readonly api: RunnerApi;
   readonly id: string;
@@ -284,18 +286,8 @@ export class SessionContext {
 
   /** Whether the outcome is settled on the gateway (acknowledged, or refused for good). */
   private async send(actionId: string, outcome: OutcomeKind, detail: OutcomeDetail): Promise<boolean> {
-    try {
-      await this.api.request('POST', `/v1/coding/runner/sessions/${this.id}/actions/${actionId}/report`, {
-        body: { outcome, exit_code: detail.exit_code ?? undefined, duration_ms: detail.duration_ms, summary: detail.summary ? clean(detail.summary, 400) : undefined },
-        retry: true,
-        timeoutMs: 15000,
-      });
-      return true;
-    } catch (error) {
-      log('warn', 'action report failed', { session: this.id, action: actionId, error: this.cleanText(errorMessage(error), 500) });
-      // A refusal of the report itself will not change on a retry.
-      return refused(error);
-    }
+    if (this.closing.signal.aborted) return false;
+    return sendOutcome(this.api, { coding_session_id: this.id, action_id: actionId, outcome, detail }, this.closing.signal, this.secrets());
   }
 
   /**
@@ -333,19 +325,21 @@ export class SessionContext {
    */
   settleFinal(summary: string, budgetMs = 10 * 60 * 1000, firstDelayMs = 2000): Promise<void> {
     const ids = new Set([...this.open.keys()].filter((id) => !this.settling.has(id)));
-    if (ids.size > 0) {
+    if (ids.size > 0 && !this.closing.signal.aborted) {
       for (const id of ids) this.settling.add(id);
       const settlement: Promise<void> = (async () => {
         const deadline = Date.now() + budgetMs;
         for (let delay = firstDelayMs; ; delay = Math.min(delay * 2, 60000)) {
           await this.settleOpen(summary, ids);
           const left = [...ids].filter((id) => this.open.has(id));
-          if (left.length === 0) return;
+          // Closed (daemon shutdown): what is left was handed over by close().
+          if (left.length === 0 || this.closing.signal.aborted) return;
           if (Date.now() + delay >= deadline) {
             log('warn', 'action outcomes left unreported', { session: this.id, actions: left });
             return;
           }
           await new Promise<void>((resolve) => setTimeout(resolve, delay).unref());
+          if (this.closing.signal.aborted) return;
         }
       })().finally(() => {
         for (const id of ids) this.settling.delete(id);
@@ -354,6 +348,38 @@ export class SessionContext {
       this.finals.add(settlement);
     }
     return Promise.all(this.finals).then(() => undefined);
+  }
+
+  /**
+   * The final settlements in flight, settled: the ones already started,
+   * without starting one for the actions still open.
+   *
+   * @example
+   * await ctx.finalsSettled();
+   */
+  finalsSettled(): Promise<void> {
+    return Promise.all(this.finals).then(() => undefined);
+  }
+
+  /**
+   * Stops delivering outcomes (the daemon shuts down) and hands over the
+   * ones the gateway has not acknowledged, for the next daemon to deliver:
+   * every retained outcome, and `unknown` (with `summary`) for the actions
+   * a final settlement covers whose tool never reported. An action still
+   * running in a live session without an outcome is not handed over.
+   * Reports in flight are cut; nothing is sent by this context after it.
+   *
+   * @example
+   * const left = ctx.close('connector stopped before the tool reported'); // saved, delivered on the next start
+   */
+  close(summary: string): PendingOutcome[] {
+    this.closing.abort();
+    const out: PendingOutcome[] = [];
+    for (const [id, retained] of this.open) {
+      if (retained) out.push({ coding_session_id: this.id, action_id: id, outcome: retained.outcome, detail: retained.detail });
+      else if (this.settling.has(id)) out.push({ coding_session_id: this.id, action_id: id, outcome: 'unknown', detail: { summary } });
+    }
+    return out;
   }
 
   /**
@@ -370,6 +396,37 @@ export class SessionContext {
 type OutcomeKind = 'started' | 'completed' | 'failed' | 'unknown';
 type OutcomeDetail = { exit_code?: number | null; duration_ms?: number; summary?: string };
 type Outcome = { outcome: OutcomeKind; detail: OutcomeDetail; sending?: Promise<void> };
+
+/** An action outcome the gateway has not acknowledged, saved across a daemon restart. */
+export interface PendingOutcome {
+  coding_session_id: string;
+  action_id: string;
+  outcome: OutcomeKind;
+  detail: OutcomeDetail;
+}
+
+/**
+ * Reports an action outcome; true once it is settled on the gateway
+ * (acknowledged, or refused for good: a refusal will not change on a
+ * retry), false when it must be delivered again.
+ *
+ * @example
+ * const settled = await sendOutcome(api, { coding_session_id, action_id, outcome: 'completed', detail: { duration_ms: 5 } });
+ */
+export async function sendOutcome(api: RunnerApi, o: PendingOutcome, signal?: AbortSignal, secrets: string[] = []): Promise<boolean> {
+  try {
+    await api.request('POST', `/v1/coding/runner/sessions/${o.coding_session_id}/actions/${o.action_id}/report`, {
+      body: { outcome: o.outcome, exit_code: o.detail.exit_code ?? undefined, duration_ms: o.detail.duration_ms, summary: o.detail.summary ? clean(o.detail.summary, 400) : undefined },
+      retry: true,
+      timeoutMs: 15000,
+      signal,
+    });
+    return true;
+  } catch (error) {
+    log('warn', 'action report failed', { session: o.coding_session_id, action: o.action_id, error: clean(errorMessage(error), 500, secrets) });
+    return !signal?.aborted && refused(error);
+  }
+}
 
 /** A report the gateway answered with a client error: retrying it cannot succeed. */
 function refused(error: unknown): boolean {

@@ -75,6 +75,8 @@ export const paths = {
   worktrees: () => path.join(home(), 'state', 'worktrees'),
   runtimeHome: (runtime: string) => path.join(home(), 'state', 'runtime', runtime),
   sessions: () => path.join(home(), 'state', 'sessions.json'),
+  /** Action outcomes the gateway had not acknowledged when the daemon stopped, delivered by the next start. */
+  outcomes: () => path.join(home(), 'state', 'outcomes.json'),
   /** Fail mode of the local-session hooks, recorded with each configuration change. */
   localFailMode: () => path.join(home(), 'state', 'local-sessions.fail'),
 };

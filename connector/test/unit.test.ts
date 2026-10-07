@@ -1718,6 +1718,47 @@ test('the settlement at a session\'s end keeps delivering retained outcomes unti
   });
 });
 
+test('a stop saves the outcomes its settlements could not deliver; the next start delivers them once', async () => {
+  await withHome(async () => {
+    const repo = tempRepo();
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+    const first = new FlakyReportApi();
+    const daemon: any = new Daemon(cfg, first);
+    daemon.shutdownSettleMs = 300;
+    const hook = (input: Record<string, unknown>) => daemon.onLocal({ op: 'hook', runtime: 'claude_code', input: { session_id: 'cli-9', cwd: repo, ...input } });
+    await hook({ hook_event_name: 'PreToolUse', tool_use_id: 'toolu_1', tool_name: 'Bash', tool_input: { command: 'ls' } });
+    await hook({ hook_event_name: 'PreToolUse', tool_use_id: 'toolu_2', tool_name: 'Bash', tool_input: { command: 'sleep 9' } });
+    await hook({ hook_event_name: 'PostToolUse', tool_use_id: 'toolu_1', tool_name: 'Bash' });
+    // The session ends, then the daemon is stopped, while the gateway is down.
+    await hook({ hook_event_name: 'SessionEnd', reason: 'exit' });
+    const actions = first.authorizations.length;
+    assert.equal(actions, 2);
+    await daemon.stop();
+    const saved = JSON.parse(fs.readFileSync(paths.outcomes(), 'utf8'));
+    assert.deepEqual(saved.map((o: any) => o.outcome).sort(), ['completed', 'unknown']);
+    // The stopped daemon's settlement no longer delivers once the gateway is back.
+    first.down = false;
+    await sleep(2500);
+    assert.deepEqual(first.reports, []);
+
+    const second = new RecordingApi();
+    const next = new Daemon(cfg, second);
+    await next.start();
+    try {
+      const until = Date.now() + 10000;
+      while (second.reports.length < 2 && Date.now() < until) await sleep(20);
+      await sleep(200);
+      assert.deepEqual(second.reports.map((r) => r.outcome).sort(), ['completed', 'unknown'], 'each saved outcome delivered once');
+      assert.deepEqual(second.reports.map((r) => r.action).sort(), saved.map((o: any) => o.action_id).sort());
+      assert.equal(fs.existsSync(paths.outcomes()), false, 'nothing is left to deliver again');
+    } finally {
+      await next.stop();
+    }
+    assert.equal(fs.existsSync(paths.outcomes()), false);
+  });
+});
+
 test('a runtime failure that quotes a runtime credential is redacted before it is logged or reported', async () => {
   await withHome(async () => {
     const passthrough = 'corp-provider-credential-7f3a9b2c4d5e';
