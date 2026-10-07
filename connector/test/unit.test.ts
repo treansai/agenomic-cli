@@ -903,6 +903,34 @@ test('a launch or resume whose start fails after the spawn stops the process and
   });
 });
 
+test('a resume for a runtime disabled on this runner is refused before anything starts', async () => {
+  await withHome(async () => {
+    const repo = tempRepo();
+    const bin = tmp('agn-bin-');
+    const pidFile = path.join(bin, 'pid');
+    const fake = path.join(bin, 'codex.js');
+    fs.writeFileSync(fake, "require('node:fs').writeFileSync(process.env.FAKE_PID_FILE, String(process.pid));\n");
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+    cfg.runtimes.codex.executable = fake;
+    cfg.runtimes.codex.extra_env = { FAKE_PID_FILE: pidFile };
+    cfg.runtimes.codex.enabled = false;
+    const api = new ProbeApi();
+    const daemon: any = new Daemon(cfg, api);
+    const session = randomUUID();
+    daemon.persisted[session] = { runtime: 'codex', cwd: repo, base_revision: null, native_id: 'thread-fake', mode: 'observe', capture: { conversation: false, commands: false, diffs: false, outputs: false } };
+    const id = ulid();
+    await daemon.handleCommand({ id, kind: 'resume_session', coding_session_id: session, payload: { prompt: 'continue' } });
+    const r = api.results.get(id);
+    assert.equal(r?.status, 'refused');
+    assert.match(r.error, /codex is disabled on this runner/);
+    await sleep(200);
+    assert.equal(fs.existsSync(pidFile), false, 'the runtime was not started');
+    assert.equal(daemon.sessions.has(session), false, 'the session is not managed');
+    assert.equal(api.states.length, 0, 'no state reported for the refused resume');
+  });
+});
+
 test('a Claude Code launch is applied only once the runtime initialized and its native session is registered', { timeout: 120000 }, async () => {
   await withHome(async () => {
     const repo = tempRepo();

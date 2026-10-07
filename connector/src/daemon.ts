@@ -534,6 +534,9 @@ export class Daemon {
     if (live?.adapter?.alive()) return this.result(cmd.id, 'refused', undefined, 'the session is still running');
     if (!rec?.native_id) return this.result(cmd.id, 'refused', undefined, 'no native session recorded on this runner');
     const rcfg = rec.runtime === 'claude_code' ? this.cfg.runtimes.claude_code : this.cfg.runtimes.codex;
+    // Like a launch: a runtime disabled since the session was recorded is
+    // not started, and the session is not managed again.
+    if (!rcfg.enabled) return this.result(cmd.id, 'refused', undefined, `${rec.runtime} is disabled on this runner`);
     const m = live ?? this.manage(cmd.coding_session_id, rec.runtime, 'launched', rec.mode, rec.capture, rec.cwd, rec.base_revision, undefined, rec.workspace_id);
     // The gateway's resumed session is not connected until this runner
     // re-establishes its mode: statuses are held until then.
