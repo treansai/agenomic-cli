@@ -179,19 +179,34 @@ export function absolutePath(value: string | undefined = process.env.PATH): stri
 }
 
 /**
- * The names a command may have on disk: itself, and on Windows, unless it
- * already ends in one of them, itself with each `PATHEXT` extension
- * (`.COM;.EXE;.BAT;.CMD` when unset), as the Windows shell looks it up.
+ * A Windows batch file (`.bat`, `.cmd`): not something `spawn` can start
+ * without `cmd.exe`.
  *
  * @example
- * executableNames('codex', 'win32', '.EXE;.CMD'); // ['codex', 'codex.EXE', 'codex.CMD']
+ * isBatchFile('C:\\npm\\codex.cmd'); // true
+ */
+export function isBatchFile(file: string): boolean {
+  return /\.(bat|cmd)$/i.test(file);
+}
+
+/**
+ * The names a command may have on disk: itself, and on Windows, unless it
+ * already has an extension of `PATHEXT` (`.COM;.EXE;.BAT;.CMD` when
+ * unset), itself with each extension `spawn` can start directly. Batch
+ * files (`.bat`, `.cmd`, such as npm's `codex.cmd` shims) are skipped: they
+ * run only through `cmd.exe`, whose argument quoting the connector does not
+ * trust, so a runtime is given as its `.exe` or as an absolute path.
+ *
+ * @example
+ * executableNames('codex', 'win32', '.EXE;.CMD'); // ['codex', 'codex.EXE']
  * executableNames('codex', 'linux'); // ['codex']
  */
 export function executableNames(exe: string, platform: NodeJS.Platform = process.platform, pathext: string | undefined = process.env.PATHEXT): string[] {
   if (platform !== 'win32') return [exe];
   const exts = (pathext || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean);
   const lower = exe.toLowerCase();
-  return exts.some((ext) => lower.endsWith(ext.toLowerCase())) ? [exe] : [exe, ...exts.map((ext) => exe + ext)];
+  if (exts.some((ext) => lower.endsWith(ext.toLowerCase()))) return [exe];
+  return [exe, ...exts.filter((ext) => !isBatchFile(ext)).map((ext) => exe + ext)];
 }
 
 function executableFile(candidate: string, platform: NodeJS.Platform): boolean {

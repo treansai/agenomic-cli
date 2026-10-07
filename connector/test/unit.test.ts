@@ -11,7 +11,7 @@ import { ApiError, RunnerApi } from '../src/api.ts';
 import { manifest, saveProbe } from '../src/capabilities.ts';
 import { ClaudeSession, claudeCodeVersion, readClaudeCodeVersion, sdkPackage } from '../src/claude.ts';
 import { CODEX_PERMISSION_PROFILE, CodexSession, codexExecutable, codexSessionConfig, codexVersion, readCodexVersion } from '../src/codex.ts';
-import { defaultConfig, loadConfig, localFailMode, paths, runtimeEnv, runtimeSecrets, runtimeUnavailable, saveConfig, spellings, validateConfig } from '../src/config.ts';
+import { defaultConfig, loadConfig, localFailMode, paths, resolveRuntimeExecutable, runtimeEnv, runtimeSecrets, runtimeUnavailable, saveConfig, spellings, validateConfig } from '../src/config.ts';
 import { main } from '../src/cli.ts';
 import { Daemon } from '../src/daemon.ts';
 import { EventSink } from '../src/events.ts';
@@ -1112,18 +1112,23 @@ test('a runtime executable given as a command name is looked up once on the abso
   });
 });
 
-test('a bare command name finds its PATHEXT form on Windows', () => {
-  assert.deepEqual(executableNames('codex', 'win32', '.EXE;.CMD'), ['codex', 'codex.EXE', 'codex.CMD']);
-  assert.deepEqual(executableNames('codex.cmd', 'win32', '.EXE;.CMD'), ['codex.cmd'], 'an extension already given is kept');
-  assert.deepEqual(executableNames('codex', 'win32', undefined), ['codex', 'codex.COM', 'codex.EXE', 'codex.BAT', 'codex.CMD']);
+test('a bare command name finds its PATHEXT form on Windows, never a batch file', () => {
+  assert.deepEqual(executableNames('codex', 'win32', '.EXE;.CMD'), ['codex', 'codex.EXE'], 'batch files are skipped');
+  assert.deepEqual(executableNames('codex.exe', 'win32', '.EXE;.CMD'), ['codex.exe'], 'an extension already given is kept');
+  assert.deepEqual(executableNames('codex', 'win32', undefined), ['codex', 'codex.COM', 'codex.EXE']);
   assert.deepEqual(executableNames('codex', 'linux', '.EXE'), ['codex']);
   const dir = tmp('agn-pathext-');
-  fs.writeFileSync(path.join(dir, 'my-claude.CMD'), '@echo off\r\n');
+  fs.writeFileSync(path.join(dir, 'my-claude.EXE'), 'MZ');
+  fs.writeFileSync(path.join(dir, 'my-codex.CMD'), '@echo off\r\n');
   const env = { PATH: dir, PATHEXT: '.EXE;.CMD' } as NodeJS.ProcessEnv;
-  // Windows has no execute bit: the .CMD file is found although it is not executable here.
-  assert.equal(resolveExecutable('my-claude', 'win32', env), path.join(dir, 'my-claude.CMD'));
+  // Windows has no execute bit: the .EXE file is found although it is not executable here.
+  assert.equal(resolveExecutable('my-claude', 'win32', env), path.join(dir, 'my-claude.EXE'));
   assert.equal(resolveExecutable('my-claude', 'linux', env), null, 'no PATHEXT lookup elsewhere');
-  assert.equal(resolveExecutable('missing', 'win32', env), null);
+  // An npm .cmd shim is not something spawn can start: not found as a command name...
+  assert.equal(resolveExecutable('my-codex', 'win32', env), null);
+  // ...and refused when configured by its path.
+  assert.throws(() => resolveRuntimeExecutable(path.join(dir, 'my-codex.CMD'), 'runtimes.codex.executable', 'win32'), /batch file/);
+  assert.equal(resolveRuntimeExecutable(path.join(dir, 'my-codex.CMD'), 'runtimes.codex.executable', 'linux'), path.join(dir, 'my-codex.CMD'));
 });
 
 test('a runtime process gets only the absolute PATH directories, so a script interpreter is never found in a worktree', async () => {

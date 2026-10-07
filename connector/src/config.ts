@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { absolutePath, readJson, resolveExecutable, writeSecretFile } from './util.ts';
+import { absolutePath, isBatchFile, readJson, resolveExecutable, writeSecretFile } from './util.ts';
 
 export type Mode = 'observe' | 'shadow' | 'enforce';
 
@@ -182,12 +182,18 @@ function executableRefused(exe: unknown, field: string): string | undefined {
  * resolveRuntimeExecutable('codex', 'runtimes.codex.executable'); // '/usr/local/bin/codex'
  * resolveRuntimeExecutable('./bin/codex', 'runtimes.codex.executable'); // throws: must be an absolute path or a command name
  */
-export function resolveRuntimeExecutable(exe: string, field: string): string {
-  if (path.isAbsolute(exe)) return path.normalize(exe);
-  const refused = executableRefused(exe, field);
-  if (refused) throw new Error(refused);
-  const found = resolveExecutable(exe);
-  if (!found) throw new Error(`${field}: ${JSON.stringify(exe)} was not found on PATH; give its absolute path`);
+export function resolveRuntimeExecutable(exe: string, field: string, platform: NodeJS.Platform = process.platform): string {
+  let found: string | null;
+  if (path.isAbsolute(exe)) found = path.normalize(exe);
+  else {
+    const refused = executableRefused(exe, field);
+    if (refused) throw new Error(refused);
+    found = resolveExecutable(exe, platform);
+    if (!found) throw new Error(`${field}: ${JSON.stringify(exe)} was not found on PATH; give its absolute path`);
+  }
+  if (platform === 'win32' && isBatchFile(found)) {
+    throw new Error(`${field}: ${JSON.stringify(exe)} is a batch file, which only cmd.exe can start; give the absolute path of the runtime's .exe`);
+  }
   return found;
 }
 
