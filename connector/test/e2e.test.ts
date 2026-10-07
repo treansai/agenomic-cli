@@ -314,7 +314,8 @@ for (const runtime of ['claude_code', 'codex'] as const) {
     assert.ok(byTool('exfil').every((x) => x.decision === 'deny'));
     const approved = acts.find((x) => x.approval_id === pending.approval_id);
     assert.equal(approved.decision, 'allow');
-    assert.equal(approved.approval_status, 'consumed');
+    // RFC 0013 approval_status: an approval the call already used is served as approved.
+    assert.equal(approved.approval_status, 'approved');
 
     const evs = await events(sid);
     assert.ok(evs.some((e) => e.type === 'diff.snapshot' && e.payload.files.some((f: any) => f.path === 'feature.txt')));
