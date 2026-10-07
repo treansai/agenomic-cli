@@ -918,6 +918,47 @@ test('Codex pre-tool control needs the PreToolUse hook itself listed and trusted
   });
 });
 
+test('an App Server that closes its input fails the pending call at once and ends the session; the daemon stays up', { timeout: 30000 }, async () => {
+  await withHome(async () => {
+    // Answers initialize and thread/start, then closes its stdin and keeps running.
+    const fake = path.join(tmp('agn-bin-'), 'codex.js');
+    fs.writeFileSync(fake, [
+      "const fs = require('node:fs');",
+      "const rl = require('node:readline').createInterface({ input: process.stdin });",
+      'setInterval(() => undefined, 1000);',
+      "rl.on('line', (line) => {",
+      '  const m = JSON.parse(line);',
+      '  if (m.id === undefined) return;',
+      "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : { thread: { id: 'thread-fake' } };",
+      "  process.stdout.write(JSON.stringify({ id: m.id, result }) + '\\n');",
+      "  if (m.method === 'thread/start') { rl.close(); process.stdin.destroy(); fs.closeSync(0); }",
+      '});',
+    ].join('\n'));
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.runtimes.codex.executable = fake;
+    const { api, ctx } = codexHarness(cfg, 'observe');
+    const crashes: unknown[] = [];
+    const onCrash = (e: unknown) => crashes.push(e);
+    process.on('uncaughtException', onCrash);
+    try {
+      const session = new CodexSession({ ctx, cwd: tmp('agn-wt-'), runtime: cfg.runtimes.codex, onNativeSession: async () => undefined, onStatus: () => undefined });
+      await session.start();
+      await sleep(200);
+      const started = Date.now();
+      await assert.rejects(session.send('hello'), /stdin failed|input is closed|app-server exited/);
+      assert.ok(Date.now() - started < 5000, 'failed at once, not at the call timeout');
+      await Promise.race([session.done, sleep(10000).then(() => assert.fail('the session did not end'))]);
+      assert.equal(session.alive(), false);
+      assert.equal(await session.send('again'), 'refused');
+      await ctx.sink.close();
+      assert.ok(api.events.some((e) => e.type === 'session.ended'));
+    } finally {
+      process.off('uncaughtException', onCrash);
+    }
+    assert.deepEqual(crashes, [], 'no stream error escaped');
+  });
+});
+
 test('a launch or resume whose start fails after the spawn stops the process and unmanages the session', async () => {
   await withHome(async () => {
     const repo = tempRepo();

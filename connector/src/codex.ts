@@ -155,12 +155,39 @@ export class CodexSession {
           reject(e);
         },
       });
-      this.write({ id, method, params });
+      if (!this.write({ id, method, params })) {
+        this.pending.get(id)?.reject(new Error(`${method}: the app-server input is closed`));
+        this.pending.delete(id);
+      }
     });
   }
 
-  private write(msg: unknown): void {
-    this.child?.stdin?.write(JSON.stringify(msg) + '\n');
+  /**
+   * Writes one message to the App Server; false when its input is already
+   * closed. A write that fails later (EPIPE) goes to pipeFailed.
+   */
+  private write(msg: unknown): boolean {
+    const stdin = this.child?.stdin;
+    if (!stdin || stdin.destroyed || stdin.writableEnded || this.pipeError) return false;
+    stdin.write(JSON.stringify(msg) + '\n');
+    return true;
+  }
+
+  private pipeError: Error | undefined;
+
+  /**
+   * A stdio pipe of the App Server failed (EPIPE once it closed its
+   * input): without a listener the stream error would crash the daemon.
+   * Every pending call fails now, not at its timeout, and the process is
+   * stopped so the session ends through 'exit' as any other end.
+   */
+  private pipeFailed(stream: string, e: Error): void {
+    if (!this.pipeError) log('warn', 'codex pipe error', { session: this.o.ctx.id, stream, error: this.o.ctx.cleanText(e.message, 500) });
+    this.pipeError ??= e;
+    for (const p of this.pending.values()) p.reject(new Error(`app-server ${stream} failed: ${e.message}`));
+    this.pending.clear();
+    const child = this.child;
+    if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
   }
 
   /**
@@ -193,6 +220,9 @@ export class CodexSession {
     // which would crash the daemon without a listener: the start is
     // refused instead.
     child.on('error', (e) => log('warn', 'codex process error', { session: this.o.ctx.id, error: this.o.ctx.cleanText(e.message, 500) }));
+    child.stdin?.on('error', (e) => this.pipeFailed('stdin', e));
+    child.stdout?.on('error', (e) => this.pipeFailed('stdout', e));
+    child.stderr?.on('error', (e) => this.pipeFailed('stderr', e));
     try {
       await new Promise<void>((resolve, reject) => {
         child.once('spawn', resolve);

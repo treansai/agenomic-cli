@@ -224,6 +224,14 @@ export async function codexListHooks(exe: string, codexHome: string, cwd: string
     failure = new Error(`codex could not be started: ${e.message}`);
     for (const fail of waiting) fail(failure);
   });
+  // A pipe that fails (EPIPE once the App Server closed its input) fails
+  // every call instead of crashing the process.
+  const pipeFailed = (e: Error) => {
+    failure ??= new Error(`codex app-server pipe failed: ${e.message}`);
+    for (const fail of waiting) fail(failure);
+  };
+  child.stdin!.on('error', pipeFailed);
+  child.stdout!.on('error', pipeFailed);
   const rl = readline.createInterface({ input: child.stdout! });
   const replies = new Map<number, (v: any) => void>();
   rl.on('line', (l) => {

@@ -282,6 +282,16 @@ export class ClaudeSession {
         spawnClaudeCodeProcess: (opts: any) => {
           const child = spawn(opts.command, opts.args, { cwd: opts.cwd, env: opts.env, signal: opts.signal, stdio: ['pipe', 'pipe', 'pipe'] });
           child.stderr?.on('data', (d) => log('debug', 'claude stderr', { line: this.o.ctx.cleanText(String(d), 500) }));
+          // A pipe that fails (EPIPE once Claude Code closed its input) would
+          // crash the daemon without a listener: the process is stopped and
+          // the session ends as on any other exit.
+          const pipeFailed = (stream: string) => (e: Error) => {
+            log('warn', 'claude pipe error', { session: this.o.ctx.id, stream, error: this.o.ctx.cleanText(e.message, 500) });
+            if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+          };
+          child.stdin?.on('error', pipeFailed('stdin'));
+          child.stdout?.on('error', pipeFailed('stdout'));
+          child.stderr?.on('error', pipeFailed('stderr'));
           this.child = child;
           return child as any;
         },
