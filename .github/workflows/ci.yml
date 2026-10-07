@@ -54,3 +54,29 @@ jobs:
         with:
           tool: cargo-deny
       - run: cargo deny check
+
+  connector:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: connector
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.22"
+      # Launched Claude Code sessions require their sandbox (bubblewrap and
+      # socat on Linux); the unit tests start the bundled runtime. Ubuntu
+      # 24.04 restricts unprivileged user namespaces through AppArmor.
+      - name: sandbox for launched runtimes
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap socat
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          bwrap --ro-bind / / --dev /dev true
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      # The end to end suite skips without AGENOMIC_E2E_ENDPOINT.
+      - run: npm test

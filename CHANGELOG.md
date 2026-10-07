@@ -50,6 +50,12 @@ All notable changes to `agenomic-cli` are documented here. Format follows
   `prompt-manifest`, `prompt-artifact-set`, `prompt-file` and
   `prompt-bundle` schemas, and `SchemaKind` gains the five prompt
   document kinds.
+- **Coding connector** (`connector/`, `@agenomic/coding-connector` 0.1.0).
+  Enrolls a machine with Agenomic, launches Claude Code (Agent SDK
+  0.3.289) and Codex (App Server 0.160.1) sessions in dedicated worktrees
+  under their sandboxes, routes every pre-tool decision and approval to
+  Agenomic, reports events, installs and uninstalls hooks for local CLI
+  sessions, and validates capabilities per machine (`doctor --probe`).
 
 ### Changed
 
