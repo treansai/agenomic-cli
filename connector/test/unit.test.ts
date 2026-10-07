@@ -50,6 +50,18 @@ test('configured credentials shorter than eight characters are redacted too', ()
   assert.equal(redact('a b', ['', ' ']), 'a b');
 });
 
+test('a short configured credential is redacted in coloured output too', () => {
+  // The escape sequence before the value is a boundary, not a letter.
+  assert.equal(clean('\u001b[31mt0k\u001b[0m', 100, ['t0k']), '[REDACTED]');
+  assert.equal(clean('key: \u001b[1;32mpw#1\u001b[0m done', 100, ['pw#1']), 'key: [REDACTED] done');
+  assert.equal(clean('\u001bMt0k', 100, ['t0k']), '[REDACTED]');
+  // Events are redacted without being stripped: the value goes, the colour stays.
+  assert.equal(redact('\u001b[31mt0k\u001b[0m', ['t0k']), '\u001b[31m[REDACTED]\u001b[0m');
+  // A value split by an escape sequence is whole once it is stripped.
+  assert.equal(clean('corp-\u001b[0mcredential-0a1b', 100, ['corp-credential-0a1b']), '[REDACTED]');
+  assert.equal(clean('\u001b[31mt0ken\u001b[0m', 100, ['t0k']), 't0ken', 'a word containing it is kept');
+});
+
 test('Claude Code hooks: preserve existing hooks, idempotent, exact uninstall, backup', () => {
   const dir = tmp('agn-hooks-');
   const file = path.join(dir, '.claude', 'settings.local.json');

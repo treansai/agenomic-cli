@@ -24,10 +24,13 @@ const SUBSTRING_MIN = 8;
 /**
  * A configured value shorter than SUBSTRING_MIN, matched as a whole token
  * (not inside a longer run of letters and digits), so that a short
- * credential is redacted without shredding the words that contain it.
+ * credential is redacted without shredding the words that contain it. A
+ * terminal escape sequence just before it is a boundary too: coloured
+ * output (`\u001b[31mt0k`) does not hide it.
  */
 function shortSecret(secret: string): RegExp {
-  return new RegExp(`(?<![A-Za-z0-9])${secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9])`, 'g');
+  const escaped = secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?<=^|[^A-Za-z0-9]|\u001b\\[[0-?]*[ -/]*[@-~]|\u001b[@-Z\\\\-_])${escaped}(?![A-Za-z0-9])`, 'g');
 }
 
 /**
@@ -61,7 +64,9 @@ const ANSI = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(\u0007|\u001b\\
  * clean('\u001b[31mOPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwx\u001b[0m', 200); // no key, no escape sequence
  */
 export function clean(text: string, max = 4000, extraSecrets: string[] = []): string {
-  const stripped = redact(text, extraSecrets).replace(ANSI, '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
+  // Redacted before the control sequences are stripped (they are token
+  // boundaries) and after (a value they split is whole again).
+  const stripped = redact(redact(text, extraSecrets).replace(ANSI, '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ''), extraSecrets);
   return stripped.length > max ? stripped.slice(0, max) + '…' : stripped;
 }
 
