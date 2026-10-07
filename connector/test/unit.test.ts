@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { getEventListeners } from 'node:events';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -563,6 +564,18 @@ test('symlink escapes are detected on the real path', () => {
   fs.symlinkSync(outside, path.join(root, 'link'));
   assert.equal(realPathEscapes('link/secret', root, root), true);
   assert.equal(realPathEscapes('src/new.txt', root, root), false);
+});
+
+test('a sleep that times out removes its abort listener; a long-lived signal does not accumulate them', async () => {
+  const abort = new AbortController();
+  for (let i = 0; i < 20; i++) await sleep(1, abort.signal);
+  assert.equal(getEventListeners(abort.signal, 'abort').length, 0);
+  const pending = sleep(60000, abort.signal);
+  assert.equal(getEventListeners(abort.signal, 'abort').length, 1);
+  abort.abort();
+  await pending;
+  assert.equal(getEventListeners(abort.signal, 'abort').length, 0);
+  await sleep(60000, abort.signal);
 });
 
 test('test commands are recognised, quoted or not; the signal stays derived', () => {

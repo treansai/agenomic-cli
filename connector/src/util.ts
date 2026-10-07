@@ -26,18 +26,25 @@ export function ulid(now = Date.now()): string {
 }
 
 /**
- * Resolves after `ms`, or as soon as `signal` aborts.
+ * Resolves after `ms`, or as soon as `signal` aborts. The abort listener
+ * is removed when the timer wins, so a long-lived signal shared by many
+ * sleeps (the heartbeat loop, approval polling) does not accumulate them.
  *
  * @example
  * await sleep(3000, abort.signal);
  */
 export const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve) => {
-    const t = setTimeout(resolve, ms);
-    signal?.addEventListener('abort', () => {
+    if (signal?.aborted) return resolve();
+    const onAbort = () => {
       clearTimeout(t);
       resolve();
-    }, { once: true });
+    };
+    const t = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
 
 /**

@@ -399,10 +399,14 @@ export class ClaudeSession {
       ...(ctx.capture.conversation ? { questions: questions.map((q) => ({ question: ctx.cleanText(q.question, 1000), options: (q.options ?? []).map((o) => ctx.cleanText(o.label, 200)) })) } : { count: questions.length }),
     });
     this.o.onStatus('waiting_input');
+    let onAbort = () => {};
     const answer = await new Promise<string | null>((resolve) => {
+      onAbort = () => resolve(null);
       this.questions.set(id, resolve);
-      signal.addEventListener('abort', () => resolve(null), { once: true });
+      if (signal.aborted) resolve(null);
+      else signal.addEventListener('abort', onAbort, { once: true });
     });
+    signal.removeEventListener('abort', onAbort);
     this.questions.delete(id);
     this.o.onStatus('running');
     if (answer === null) return { behavior: 'deny', message: 'The question was cancelled.' };
