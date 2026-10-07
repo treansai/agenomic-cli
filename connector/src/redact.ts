@@ -18,16 +18,34 @@ const URL_CREDENTIALS = /(:\/\/[^/\s:@]+:)[^@\s/]+@/g;
 
 export const REDACTED = '[REDACTED]';
 
+/** A configured value at least this long is redacted wherever it occurs. */
+const SUBSTRING_MIN = 8;
+
 /**
- * Replaces known secret patterns and the given secret values with [REDACTED].
+ * A configured value shorter than SUBSTRING_MIN, matched as a whole token
+ * (not inside a longer run of letters and digits), so that a short
+ * credential is redacted without shredding the words that contain it.
+ */
+function shortSecret(secret: string): RegExp {
+  return new RegExp(`(?<![A-Za-z0-9])${secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9])`, 'g');
+}
+
+/**
+ * Replaces known secret patterns and the given secret values with
+ * [REDACTED]: every occurrence of a value, or every whole-token occurrence
+ * of a value shorter than eight characters.
  *
  * @example
  * redact('token is s3cret-value-123', ['s3cret-value-123']); // 'token is [REDACTED]'
+ * redact('GATEWAY_TOKEN=t0k, not t0ken', ['t0k']); // 'GATEWAY_TOKEN=[REDACTED], not t0ken'
  */
 export function redact(text: string, extraSecrets: string[] = []): string {
   let out = text;
-  for (const secret of extraSecrets) {
-    if (secret && secret.length >= 8) out = out.split(secret).join(REDACTED);
+  // Longest first, so that a short value inside a longer one does not
+  // leave the rest of the longer one readable.
+  for (const secret of [...new Set(extraSecrets)].sort((a, b) => b.length - a.length)) {
+    if (!secret || !secret.trim()) continue;
+    out = secret.length >= SUBSTRING_MIN ? out.split(secret).join(REDACTED) : out.replace(shortSecret(secret), REDACTED);
   }
   for (const re of PATTERNS) out = out.replace(re, REDACTED);
   return out.replace(URL_CREDENTIALS, `$1${REDACTED}@`);

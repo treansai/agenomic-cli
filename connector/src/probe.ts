@@ -34,7 +34,9 @@ export class ProbeApi extends RunnerApi {
   private actions = new Map<string, { approved: boolean }>();
 
   constructor() {
-    super('http://127.0.0.1:9', { access_token: 'probe', refresh_token: 'probe', access_expires_at: new Date(Date.now() + 3600e3).toISOString(), refresh_expires_at: new Date(Date.now() + 3600e3).toISOString() }, false);
+    // Tokens of the fake runner, redacted like real ones: long and unlike
+    // any other text, so that redaction leaves the probe's content intact.
+    super('http://127.0.0.1:9', { access_token: 'agenomic-probe-access-not-a-secret', refresh_token: 'agenomic-probe-refresh-not-a-secret', access_expires_at: new Date(Date.now() + 3600e3).toISOString(), refresh_expires_at: new Date(Date.now() + 3600e3).toISOString() }, false);
   }
 
   /**

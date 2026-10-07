@@ -37,6 +37,19 @@ test('redaction removes credentials and terminal escapes before export', () => {
   assert.equal(redact('token is s3cret-value-123', ['s3cret-value-123']), 'token is [REDACTED]');
 });
 
+test('configured credentials shorter than eight characters are redacted too', () => {
+  const secrets = runtimeSecrets({ enabled: true, env_passthrough: ['AGN_UNIT_SHORT_PW'], extra_env: { GATEWAY_TOKEN: 't0k', LOG_LEVEL: 'debug' }, allowed_domains: [] } as any, { AGN_UNIT_SHORT_PW: 'pw#1' });
+  assert.deepEqual(secrets.sort(), ['pw#1', 't0k']);
+  assert.equal(redact('GATEWAY_TOKEN=t0k curl -u admin:pw#1 host', secrets), 'GATEWAY_TOKEN=[REDACTED] curl -u admin:[REDACTED] host');
+  assert.equal(clean('t0k (t0k)', 100, secrets), '[REDACTED] ([REDACTED])');
+  // A short value is matched as a whole token: words containing it are kept.
+  assert.equal(redact('t0ken at0k t0k', ['t0k']), 't0ken at0k [REDACTED]');
+  // The longer value is redacted whole even when a shorter one is inside it.
+  assert.equal(redact('k=t0k-and-more-secret', ['t0k', 't0k-and-more-secret']), 'k=[REDACTED]');
+  // Empty and blank values never match.
+  assert.equal(redact('a b', ['', ' ']), 'a b');
+});
+
 test('Claude Code hooks: preserve existing hooks, idempotent, exact uninstall, backup', () => {
   const dir = tmp('agn-hooks-');
   const file = path.join(dir, '.claude', 'settings.local.json');
