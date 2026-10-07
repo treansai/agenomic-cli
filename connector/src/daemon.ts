@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { ApiError, RunnerApi } from './api.ts';
-import { manifest } from './capabilities.ts';
+import { manifest, type CapEntry } from './capabilities.ts';
 import { ClaudeSession, claudeCodeVersion, readClaudeCodeVersion, sdkVersion } from './claude.ts';
 import { CodexSession, codexVersion, readCodexVersion } from './codex.ts';
 import { DEFAULT_CAPTURE, paths, runtimeSecrets, type Capture, type ConnectorConfig, type Mode, type WorkspaceConfig } from './config.ts';
@@ -12,7 +12,7 @@ import { EventSink } from './events.ts';
 import { blockedProtection, protection, type Surface } from './protection.ts';
 import { clean } from './redact.ts';
 import { SessionContext, type Runtime, type Verdict } from './session.ts';
-import { errorMessage, log, readJson, redactLogsWith, resolveExecutable, sleep, ulid, writeSecretFile } from './util.ts';
+import { errorMessage, executableVersion, log, readJson, redactLogsWith, resolveExecutable, sleep, ulid, writeSecretFile } from './util.ts';
 import * as ws from './workspace.ts';
 
 const VERSION = '0.1.0';
@@ -29,6 +29,12 @@ interface Managed {
   cwd: string;
   nativeId?: string;
   workspaceId?: string;
+  /**
+   * For a local session, the executable of the runtime process that runs
+   * it (reported by its hook): its capabilities are validated for that
+   * binary's version, never for the configured one's.
+   */
+  executable?: string;
   /**
    * Whether the report that establishes the session's mode (connect) was
    * made. Until then a status the runtime reports is only held: no
@@ -115,7 +121,6 @@ export class Daemon {
    */
   runtimes(): any[] {
     const out: any[] = [];
-    const sb = sandboxAvailable();
     // The version is the one of the binary sessions run (a configured
     // executable reports its own): a probe of another binary never
     // validates it. One that cannot tell its version stays listed, with
@@ -126,19 +131,41 @@ export class Daemon {
       const sdk = sdkVersion();
       if (sdk) {
         const version = claudeCodeVersion(cc) ?? null;
-        const caps = manifest('claude_code', 'sdk', version);
-        if (!sb.ok) caps.pre_tool_control = { ...caps.pre_tool_control!, validated: 'unsupported', detail: `sandbox unavailable: ${sb.detail}` };
-        out.push({ runtime: 'claude_code', version: version ?? 'unknown', sdk_version: sdk, surfaces: ['sdk', 'cli_hooks'], capabilities: caps });
+        out.push({ runtime: 'claude_code', version: version ?? 'unknown', sdk_version: sdk, surfaces: ['sdk', 'cli_hooks'], capabilities: this.capabilities('claude_code', 'sdk', version) });
       }
     }
     const cx = this.cfg.runtimes.codex;
     if (cx.enabled) {
       const version = codexVersion(cx) ?? null;
       if (version || (cx.executable && resolveExecutable(cx.executable))) {
-        out.push({ runtime: 'codex', version: version ?? 'unknown', surfaces: ['app_server', 'cli_hooks'], capabilities: manifest('codex', 'app_server', version) });
+        out.push({ runtime: 'codex', version: version ?? 'unknown', surfaces: ['app_server', 'cli_hooks'], capabilities: this.capabilities('codex', 'app_server', version) });
       }
     }
     return out;
+  }
+
+  /** The capability manifest of a runtime surface for a binary version; the SDK surface also needs the sandbox. */
+  private capabilities(runtime: Runtime, surface: Surface, version: string | null): Record<string, CapEntry> {
+    const caps = manifest(runtime, surface, version);
+    if (runtime === 'claude_code' && surface === 'sdk') {
+      const sb = sandboxAvailable();
+      if (!sb.ok) caps.pre_tool_control = { ...caps.pre_tool_control!, validated: 'unsupported', detail: `sandbox unavailable: ${sb.detail}` };
+    }
+    return caps;
+  }
+
+  /**
+   * Version of the binary a session runs, `undefined` while its
+   * `--version` has not answered. A launched session runs the configured
+   * runtime; a local one the executable its hook reported, and a local
+   * session whose executable is not known has no version (nothing is
+   * validated for it): the configured binary's version is never
+   * substituted, since a probe of that binary says nothing about another
+   * CLI the developer runs.
+   */
+  private sessionVersion(m: Managed): string | null | undefined {
+    if (m.origin === 'local_connected') return m.executable ? executableVersion(m.executable) : null;
+    return m.runtime === 'claude_code' ? claudeCodeVersion(this.cfg.runtimes.claude_code) : codexVersion(this.cfg.runtimes.codex);
   }
 
   /**
@@ -381,9 +408,7 @@ export class Daemon {
     m.connected = true;
     m.held = undefined;
     m.status = status;
-    const caps = surface === 'cli_hooks'
-      ? manifest(m.runtime, 'cli_hooks', this.runtimes().find((r) => r.runtime === m.runtime)?.version ?? null)
-      : this.runtimes().find((r) => r.runtime === m.runtime)?.capabilities ?? {};
+    const caps = this.capabilities(m.runtime, surface, this.sessionVersion(m) ?? null);
     const validated = (caps as Record<string, { validated?: string }>).pre_tool_control?.validated;
     const blocked = m.ctx.mode === 'enforce' && validated !== 'supported_tested' && validated !== 'partial';
     const requested = protection(m.runtime, surface, m.ctx.mode);
@@ -640,7 +665,7 @@ export class Daemon {
     const native = String(input.session_id ?? '');
     let m = this.byNative.get(`${runtime}:${native}`);
     if (!m) {
-      m = await this.registerLocal(runtime, native, String(input.cwd ?? ''));
+      m = await this.registerLocal(runtime, native, String(input.cwd ?? ''), typeof req.invoker === 'string' && path.isAbsolute(req.invoker) ? req.invoker : undefined);
       if (!m) return {}; // outside every declared workspace: nothing is sent
     }
     const ctx = m.ctx;
@@ -709,7 +734,7 @@ export class Daemon {
   }
 
   /** A developer session in a declared workspace, seen for the first time. */
-  private async registerLocal(runtime: Runtime, native: string, cwd: string): Promise<Managed | undefined> {
+  private async registerLocal(runtime: Runtime, native: string, cwd: string, executable?: string): Promise<Managed | undefined> {
     if (!native || !cwd) return undefined;
     const real = (() => {
       try {
@@ -747,9 +772,13 @@ export class Daemon {
     }
     const m = this.manage(id, runtime, 'local_connected', local.mode, local.capture, workspace.path, state.base_revision, res.session.trace_id, workspace.id);
     m.nativeId = native;
+    m.executable = executable;
     this.byNative.set(`${runtime}:${native}`, m);
     await this.connect(m, 'cli_hooks', {
-      limitations: ['a session that was already open before the hooks were installed must be restarted to be connected'],
+      limitations: [
+        'a session that was already open before the hooks were installed must be restarted to be connected',
+        ...(executable ? [] : ['the runtime executable running this session could not be identified, so no capability is validated for it']),
+      ],
       workspace: { base_revision: state.base_revision, branch: state.branch, preexisting_changes: state.preexisting_changes.length },
     });
     return m;

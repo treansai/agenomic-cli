@@ -67,7 +67,12 @@ runs only after its approval (Claude Code terminal sessions are not
 probed yet, so their capabilities stay unvalidated). Results are stored
 under the version the probed binary reports (`--version` for a
 configured executable); the daemon reports the same version, so a probe
-of one binary never validates another. The daemon reads it in the
+of one binary never validates another. A terminal session is validated
+for the CLI that runs it, not for the configured one: its hook names the
+runtime process that ran it (read from `/proc` on Linux), and the daemon
+reads that binary's `--version`. When the hook cannot name it (other
+systems, or a binary replaced since it started), nothing is validated
+for the session and an enforce session is blocked. The daemon reads it in the
 background: until the binary has answered, it reports `unknown` and
 nothing is validated. The cockpit only offers an
 operation validated on the machine.

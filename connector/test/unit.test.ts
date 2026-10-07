@@ -15,13 +15,13 @@ import { defaultConfig, localFailMode, paths, runtimeSecrets, saveConfig } from 
 import { main } from '../src/cli.ts';
 import { Daemon } from '../src/daemon.ts';
 import { EventSink } from '../src/events.ts';
-import { eventOf } from '../src/hook.ts';
+import { eventOf, invokingExecutable } from '../src/hook.ts';
 import { apply, codexBlock, hookCommand, planClaude, planCodex } from '../src/hooks-install.ts';
 import { clean, redact } from '../src/redact.ts';
 import { protection, TOOL_IDS } from '../src/protection.ts';
 import { ProbeApi, probeConfig, probedVersion, runProbe, tempRepo } from '../src/probe.ts';
 import { isTestCommand, type SessionContext } from '../src/session.ts';
-import { log, realPathEscapes, sleep, ulid } from '../src/util.ts';
+import { log, readExecutableVersion, realPathEscapes, sleep, ulid } from '../src/util.ts';
 import * as ws from '../src/workspace.ts';
 
 const tmp = (p: string) => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), p)));
@@ -1252,11 +1252,78 @@ test('a local Codex terminal session reports the codex:cli_hooks capabilities, v
     const api = new ProbeApi();
     const daemon = new Daemon(cfg, api);
     assert.deepEqual(daemon.runtimes().find((r) => r.runtime === 'codex').surfaces, ['app_server', 'cli_hooks']);
-    await (daemon as any).onLocal({ op: 'hook', runtime: 'codex', input: { hook_event_name: 'SessionStart', session_id: 'thread-1', cwd: repo } });
+    // The Codex binary that runs the terminal session, as its hook reports it.
+    const invoker = fakeBinary(`codex-cli ${version}`);
+    assert.equal(await readExecutableVersion(invoker), version);
+    await (daemon as any).onLocal({ op: 'hook', runtime: 'codex', input: { hook_event_name: 'SessionStart', session_id: 'thread-1', cwd: repo }, invoker });
     const state = api.states.find((s) => s.capabilities);
     assert.equal(state.capabilities.pre_tool_control.validated, 'partial');
     assert.equal(state.capabilities.converse.validated, 'unsupported');
+    assert.equal(state.mode_effective, 'enforce');
   });
+});
+
+test('a local session is validated for the CLI that runs it, never for the configured binary', async () => {
+  await withHome(async () => {
+    const repo = tempRepo();
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+    cfg.local_sessions.mode = 'enforce';
+    cfg.runtimes.codex.executable = fakeBinary('codex-cli 4.4.4');
+    assert.equal(await readCodexVersion(cfg.runtimes.codex), '4.4.4');
+    const ok = { ok: true, detail: 'probe' };
+    // `doctor --probe` validated the configured binary's terminal surface.
+    saveProbe({ runtime: 'codex', surface: 'cli_hooks', version: '4.4.4', at: '', results: { observe: ok, pre_tool_control: ok, remote_approval: ok } });
+    const other = fakeBinary('codex-cli 5.5.5');
+    assert.equal(await readExecutableVersion(other), '5.5.5');
+    const api = new ProbeApi();
+    const daemon: any = new Daemon(cfg, api);
+    const connect = async (native: string, invoker?: string) => {
+      await daemon.onLocal({ op: 'hook', runtime: 'codex', input: { hook_event_name: 'SessionStart', session_id: native, cwd: repo }, ...(invoker ? { invoker } : {}) });
+      return api.states.filter((s) => s.capabilities).at(-1);
+    };
+    const unrelated = await connect('thread-other', other);
+    assert.equal(unrelated.capabilities.pre_tool_control.validated, 'unknown', 'a probe of 4.4.4 does not validate a 5.5.5 CLI');
+    assert.equal(unrelated.mode_effective, 'blocked');
+    const unidentified = await connect('thread-unknown');
+    assert.equal(unidentified.capabilities.pre_tool_control.validated, 'unknown', 'no executable: the configured version is not substituted');
+    assert.equal(unidentified.mode_effective, 'blocked');
+    assert.ok(unidentified.limitations.some((l: string) => l.includes('could not be identified')));
+    const same = await connect('thread-same', cfg.runtimes.codex.executable);
+    assert.equal(same.capabilities.pre_tool_control.validated, 'partial');
+    assert.equal(same.mode_effective, 'enforce');
+  });
+});
+
+test('the hook names the runtime executable that ran it: past shells, and the script of a Node process', () => {
+  const proc = tmp('agn-proc-');
+  const bin = tmp('agn-bin-');
+  const codex = path.join(bin, 'codex');
+  fs.writeFileSync(codex, '');
+  const cli = path.join(bin, 'cli.js');
+  fs.writeFileSync(cli, '');
+  const shell = path.join(bin, 'sh');
+  fs.writeFileSync(shell, '');
+  const node = path.join(bin, 'node');
+  fs.writeFileSync(node, '');
+  const ps = (pid: number, exe: string, argv: string[], ppid: number, cwd = bin) => {
+    const dir = path.join(proc, String(pid));
+    fs.mkdirSync(dir);
+    fs.symlinkSync(exe, path.join(dir, 'exe'));
+    fs.symlinkSync(cwd, path.join(dir, 'cwd'));
+    fs.writeFileSync(path.join(dir, 'cmdline'), argv.join('\0') + '\0');
+    fs.writeFileSync(path.join(dir, 'stat'), `${pid} (${path.basename(exe)} x) S ${ppid} 1 1 0`);
+  };
+  ps(10, codex, [codex, 'exec'], 1);
+  ps(11, shell, ['sh', '-c', 'hook'], 10);
+  ps(20, node, ['node', '--no-warnings', 'cli.js'], 1);
+  ps(30, `${codex} (deleted)`, [codex], 1);
+  ps(31, shell, ['sh', '-c', 'hook'], 30);
+  assert.equal(invokingExecutable(11, proc), codex);
+  assert.equal(invokingExecutable(10, proc), codex);
+  assert.equal(invokingExecutable(20, proc), cli);
+  assert.equal(invokingExecutable(31, proc), undefined, 'a binary replaced since it started is not read');
+  assert.equal(invokingExecutable(99, proc), undefined);
 });
 
 test('every event envelope carries its coding_session_id, spooled and synthesized ones included', async () => {
@@ -1633,9 +1700,12 @@ test('protection lists tool ids of the closed vocabulary; mechanisms go to notes
     assert.deepEqual(blocked.protection.not_covered, VOCABULARY);
     assert.ok(blocked.protection.notes.some((n: string) => n.startsWith('blocked: enforce needs pre-tool control validated')));
     const ok = { ok: true, detail: 'probe' };
-    saveProbe({ runtime: 'claude_code', surface: 'cli_hooks', version: claudeCodeVersion(cfg.runtimes.claude_code)!, at: '', results: { observe: ok, pre_tool_control: ok } });
+    saveProbe({ runtime: 'claude_code', surface: 'cli_hooks', version: '3.3.3', at: '', results: { observe: ok, pre_tool_control: ok } });
+    // Validated for the version of the CLI that runs the session, as its hook names it.
+    const invoker = fakeBinary('3.3.3 (Claude Code)');
+    await readExecutableVersion(invoker);
     const api = new ProbeApi();
-    await (new Daemon(cfg, api) as any).onLocal({ op: 'hook', runtime: 'claude_code', input: { hook_event_name: 'SessionStart', session_id: 'cli-2', cwd: repo } });
+    await (new Daemon(cfg, api) as any).onLocal({ op: 'hook', runtime: 'claude_code', input: { hook_event_name: 'SessionStart', session_id: 'cli-2', cwd: repo }, invoker });
     const state = api.states.find((s) => s.protection);
     assert.equal(state.mode_effective, 'enforce');
     assert.equal(state.capabilities.pre_tool_control.validated, 'partial');

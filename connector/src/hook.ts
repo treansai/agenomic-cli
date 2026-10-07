@@ -1,4 +1,6 @@
+import fs from 'node:fs';
 import net from 'node:net';
+import path from 'node:path';
 import { localFailMode, paths } from './config.ts';
 import { clean } from './redact.ts';
 
@@ -39,7 +41,8 @@ export async function runHook(runtime: 'claude-code' | 'codex', failMode: 'close
   }
   const event: string | undefined = input?.hook_event_name;
   try {
-    const output = hookOutput(await ask({ op: 'hook', runtime, input }, deadlineMs));
+    const invoker = invokingExecutable();
+    const output = hookOutput(await ask({ op: 'hook', runtime, input, ...(invoker ? { invoker } : {}) }, deadlineMs));
     if (output) process.stdout.write(JSON.stringify(output));
     return 0;
   } catch (error) {
@@ -78,6 +81,54 @@ function fallback(_runtime: string, event: string | undefined, failMode: 'closed
     }));
   }
   return 0;
+}
+
+/** Processes a runtime runs its command hooks through, looked past to reach the runtime. */
+const WRAPPERS = new Set(['sh', 'bash', 'dash', 'zsh', 'ksh', 'mksh', 'fish', 'busybox', 'env', 'nice', 'nohup', 'timeout']);
+
+/**
+ * The executable of the runtime process that ran this hook: the first
+ * ancestor that is not a shell, and for a Node or Bun process the script
+ * it runs. Read from `/proc` (Linux); undefined elsewhere, or when the
+ * executable was replaced since the process started, so that the daemon
+ * never validates a session with another binary's version.
+ *
+ * @example
+ * invokingExecutable(); // '/usr/lib/node_modules/@openai/codex/vendor/x86_64-unknown-linux-musl/codex/codex', or undefined
+ */
+export function invokingExecutable(pid = process.ppid, proc = '/proc'): string | undefined {
+  for (let depth = 0; depth < 8 && pid > 1; depth++) {
+    let exe: string;
+    let argv: string[];
+    try {
+      exe = fs.readlinkSync(path.join(proc, String(pid), 'exe'));
+      argv = fs.readFileSync(path.join(proc, String(pid), 'cmdline'), 'utf8').split('\0').filter(Boolean);
+    } catch {
+      return undefined;
+    }
+    if (exe.endsWith(' (deleted)')) return undefined;
+    const name = path.basename(exe);
+    if (WRAPPERS.has(name)) {
+      try {
+        const stat = fs.readFileSync(path.join(proc, String(pid), 'stat'), 'utf8');
+        pid = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1]);
+      } catch {
+        return undefined;
+      }
+      continue;
+    }
+    if (/^(node|nodejs|bun)$/.test(name)) {
+      const script = argv.slice(1).find((a) => !a.startsWith('-'));
+      if (!script) return undefined;
+      try {
+        return path.resolve(fs.readlinkSync(path.join(proc, String(pid), 'cwd')), script);
+      } catch {
+        return path.isAbsolute(script) ? script : undefined;
+      }
+    }
+    return exe;
+  }
+  return undefined;
 }
 
 /**
