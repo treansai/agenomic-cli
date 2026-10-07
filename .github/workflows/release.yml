@@ -69,8 +69,8 @@ jobs:
           for archive in dist/*.tar.gz dist/*.zip; do
             [ -f "${archive}" ] || continue
             case "${archive}" in
-              *.tar.gz) tar tzf "${archive}" | grep -q "/LICENSE$" ;;
-              *.zip) 7z l "${archive}" | grep -q "LICENSE" ;;
+              *.tar.gz) tar tzf "${archive}" | grep "/LICENSE$" > /dev/null ;;
+              *.zip) 7z l "${archive}" | grep "LICENSE" > /dev/null ;;
             esac
           done
           rm -rf dist/stage
