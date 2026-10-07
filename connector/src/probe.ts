@@ -7,7 +7,7 @@ import { RunnerApi } from './api.ts';
 import { saveProbe, type CapName, type ProbeResult } from './capabilities.ts';
 import { readClaudeCodeVersion } from './claude.ts';
 import { codexExecutable, readCodexVersion } from './codex.ts';
-import { defaultConfig, loadConfig, runtimeEnv, runtimeSecrets, type ConnectorConfig } from './config.ts';
+import { defaultConfig, loadConfig, runtimeEnv, runtimeSecrets, runtimeUnavailable, type ConnectorConfig } from './config.ts';
 import { Daemon } from './daemon.ts';
 import { codexProviderToml, fakeAnthropic, fakeResponses, script, type FakeServer } from './fakes.ts';
 import { installCodex } from './hooks-install.ts';
@@ -348,7 +348,7 @@ export async function runProbe(machine: ConnectorConfig = loadConfig()): Promise
   const realHome = process.env.AGENOMIC_CONNECTOR_HOME;
   const out: ProbeResult[] = [];
   for (const [runtime, surface] of SURFACES) {
-    if (!machine.runtimes[runtime].enabled) continue;
+    if (!machine.runtimes[runtime].enabled || runtimeUnavailable(machine.runtimes[runtime])) continue;
     const fake = runtime === 'claude_code' ? await fakeAnthropic() : await fakeResponses();
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agn-probe-home-'));
     try {

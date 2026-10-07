@@ -11,7 +11,7 @@ import { ApiError, RunnerApi } from '../src/api.ts';
 import { manifest, saveProbe } from '../src/capabilities.ts';
 import { ClaudeSession, claudeCodeVersion, readClaudeCodeVersion, sdkPackage } from '../src/claude.ts';
 import { CODEX_PERMISSION_PROFILE, CodexSession, codexExecutable, codexSessionConfig, codexVersion, readCodexVersion } from '../src/codex.ts';
-import { defaultConfig, loadConfig, localFailMode, paths, runtimeEnv, runtimeSecrets, saveConfig, spellings, validateConfig } from '../src/config.ts';
+import { defaultConfig, loadConfig, localFailMode, paths, runtimeEnv, runtimeSecrets, runtimeUnavailable, saveConfig, spellings, validateConfig } from '../src/config.ts';
 import { main } from '../src/cli.ts';
 import { Daemon } from '../src/daemon.ts';
 import { EventSink } from '../src/events.ts';
@@ -1020,7 +1020,7 @@ test('a relative runtime executable is refused: the daemon never validates one f
   });
 });
 
-test('a runtime executable given as a command name is looked up once on the absolute PATH directories', async () => {
+test('a runtime executable given as a command name is looked up once on the absolute PATH directories; one not found is unavailable', async () => {
   await withHome(async () => {
     const dir = tmp('agn-path-');
     const exe = path.join(dir, 'my-codex');
@@ -1045,11 +1045,63 @@ test('a runtime executable given as a command name is looked up once on the abso
       loaded.local_sessions.mode = 'shadow';
       saveConfig(loaded);
       assert.equal(JSON.parse(fs.readFileSync(paths.config(), 'utf8')).runtimes.codex.executable, 'my-codex');
-      // An enabled runtime whose command is not found is a configuration
-      // error; a disabled one still loads.
+      // A command not found on PATH makes that runtime unavailable; the
+      // configuration still loads and the other runtime is still offered.
+      const repo = tempRepo();
+      cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
       cfg.runtimes.codex.executable = 'agn-no-such-codex';
       saveConfig(cfg);
-      assert.throws(() => loadConfig(), /runtimes\.codex\.executable: "agn-no-such-codex" was not found on PATH/);
+      const missing = loadConfig();
+      const why = /runtimes\.codex\.executable: "agn-no-such-codex" was not found on PATH/;
+      assert.match(runtimeUnavailable(missing.runtimes.codex) ?? '', why);
+      assert.equal(runtimeUnavailable(missing.runtimes.claude_code), undefined);
+      assert.equal(missing.runtimes.codex.executable, 'agn-no-such-codex');
+      assert.throws(() => codexExecutable(missing.runtimes.codex), why);
+      // Never looked up again: one installed later is not used until the configuration is loaded again.
+      fs.writeFileSync(path.join(dir, 'agn-no-such-codex'), "#!/bin/sh\necho 'codex-cli 9.9.9'\n", { mode: 0o755 });
+      assert.throws(() => codexExecutable(missing.runtimes.codex), why);
+      assert.equal(await readCodexVersion(missing.runtimes.codex), null);
+      fs.rmSync(path.join(dir, 'agn-no-such-codex'));
+      const api = new ProbeApi();
+      const daemon = new Daemon(missing, api);
+      try {
+        const offered = daemon.runtimes().map((r) => r.runtime);
+        assert.equal(offered.includes('codex'), false, 'codex is not offered');
+        assert.equal(offered.includes('claude_code'), true, 'Claude Code still is');
+        const launch = ulid();
+        await daemon.handleCommand({ id: launch, kind: 'launch', coding_session_id: randomUUID(), payload: { runtime: 'codex', workspace_id: 'w', mode: 'observe' } });
+        assert.equal(api.results.get(launch)?.status, 'refused');
+        assert.match(api.results.get(launch).error, why);
+      } finally {
+        await daemon.stop();
+      }
+      // The commands that load the configuration still work and say why.
+      const lines: string[] = [];
+      const write = process.stdout.write;
+      process.stdout.write = ((chunk: string) => (lines.push(String(chunk)), true)) as typeof process.stdout.write;
+      try {
+        assert.equal(await main(['status']), 0);
+      } finally {
+        process.stdout.write = write;
+      }
+      assert.match(lines.join(''), /runtime codex: unavailable: runtimes\.codex\.executable: "agn-no-such-codex" was not found on PATH/);
+      // doctor --probe skips it instead of failing.
+      const onlyCodex = loadConfig();
+      onlyCodex.runtimes.claude_code.enabled = false;
+      assert.deepEqual(await runProbe(onlyCodex), []);
+      // The same for Claude Code: it is not offered, Codex is.
+      missing.runtimes.codex.executable = exe;
+      missing.runtimes.claude_code.executable = 'agn-no-such-claude';
+      saveConfig(missing);
+      const noClaude = loadConfig();
+      assert.match(runtimeUnavailable(noClaude.runtimes.claude_code) ?? '', /runtimes\.claude_code\.executable: "agn-no-such-claude" was not found on PATH/);
+      const d2 = new Daemon(noClaude, new ProbeApi());
+      try {
+        assert.deepEqual(d2.runtimes().map((r) => r.runtime), ['codex']);
+      } finally {
+        await d2.stop();
+      }
+      // A disabled runtime loads the same way.
       cfg.runtimes.codex.enabled = false;
       saveConfig(cfg);
       assert.equal(loadConfig().runtimes.codex.executable, 'agn-no-such-codex');

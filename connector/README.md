@@ -57,7 +57,9 @@ Local hooks are cooperative, not a security boundary (see
 A runtime's `executable` in `connector.json` is an absolute path or a
 command name looked up on the daemon's PATH when the configuration is
 loaded; a relative path such as `./bin/codex` is refused, since a session
-starts the runtime in its worktree. For the same reason a runtime process
+starts the runtime in its worktree. A command not found on PATH makes only
+that runtime unavailable (`status` and `doctor` say why); the connector
+still runs the others. For the same reason a runtime process
 is given only the absolute directories of PATH (`.` and empty entries are
 dropped), so a script's interpreter is never taken from a worktree.
 

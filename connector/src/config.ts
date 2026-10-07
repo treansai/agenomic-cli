@@ -196,14 +196,32 @@ export function resolveRuntimeExecutable(exe: string, field: string): string {
  * none is configured (the pinned package runs). Already absolute once
  * loadConfig() resolved it; a configuration built otherwise is resolved
  * here the same way, so that every use (version, probe, hooks install,
- * spawn) names the same file. Throws for a relative path or a command
- * not found on PATH.
+ * spawn) names the same file. Throws for a relative path, a command
+ * not found on PATH, or a runtime loadConfig() marked unavailable.
  *
  * @example
  * const exe = runtimeExecutable(cfg.runtimes.codex) ?? bundledCodex;
  */
 export function runtimeExecutable(runtime: Pick<RuntimeConfig, 'executable'>, field = 'executable'): string | undefined {
+  const why = unavailable.get(runtime);
+  if (why) throw new Error(why);
   return runtime.executable === undefined ? undefined : resolveRuntimeExecutable(runtime.executable, field);
+}
+
+/** Why loadConfig() could not resolve a runtime's executable, keyed by the runtime's configuration. */
+const unavailable = new WeakMap<object, string>();
+
+/**
+ * Why a runtime loaded by loadConfig() is unavailable (its command was not
+ * found on PATH), or undefined. Such a runtime is not offered, not probed,
+ * and a launch of it is refused with this reason; the rest of the
+ * configuration loads.
+ *
+ * @example
+ * const why = runtimeUnavailable(cfg.runtimes.codex); // 'runtimes.codex.executable: "codex" was not found on PATH; give its absolute path'
+ */
+export function runtimeUnavailable(runtime: Pick<RuntimeConfig, 'executable'>): string | undefined {
+  return unavailable.get(runtime);
 }
 
 /**
@@ -226,9 +244,11 @@ const configuredExecutables = new WeakMap<object, { configured: string; resolved
 
 /**
  * Resolves the executable of every runtime once (resolveRuntimeExecutable),
- * so that the daemon validates and spawns the same file. A disabled
- * runtime whose command is not found keeps its name: it is resolved, or
- * refused, when something uses it.
+ * so that the daemon validates and spawns the same file. A runtime whose
+ * command is not found on PATH keeps its name and is marked unavailable
+ * (runtimeUnavailable): never looked up again, never offered, and the
+ * other runtimes and every command still work. A relative path never gets
+ * here (validateConfig refuses it).
  */
 function resolveExecutables(cfg: ConnectorConfig): void {
   for (const [name, runtime] of Object.entries(cfg.runtimes) as [string, RuntimeConfig][]) {
@@ -238,7 +258,7 @@ function resolveExecutables(cfg: ConnectorConfig): void {
     try {
       resolved = resolveRuntimeExecutable(runtime.executable, field);
     } catch (e) {
-      if (runtime.enabled) throw e;
+      unavailable.set(runtime, (e as Error).message);
       continue;
     }
     if (resolved !== runtime.executable) configuredExecutables.set(runtime, { configured: runtime.executable, resolved });

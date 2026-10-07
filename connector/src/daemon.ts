@@ -7,7 +7,7 @@ import { ApiError, RunnerApi } from './api.ts';
 import { manifest, type CapEntry } from './capabilities.ts';
 import { ClaudeSession, claudeCodeVersion, readClaudeCodeVersion, sdkVersion } from './claude.ts';
 import { CodexSession, codexVersion, readCodexVersion } from './codex.ts';
-import { configuredExecutable, DEFAULT_CAPTURE, paths, runtimeSecrets, type Capture, type ConnectorConfig, type Mode, type WorkspaceConfig } from './config.ts';
+import { configuredExecutable, DEFAULT_CAPTURE, paths, runtimeSecrets, runtimeUnavailable, type Capture, type ConnectorConfig, type Mode, type WorkspaceConfig } from './config.ts';
 import { EventSink } from './events.ts';
 import { blockedProtection, protection, type Surface } from './protection.ts';
 import { clean } from './redact.ts';
@@ -203,8 +203,10 @@ export class Daemon {
     // validates it. One that cannot tell its version stays listed, with
     // nothing validated, and so does one whose `--version` has not
     // answered yet (read in the background, never awaited here).
+    // A configured executable that cannot be resolved (configuredExecutable
+    // null, such as a command loadConfig() did not find on PATH) is not offered.
     const cc = this.cfg.runtimes.claude_code;
-    if (cc.enabled) {
+    if (cc.enabled && configuredExecutable(cc) !== null) {
       const sdk = sdkVersion();
       if (sdk) {
         const version = claudeCodeVersion(cc) ?? null;
@@ -334,6 +336,10 @@ export class Daemon {
     const versions = this.readVersions();
     await this.heartbeat();
     log('info', 'connector connected', { endpoint: this.cfg.endpoint, workspaces: this.cfg.workspaces.length });
+    for (const [runtime, rc] of Object.entries(this.cfg.runtimes)) {
+      const why = rc.enabled ? runtimeUnavailable(rc) : undefined;
+      if (why) log('warn', 'runtime unavailable, not offered', { runtime, error: why });
+    }
     // A runtime version still unknown in that heartbeat is reported as
     // soon as its `--version` has answered.
     void versions
