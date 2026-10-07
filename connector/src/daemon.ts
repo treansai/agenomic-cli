@@ -523,6 +523,11 @@ export class Daemon {
       throw error;
     }
     void adapter.done.then(async () => {
+      // However the runtime ended (a stop, the end of its session, a crash
+      // or a kill), the actions it admitted get their final settlement:
+      // retained outcomes are delivered, unreported ones settle as
+      // unknown. After a stop this is the stop's own settlement.
+      void m.ctx.settleFinal('runtime exited before the tool reported');
       if (m.status !== 'stopped') await this.adapterStatus(m, 'stopped');
       await m.ctx.sink.flush();
     });

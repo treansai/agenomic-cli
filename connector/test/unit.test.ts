@@ -1399,6 +1399,46 @@ test('the settlement at a session\'s end keeps delivering retained outcomes unti
   });
 });
 
+test('a runtime killed while its actions run settles them: retained outcomes delivered, the others unknown', { timeout: 120000 }, async () => {
+  await withHome(async () => {
+    const repo = tempRepo();
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+    cfg.runtimes.codex.executable = fakeAppServer();
+    // The bundled Claude Code, launched without a prompt: no model is called.
+    cfg.runtimes.claude_code.extra_env = { ANTHROPIC_BASE_URL: 'http://127.0.0.1:9' };
+    for (const runtime of ['codex', 'claude_code'] as const) {
+      const api = new FlakyReportApi();
+      const daemon: any = new Daemon(cfg, api);
+      const session = randomUUID();
+      const launch = ulid();
+      await daemon.handleCommand({ id: launch, kind: 'launch', coding_session_id: session, payload: { runtime, workspace_id: 'w', mode: 'observe' } });
+      assert.equal(api.results.get(launch)?.status, 'applied', JSON.stringify(api.results.get(launch)));
+      const m = daemon.sessions.get(session);
+      try {
+        const ctx: SessionContext = m.ctx;
+        const finished = await ctx.authorize({ nativeId: 'call_1', tool: 'Bash', input: { command: 'false' }, context: {}, phase: 'pre_tool', waitForApproval: false });
+        const running = await ctx.authorize({ nativeId: 'call_2', tool: 'Bash', input: { command: 'sleep 60' }, context: {}, phase: 'pre_tool', waitForApproval: false });
+        // Its outcome observed while the gateway was down: retained.
+        await ctx.report(finished.actionId, 'failed', { exit_code: 1 });
+        assert.deepEqual(api.reports, []);
+        api.down = false;
+        // The runtime dies mid-action: no stop, no SessionEnd, no turn end.
+        m.adapter['child'].kill('SIGKILL');
+        await m.adapter.done;
+        const until = Date.now() + 10000;
+        while (api.reports.length < 2 && Date.now() < until) await sleep(20);
+        const outcome = (id?: string) => api.reports.filter((r) => r.action === id).map((r) => r.outcome);
+        assert.deepEqual(outcome(finished.actionId), ['failed'], `${runtime}: the retained outcome is delivered`);
+        assert.deepEqual(outcome(running.actionId), ['unknown'], `${runtime}: the interrupted action settles as unknown`);
+      } finally {
+        if (m.adapter?.alive()) await m.adapter.stop();
+        await m.ctx.sink.close();
+      }
+    }
+  });
+});
+
 test('local hook sessions: tool events correlated; a launched session\'s hooks do not report a call twice', async () => {
   await withHome(async () => {
     const repo = tempRepo();
