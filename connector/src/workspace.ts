@@ -335,3 +335,19 @@ export function headRevision(dir: string): string | null {
     return null;
   }
 }
+
+/**
+ * The real path of the repository a checkout or worktree belongs to (its
+ * git common directory), or null when it is not one: the main checkout and
+ * every worktree created from it share it.
+ *
+ * @example
+ * commonDir(worktree) === commonDir(workspace); // the worktree belongs to that checkout
+ */
+export function commonDir(dir: string): string | null {
+  try {
+    return fs.realpathSync(git(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir']).trim());
+  } catch {
+    return null;
+  }
+}

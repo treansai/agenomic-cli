@@ -51,7 +51,17 @@ interface Managed {
 }
 
 interface Persisted {
-  [codingSessionId: string]: { runtime: Runtime; cwd: string; base_revision: string | null; native_id?: string; mode: Mode; capture: Capture; workspace_id?: string };
+  [codingSessionId: string]: {
+    runtime: Runtime;
+    cwd: string;
+    base_revision: string | null;
+    native_id?: string;
+    mode: Mode;
+    capture: Capture;
+    workspace_id?: string;
+    /** Real path of the workspace checkout at launch: a resume is refused once the workspace id points elsewhere. */
+    workspace_root?: string;
+  };
 }
 
 /**
@@ -70,6 +80,38 @@ export function sandboxAvailable(): { ok: boolean; detail: string } {
   } catch {
     return { ok: false, detail: 'bubblewrap is missing or cannot create namespaces' };
   }
+}
+
+/** Real path of `p`, or `p` itself when it cannot be resolved. */
+function realPath(p: string): string {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
+/**
+ * Why a session recorded for a workspace cannot resume under the
+ * workspace now declared with that id, or undefined when it can. A
+ * workspace id can be declared again for another checkout (`workspace
+ * add`): the session then belongs to the old one. The record's workspace
+ * root must be the declared one's real path, and the session's directory
+ * must lie in that checkout or be a worktree of its repository (a record
+ * written before the root was recorded is checked on that alone).
+ *
+ * @example
+ * workspaceMoved(persisted[sessionId], workspace); // undefined, or the refusal
+ */
+export function workspaceMoved(rec: { cwd: string; workspace_root?: string }, workspace: WorkspaceConfig): string | undefined {
+  const root = realPath(workspace.path);
+  const refusal = `workspace ${workspace.id} now names another checkout than the one the session was launched from; the session is not resumed (launch a new session)`;
+  if (rec.workspace_root !== undefined && rec.workspace_root !== root) return refusal;
+  const cwd = realPath(rec.cwd);
+  if (cwd === root || cwd.startsWith(root + path.sep)) return undefined;
+  const repo = ws.commonDir(workspace.path);
+  if (repo === null || ws.commonDir(rec.cwd) !== repo) return refusal;
+  return undefined;
 }
 
 /**
@@ -542,7 +584,7 @@ export class Daemon {
       return this.result(cmd.id, 'refused', undefined, errorMessage(error));
     }
     const capture: Capture = { ...DEFAULT_CAPTURE, ...(p.capture ?? {}) };
-    this.persisted[sessionId] = { runtime, cwd: tree.path, base_revision: tree.base_revision, mode, capture, workspace_id: workspace.id };
+    this.persisted[sessionId] = { runtime, cwd: tree.path, base_revision: tree.base_revision, mode, capture, workspace_id: workspace.id, workspace_root: realPath(workspace.path) };
     this.persist();
     const managed = this.manage(sessionId, runtime, 'launched', mode, capture, tree.path, tree.base_revision, p.trace_id, workspace.id);
     // Best effort: a gateway that is briefly unavailable must not leave a
@@ -643,8 +685,11 @@ export class Daemon {
     // The other start-time refusals of a launch hold for a resume too: a
     // workspace no longer declared here, or an enforce session of Claude
     // Code whose sandbox has since become unavailable.
-    if (rec.workspace_id !== undefined && !this.workspace(rec.workspace_id)) {
-      return this.result(cmd.id, 'refused', undefined, 'workspace not declared on this runner');
+    if (rec.workspace_id !== undefined) {
+      const workspace = this.workspace(rec.workspace_id);
+      if (!workspace) return this.result(cmd.id, 'refused', undefined, 'workspace not declared on this runner');
+      const moved = workspaceMoved(rec, workspace);
+      if (moved) return this.result(cmd.id, 'refused', undefined, moved);
     }
     if (rec.mode === 'enforce' && rec.runtime === 'claude_code' && !sandboxAvailable().ok) {
       return this.result(cmd.id, 'refused', undefined, 'enforce needs the Claude Code sandbox, which is unavailable on this machine');

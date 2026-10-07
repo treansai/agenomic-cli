@@ -1086,6 +1086,49 @@ test('a launch whose starting report fails still starts, and is not left half ha
   });
 });
 
+test('a resume is refused once its workspace id names another checkout; records without the root are checked by their worktree', async () => {
+  await withHome(async () => {
+    const first = tempRepo();
+    const other = tempRepo();
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.workspaces = [{ id: 'w', name: 'w', path: first }];
+    cfg.runtimes.codex.executable = fakeAppServer();
+    const api = new ProbeApi();
+    const daemon: any = new Daemon(cfg, api);
+    const session = randomUUID();
+    const command = async (kind: string) => {
+      const id = ulid();
+      await daemon.deliver({ id, kind, coding_session_id: session, payload: kind === 'launch' ? { runtime: 'codex', workspace_id: 'w', mode: 'observe' } : {} });
+      return api.results.get(id);
+    };
+    try {
+      assert.equal((await command('launch'))?.status, 'applied');
+      const rec = daemon.persisted[session];
+      assert.equal(rec.workspace_root, fs.realpathSync(first), 'the launch records the checkout');
+      assert.equal((await command('stop_process'))?.status, 'applied');
+      // `workspace add` declared the same id for another checkout.
+      cfg.workspaces = [{ id: 'w', name: 'w', path: other }];
+      const stopped = daemon.sessions.get(session).adapter;
+      const moved = await command('resume_session');
+      assert.equal(moved?.status, 'refused');
+      assert.match(moved.error, /workspace w now names another checkout/);
+      assert.equal(daemon.sessions.get(session).adapter, stopped, 'nothing was started');
+      // A record written before the root was recorded: its worktree belongs to the first checkout.
+      delete rec.workspace_root;
+      const legacy = await command('resume_session');
+      assert.equal(legacy?.status, 'refused');
+      assert.match(legacy.error, /workspace w now names another checkout/);
+      cfg.workspaces = [{ id: 'w', name: 'w', path: first }];
+      assert.equal((await command('resume_session'))?.status, 'applied', 'its own checkout: the legacy record resumes');
+      assert.equal((await command('stop_process'))?.status, 'applied');
+      rec.workspace_root = fs.realpathSync(first);
+      assert.equal((await command('resume_session'))?.status, 'applied', 'its own checkout: resumed');
+    } finally {
+      await daemon.sessions.get(session)?.adapter?.stop();
+    }
+  });
+});
+
 test('a launch refused while the gateway is down leaves no record or worktree; redelivered after a restart, it starts', async () => {
   await withHome(async () => {
     const repo = tempRepo();
