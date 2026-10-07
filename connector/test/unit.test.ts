@@ -907,6 +907,43 @@ test('a launch whose starting report fails still starts, and is not left half ha
   });
 });
 
+test('a launch refused while the gateway is down leaves no record or worktree; redelivered after a restart, it starts', async () => {
+  await withHome(async () => {
+    const repo = tempRepo();
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+    cfg.runtimes.codex.executable = fakeAppServer();
+    let down = true;
+    const api = new (class extends ProbeApi {
+      override async request<T = any>(method: string, p: string, opts: { body?: any } = {}): Promise<T> {
+        if (down && (p === '/v1/coding/runner/sessions' || p.endsWith('/state'))) throw new ApiError(0, 'network', 'gateway unavailable');
+        if (p === '/v1/coding/runner/sessions') return { session: {} } as T;
+        return super.request<T>(method, p, opts);
+      }
+    })();
+    const session = randomUUID();
+    const cmd = { id: ulid(), kind: 'launch', coding_session_id: session, payload: { runtime: 'codex', workspace_id: 'w', mode: 'observe', branch: 'agenomic/refused' } };
+    const first: any = new Daemon(cfg, api);
+    await first.deliver(cmd);
+    assert.equal(api.results.get(cmd.id)?.status, 'refused', JSON.stringify(api.results.get(cmd.id)));
+    assert.deepEqual(JSON.parse(fs.readFileSync(paths.sessions(), 'utf8')), {}, 'no persisted record, native id included');
+    assert.equal(fs.existsSync(path.join(paths.worktrees(), session)), false, 'the worktree is removed');
+    assert.equal(execFileSync('git', ['-C', repo, 'branch', '--list', 'agenomic/refused'], { encoding: 'utf8' }), '', 'its new branch too');
+    assert.doesNotMatch(execFileSync('git', ['-C', repo, 'worktree', 'list'], { encoding: 'utf8' }), new RegExp(session));
+    // The daemon restarts, the gateway is back and redelivers the launch.
+    down = false;
+    api.results.clear();
+    const second: any = new Daemon(cfg, api);
+    try {
+      await second.deliver(cmd);
+      assert.equal(api.results.get(cmd.id)?.status, 'applied', JSON.stringify(api.results.get(cmd.id)));
+      assert.equal(second.sessions.get(session)?.adapter?.alive(), true);
+    } finally {
+      await second.sessions.get(session)?.adapter?.stop();
+    }
+  });
+});
+
 test('the first connected status carries the effective mode, after the native session is registered, on launch and on resume', async () => {
   await withHome(async () => {
     const repo = tempRepo();

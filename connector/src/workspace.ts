@@ -113,6 +113,27 @@ export function createWorktree(workspace: string, target: string, branch: string
   return { ...inspect(target), base_revision: human.base_revision, preexisting_changes: human.preexisting_changes, path: target };
 }
 
+/**
+ * Removes a dedicated worktree that createWorktree made for a launch
+ * that did not start, and its new branch while it still points at
+ * `base` (no commit of its own), so that nothing of the launch is left.
+ * A branch that moved holds work and is kept.
+ *
+ * @example
+ * removeWorktree('/src/app', tree.path, tree.branch, tree.base_revision);
+ */
+export function removeWorktree(workspace: string, target: string, branch: string | null, base: string | null): void {
+  git(workspace, ['worktree', 'remove', '--force', target]);
+  if (branch && base) {
+    try {
+      // Deleted only while it still names `base`.
+      git(workspace, ['update-ref', '-d', `refs/heads/${branch}`, base]);
+    } catch {
+      /* the branch moved: kept */
+    }
+  }
+}
+
 export interface FileChange {
   path: string;
   status: 'added' | 'modified' | 'deleted' | 'renamed' | 'untracked';

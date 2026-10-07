@@ -457,8 +457,18 @@ export class Daemon {
       await this.startAdapter(managed, rcfg, { model: p.model });
     } catch (error) {
       // The partial adapter is stopped (startAdapter); the session is no
-      // longer managed, so no later command reaches it.
+      // longer managed, so no later command reaches it. Its record and its
+      // worktree (no prompt reached the runtime) are removed too: a launch
+      // redelivered after a restart starts again rather than being taken
+      // for one already handled.
       this.sessions.delete(sessionId);
+      delete this.persisted[sessionId];
+      this.persist();
+      try {
+        ws.removeWorktree(workspace.path, tree.path, p.branch ?? null, tree.base_revision);
+      } catch (e) {
+        log('warn', 'worktree of a refused launch not removed', { session: sessionId, error: errorMessage(e) });
+      }
       await this.setStatus(managed, 'failed');
       await managed.ctx.sink.close();
       return this.result(cmd.id, 'refused', undefined, errorMessage(error));
