@@ -386,9 +386,13 @@ export class Daemon {
     for (const s of this.sessions.values()) {
       if (s.adapter?.alive()) await s.adapter.stop();
     }
-    // The final settlements (of the runtimes just stopped too) are waited
-    // for, bounded; the outcomes still unacknowledged are saved and
-    // delivered by the next start instead of being lost with the process.
+    // A tool still running in a session that outlives the daemon (a local
+    // terminal session) can no longer be correlated once it reports: its
+    // action is settled now too, as `unknown`. The final settlements (of
+    // the runtimes just stopped too) are waited for, bounded; the outcomes
+    // still unacknowledged are saved and delivered by the next start
+    // instead of being lost with the process.
+    for (const s of this.sessions.values()) this.settleFinal(s.ctx, 'connector stopped before the tool reported');
     const contexts = new Set([...this.sessions.values()].map((s) => s.ctx).concat([...this.settlingContexts]));
     let timer: NodeJS.Timeout | undefined;
     await Promise.race([

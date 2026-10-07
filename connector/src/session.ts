@@ -375,10 +375,12 @@ export class SessionContext {
   /**
    * Stops delivering outcomes (the daemon shuts down) and hands over the
    * ones the gateway has not acknowledged, for the next daemon to deliver:
-   * every retained outcome, and `unknown` (with `summary`) for the actions
-   * a final settlement covers whose tool never reported. An action still
-   * running in a live session without an outcome is not handed over.
-   * Reports in flight are cut; nothing is sent by this context after it.
+   * every retained outcome, and `unknown` (with `summary`) for every other
+   * admitted action whose tool never reported, a final settlement covers
+   * it or not: a tool still running in a session that outlives the daemon
+   * reports to a daemon that no longer knows its action, so the action
+   * would otherwise stay open on the gateway. Reports in flight are cut;
+   * nothing is sent by this context after it.
    *
    * @example
    * const left = ctx.close('connector stopped before the tool reported'); // saved, delivered on the next start
@@ -388,7 +390,7 @@ export class SessionContext {
     const out: PendingOutcome[] = [];
     for (const [id, retained] of this.open) {
       if (retained) out.push({ coding_session_id: this.id, action_id: id, outcome: retained.outcome, detail: retained.detail });
-      else if (this.settling.has(id)) out.push({ coding_session_id: this.id, action_id: id, outcome: 'unknown', detail: { summary } });
+      else out.push({ coding_session_id: this.id, action_id: id, outcome: 'unknown', detail: { summary } });
     }
     return out;
   }

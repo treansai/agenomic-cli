@@ -1883,6 +1883,47 @@ test('a stop saves the outcomes of a forgotten session whose final settlement ra
   });
 });
 
+test('a stop settles the actions still running in a local session, now or on the next start', async () => {
+  await withHome(async () => {
+    const repo = tempRepo();
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+    // The gateway is down: the running tool's action is saved as unknown.
+    const first = new FlakyReportApi();
+    const daemon: any = new Daemon(cfg, first);
+    daemon.shutdownSettleMs = 300;
+    const hook = (d: any, input: Record<string, unknown>) => d.onLocal({ op: 'hook', runtime: 'claude_code', input: { session_id: 'cli-11', cwd: repo, ...input } });
+    await hook(daemon, { hook_event_name: 'PreToolUse', tool_use_id: 'toolu_1', tool_name: 'Bash', tool_input: { command: 'sleep 99' } });
+    assert.equal(first.authorizations.length, 1);
+    await daemon.stop();
+    const saved = JSON.parse(fs.readFileSync(paths.outcomes(), 'utf8'));
+    assert.deepEqual(saved.map((o: any) => o.outcome), ['unknown'], 'the running action is handed over');
+
+    const second = new RecordingApi();
+    const next: any = new Daemon(cfg, second);
+    await next.start();
+    try {
+      const until = Date.now() + 10000;
+      while (second.reports.length < 1 && Date.now() < until) await sleep(20);
+      assert.deepEqual(second.reports, [{ action: saved[0].action_id, outcome: 'unknown' }], 'the next start settles it');
+      while (fs.existsSync(paths.outcomes()) && Date.now() < until) await sleep(20);
+      assert.equal(fs.existsSync(paths.outcomes()), false);
+      // The tool reports after the restart: it can no longer be correlated,
+      // and nothing is left open for it.
+      await hook(next, { hook_event_name: 'PostToolUse', tool_use_id: 'toolu_1', tool_name: 'Bash' });
+      assert.equal(second.reports.length, 1);
+
+      // The gateway is up: the stop settles the running action itself.
+      await hook(next, { hook_event_name: 'PreToolUse', tool_use_id: 'toolu_2', tool_name: 'Bash', tool_input: { command: 'sleep 99' } });
+    } finally {
+      await next.stop();
+    }
+    assert.equal(second.reports.length, 2);
+    assert.equal(second.reports[1].outcome, 'unknown');
+    assert.equal(fs.existsSync(paths.outcomes()), false, 'nothing is left to deliver again');
+  });
+});
+
 test('a runtime failure that quotes a runtime credential is redacted before it is logged or reported', async () => {
   await withHome(async () => {
     const passthrough = 'corp-provider-credential-7f3a9b2c4d5e';
