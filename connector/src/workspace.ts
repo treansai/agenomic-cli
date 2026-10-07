@@ -129,25 +129,34 @@ const REDACTION_SLACK = 64 * 1024;
  *
  * Untracked files (those `changes()` lists, .gitignore respected) are
  * part of it as additions: they are marked intent-to-add in a temporary
- * copy of the index, so the checkout's own index is never touched. One
- * larger than the bytes read is named, not read.
+ * copy of the index, so the checkout's own index is never touched. They
+ * are read only up to the bytes a diff reads, in total: one larger than
+ * that, or past it, is named, not read.
  */
 export function diff(dir: string, base: string, secrets: string[] = [], maxBytes = 256 * 1024): { text: string; truncated: boolean } {
   const window = maxBytes + REDACTION_SLACK;
-  const { raw, oversized } = withUntracked(dir, window, (env) => git(dir, ['diff', '-M', base], 64 * 1024 * 1024, { env }));
-  const full = raw + oversized.map((f) => `diff --git a/${f.path} b/${f.path}\nnew file mode 100644\n(untracked file of ${f.size} bytes, not captured)\n`).join('');
+  const { raw, uncaptured } = withUntracked(dir, window, (env) => git(dir, ['diff', '-M', base], 64 * 1024 * 1024, { env }));
+  let full = raw;
+  for (const f of uncaptured) {
+    // Past the bytes read, the rest would only be cut off.
+    if (full.length > window) break;
+    full += `diff --git a/${f.path} b/${f.path}\nnew file mode 100644\n(untracked file of ${f.size} bytes, not captured)\n`;
+  }
   const text = redact(full.length > window ? full.slice(0, window) : full, secrets);
   return text.length > maxBytes ? { text: text.slice(0, maxBytes), truncated: true } : { text, truncated: full.length > window };
 }
 
 /**
  * Runs `fn` with an environment whose index also holds the untracked
- * files of `dir` as intent-to-add entries (those up to `maxFileBytes`),
- * and returns the untracked files left out for their size.
+ * files of `dir` as intent-to-add entries, as many as fit in `maxBytes`
+ * (their sizes plus their headers), and returns the untracked files left
+ * out. Many untracked files (a venv, generated data) are thereby neither
+ * read nor diffed beyond what the capture keeps.
  */
-function withUntracked(dir: string, maxFileBytes: number, fn: (env: Record<string, string>) => string): { raw: string; oversized: { path: string; size: number }[] } {
+function withUntracked(dir: string, maxBytes: number, fn: (env: Record<string, string>) => string): { raw: string; uncaptured: { path: string; size: number }[] } {
   const included: string[] = [];
-  const oversized: { path: string; size: number }[] = [];
+  let budget = maxBytes;
+  const uncaptured: { path: string; size: number }[] = [];
   for (const file of git(dir, ['ls-files', '-z', '--others', '--exclude-standard']).split('\0').filter(Boolean)) {
     // A nested repository is listed as a directory: it has no content of its own here.
     if (file.endsWith('/')) continue;
@@ -159,10 +168,15 @@ function withUntracked(dir: string, maxFileBytes: number, fn: (env: Record<strin
     } catch {
       continue;
     }
-    if (size > maxFileBytes) oversized.push({ path: file, size });
-    else included.push(file);
+    const cost = size + 2 * file.length + 128;
+    if (cost > budget) {
+      uncaptured.push({ path: file, size });
+    } else {
+      budget -= cost;
+      included.push(file);
+    }
   }
-  if (included.length === 0) return { raw: fn({}), oversized };
+  if (included.length === 0) return { raw: fn({}), uncaptured };
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agn-index-'));
   try {
     const index = path.join(tmp, 'index');
@@ -170,7 +184,7 @@ function withUntracked(dir: string, maxFileBytes: number, fn: (env: Record<strin
     if (fs.existsSync(real)) fs.copyFileSync(real, index);
     const env = { GIT_INDEX_FILE: index };
     git(dir, ['add', '--intent-to-add', '--pathspec-from-file=-', '--pathspec-file-nul'], undefined, { env: { ...env, GIT_LITERAL_PATHSPECS: '1' }, input: included.join('\0') });
-    return { raw: fn(env), oversized };
+    return { raw: fn(env), uncaptured };
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

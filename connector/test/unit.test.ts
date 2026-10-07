@@ -384,6 +384,29 @@ test('workspace: a captured diff includes untracked files as additions; ignored 
   for (const file of listed) assert.ok(d.text.includes(`b/${file}`), `${file}: every untracked file listed by changes() is in the diff`);
 });
 
+test('workspace: many untracked files are read only up to the bytes a diff keeps; the rest are named, not captured', () => {
+  const repo = tmp('agn-ws-');
+  try {
+    const git = (...a: string[]) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8' });
+    git('init', '-q', '-b', 'main');
+    git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init');
+    const base = git('rev-parse', 'HEAD').trim();
+    // Each file fits in the bytes read; together they are over git's 64 MiB output buffer.
+    const line = 'generated data line\n';
+    const content = line.repeat(Math.ceil((230 * 1024) / line.length));
+    for (let i = 0; i < 300; i++) fs.writeFileSync(path.join(repo, `data-${String(i).padStart(3, '0')}.txt`), content);
+    assert.equal(ws.changes(repo, base).length, 300);
+    const d = ws.diff(repo, base);
+    assert.equal(d.truncated, true);
+    assert.ok(d.text.length <= 256 * 1024);
+    assert.match(d.text, /\+\+\+ b\/data-000\.txt\n@@ -0,0 \+1,\d+ @@\n\+generated data line\n/, 'the first files are captured');
+    assert.match(d.text, new RegExp(`diff --git a/data-001\\.txt b/data-001\\.txt\\nnew file mode 100644\\n\\(untracked file of ${content.length} bytes, not captured\\)`), 'the files past the bytes read are named');
+    assert.ok(!d.text.includes('b/data-001.txt\n@@'), 'no file past the bytes read is diffed');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test('symlink escapes are detected on the real path', () => {
   const root = tmp('agn-root-');
   const outside = tmp('agn-out-');
