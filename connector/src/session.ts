@@ -62,8 +62,9 @@ export class SessionContext {
    * settling them later delivers that outcome instead of a generic one.
    */
   private readonly open = new Map<string, Outcome | undefined>();
-  /** The settlement at the end of the session, once started. */
-  private final: Promise<void> | undefined;
+  /** Final settlements in flight, and the actions they cover. */
+  private readonly finals = new Set<Promise<void>>();
+  private readonly settling = new Set<string>();
 
   readonly api: RunnerApi;
   readonly id: string;
@@ -323,29 +324,36 @@ export class SessionContext {
    * or `budgetMs` has passed. It runs in the background of the daemon,
    * whose process its waits do not keep alive. Only the actions open when
    * it starts are retried: a resumed session's new actions are its own.
-   * Settling twice (a stop, then the session's end) shares one settlement.
+   * Settling again while a settlement is in flight (a stop, then the
+   * session's end) shares it, and settles separately the actions opened
+   * since (a resumed runtime that ended too), so that none is left open.
    *
    * @example
    * void ctx.settleFinal('session stopped before the tool reported');
    */
   settleFinal(summary: string, budgetMs = 10 * 60 * 1000, firstDelayMs = 2000): Promise<void> {
-    this.final ??= (async () => {
-      const ids = new Set(this.open.keys());
-      const deadline = Date.now() + budgetMs;
-      for (let delay = firstDelayMs; ; delay = Math.min(delay * 2, 60000)) {
-        await this.settleOpen(summary, ids);
-        const left = [...ids].filter((id) => this.open.has(id));
-        if (left.length === 0) return;
-        if (Date.now() + delay >= deadline) {
-          log('warn', 'action outcomes left unreported', { session: this.id, actions: left });
-          return;
+    const ids = new Set([...this.open.keys()].filter((id) => !this.settling.has(id)));
+    if (ids.size > 0) {
+      for (const id of ids) this.settling.add(id);
+      const settlement: Promise<void> = (async () => {
+        const deadline = Date.now() + budgetMs;
+        for (let delay = firstDelayMs; ; delay = Math.min(delay * 2, 60000)) {
+          await this.settleOpen(summary, ids);
+          const left = [...ids].filter((id) => this.open.has(id));
+          if (left.length === 0) return;
+          if (Date.now() + delay >= deadline) {
+            log('warn', 'action outcomes left unreported', { session: this.id, actions: left });
+            return;
+          }
+          await new Promise<void>((resolve) => setTimeout(resolve, delay).unref());
         }
-        await new Promise<void>((resolve) => setTimeout(resolve, delay).unref());
-      }
-    })().finally(() => {
-      this.final = undefined;
-    });
-    return this.final;
+      })().finally(() => {
+        for (const id of ids) this.settling.delete(id);
+        this.finals.delete(settlement);
+      });
+      this.finals.add(settlement);
+    }
+    return Promise.all(this.finals).then(() => undefined);
   }
 
   /**

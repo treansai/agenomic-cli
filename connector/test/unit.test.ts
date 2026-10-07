@@ -1492,6 +1492,46 @@ test('a runtime killed while its actions run settles them: retained outcomes del
   });
 });
 
+test('a resumed runtime killed while the previous one\'s settlement still retries settles its own actions too', { timeout: 120000 }, async () => {
+  await withHome(async () => {
+    const repo = tempRepo();
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+    cfg.runtimes.codex.executable = fakeAppServer();
+    const api = new FlakyReportApi();
+    const daemon: any = new Daemon(cfg, api);
+    const session = randomUUID();
+    const launch = ulid();
+    await daemon.handleCommand({ id: launch, kind: 'launch', coding_session_id: session, payload: { runtime: 'codex', workspace_id: 'w', mode: 'observe' } });
+    assert.equal(api.results.get(launch)?.status, 'applied', JSON.stringify(api.results.get(launch)));
+    const m = daemon.sessions.get(session);
+    try {
+      const ctx: SessionContext = m.ctx;
+      const first = await ctx.authorize({ nativeId: 'call_1', tool: 'Bash', input: { command: 'sleep 60' }, context: {}, phase: 'pre_tool', waitForApproval: false });
+      // The first runtime dies while the gateway is down: its settlement keeps retrying.
+      m.adapter['child'].kill('SIGKILL');
+      await m.adapter.done;
+      await sleep(100);
+      const resume = ulid();
+      await daemon.handleCommand({ id: resume, kind: 'resume_session', coding_session_id: session, payload: { prompt: 'continue' } });
+      assert.equal(api.results.get(resume)?.status, 'applied', JSON.stringify(api.results.get(resume)));
+      assert.equal(daemon.sessions.get(session), m, 'the resume reuses the session context');
+      const second = await ctx.authorize({ nativeId: 'call_2', tool: 'Bash', input: { command: 'sleep 60' }, context: {}, phase: 'pre_tool', waitForApproval: false });
+      m.adapter['child'].kill('SIGKILL');
+      await m.adapter.done;
+      api.down = false;
+      const until = Date.now() + 15000;
+      while (api.reports.length < 2 && Date.now() < until) await sleep(20);
+      const outcome = (id?: string) => api.reports.filter((r) => r.action === id).map((r) => r.outcome);
+      assert.deepEqual(outcome(first.actionId), ['unknown']);
+      assert.deepEqual(outcome(second.actionId), ['unknown'], 'the resumed runtime\'s action is settled, not left open');
+    } finally {
+      if (m.adapter?.alive()) await m.adapter.stop();
+      await m.ctx.sink.close();
+    }
+  });
+});
+
 test('local hook sessions: tool events correlated; a launched session\'s hooks do not report a call twice', async () => {
   await withHome(async () => {
     const repo = tempRepo();
