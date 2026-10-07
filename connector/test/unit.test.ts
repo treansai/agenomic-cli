@@ -62,6 +62,15 @@ test('a short configured credential is redacted in coloured output too', () => {
   assert.equal(clean('\u001b[31mt0ken\u001b[0m', 100, ['t0k']), 't0ken', 'a word containing it is kept');
 });
 
+test('configured values that cannot be a credential are not redacted', () => {
+  // CLAUDE_CODE_USE_BEDROCK=1 passed through, CLAUDE_CODE_SKIP_BEDROCK_AUTH=true in extra_env.
+  const secrets = runtimeSecrets({ enabled: true, env_passthrough: ['AGN_UNIT_USE_BEDROCK'], extra_env: { CLAUDE_CODE_SKIP_BEDROCK_AUTH: 'true', CORP_AUTH_MODE: 'off' }, allowed_domains: [] } as any, { AGN_UNIT_USE_BEDROCK: '1' });
+  assert.equal(redact('sleep 1 && echo 1.2.3 true off', secrets), 'sleep 1 && echo 1.2.3 true off');
+  assert.equal(clean('sleep 1', 100, ['1', 'True', ' on ']), 'sleep 1');
+  // A two-character value is still redacted.
+  assert.equal(redact('pin 42', ['42']), 'pin [REDACTED]');
+});
+
 test('Claude Code hooks: preserve existing hooks, idempotent, exact uninstall, backup', () => {
   const dir = tmp('agn-hooks-');
   const file = path.join(dir, '.claude', 'settings.local.json');

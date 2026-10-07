@@ -22,6 +22,14 @@ export const REDACTED = '[REDACTED]';
 const SUBSTRING_MIN = 8;
 
 /**
+ * Configured values that cannot be a credential: one character, or a
+ * boolean or toggle word (`CLAUDE_CODE_USE_BEDROCK=1`,
+ * `CLAUDE_CODE_SKIP_BEDROCK_AUTH=true`). Redacting them would rewrite
+ * every number and word of every event (`sleep 1` to `sleep [REDACTED]`).
+ */
+const NOT_A_CREDENTIAL = /^(.|true|false|yes|no|on|off|none|null|enabled?|disabled?)$/i;
+
+/**
  * A configured value shorter than SUBSTRING_MIN, matched as a whole token
  * (not inside a longer run of letters and digits), so that a short
  * credential is redacted without shredding the words that contain it. A
@@ -36,18 +44,20 @@ function shortSecret(secret: string): RegExp {
 /**
  * Replaces known secret patterns and the given secret values with
  * [REDACTED]: every occurrence of a value, or every whole-token occurrence
- * of a value shorter than eight characters.
+ * of a value shorter than eight characters. Empty values, and values that
+ * cannot be a credential (one character, a boolean word), are skipped.
  *
  * @example
  * redact('token is s3cret-value-123', ['s3cret-value-123']); // 'token is [REDACTED]'
  * redact('GATEWAY_TOKEN=t0k, not t0ken', ['t0k']); // 'GATEWAY_TOKEN=[REDACTED], not t0ken'
+ * redact('sleep 1', ['1']); // 'sleep 1'
  */
 export function redact(text: string, extraSecrets: string[] = []): string {
   let out = text;
   // Longest first, so that a short value inside a longer one does not
   // leave the rest of the longer one readable.
   for (const secret of [...new Set(extraSecrets)].sort((a, b) => b.length - a.length)) {
-    if (!secret || !secret.trim()) continue;
+    if (!secret || !secret.trim() || NOT_A_CREDENTIAL.test(secret.trim())) continue;
     out = secret.length >= SUBSTRING_MIN ? out.split(secret).join(REDACTED) : out.replace(shortSecret(secret), REDACTED);
   }
   for (const re of PATTERNS) out = out.replace(re, REDACTED);
