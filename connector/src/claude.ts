@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { home as connectorHome, paths, runtimeEnv, spellings, type RuntimeConfig } from './config.ts';
+import { configuredExecutable, home as connectorHome, paths, runtimeEnv, runtimeExecutable, spellings, type RuntimeConfig } from './config.ts';
 import { commandText, isTestCommand, type SessionContext, type Verdict } from './session.ts';
 import { errorMessage, executableVersion, log, readExecutableVersion, realPathEscapes } from './util.ts';
 import * as ws from './workspace.ts';
@@ -62,7 +62,10 @@ export function sdkVersion(): string | null {
  * const version = claudeCodeVersion(cfg.runtimes.claude_code); // undefined while a custom executable has not answered
  */
 export function claudeCodeVersion(runtime: RuntimeConfig): string | null | undefined {
-  if (runtime.executable) return executableVersion(runtime.executable);
+  if (runtime.executable !== undefined) {
+    const exe = configuredExecutable(runtime);
+    return exe ? executableVersion(exe) : null;
+  }
   return sdkPackage()?.claudeCodeVersion ?? null;
 }
 
@@ -73,7 +76,10 @@ export function claudeCodeVersion(runtime: RuntimeConfig): string | null | undef
  * const version = await readClaudeCodeVersion(cfg.runtimes.claude_code);
  */
 export async function readClaudeCodeVersion(runtime: RuntimeConfig): Promise<string | null> {
-  if (runtime.executable) return readExecutableVersion(runtime.executable);
+  if (runtime.executable !== undefined) {
+    const exe = configuredExecutable(runtime);
+    return exe ? readExecutableVersion(exe) : null;
+  }
   return sdkPackage()?.claudeCodeVersion ?? null;
 }
 
@@ -297,7 +303,9 @@ export class ClaudeSession {
         },
         // A new session's id is fixed by the connector; a resumed one keeps its own.
         sessionId: this.o.resume ? undefined : nativeId,
-        pathToClaudeCodeExecutable: this.o.runtime.executable,
+        // Absolute (runtimeExecutable): the file whose version was read,
+        // never one under the worktree the process starts in.
+        pathToClaudeCodeExecutable: runtimeExecutable(this.o.runtime, 'runtimes.claude_code.executable'),
         spawnClaudeCodeProcess: (opts: any) => {
           const child = spawn(opts.command, opts.args, { cwd: opts.cwd, env: opts.env, signal: opts.signal, stdio: ['pipe', 'pipe', 'pipe'] });
           child.stderr?.on('data', (d) => log('debug', 'claude stderr', { line: this.o.ctx.cleanText(String(d), 500) }));

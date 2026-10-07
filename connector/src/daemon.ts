@@ -7,7 +7,7 @@ import { ApiError, RunnerApi } from './api.ts';
 import { manifest, type CapEntry } from './capabilities.ts';
 import { ClaudeSession, claudeCodeVersion, readClaudeCodeVersion, sdkVersion } from './claude.ts';
 import { CodexSession, codexVersion, readCodexVersion } from './codex.ts';
-import { DEFAULT_CAPTURE, paths, runtimeSecrets, type Capture, type ConnectorConfig, type Mode, type WorkspaceConfig } from './config.ts';
+import { configuredExecutable, DEFAULT_CAPTURE, paths, runtimeSecrets, type Capture, type ConnectorConfig, type Mode, type WorkspaceConfig } from './config.ts';
 import { EventSink } from './events.ts';
 import { blockedProtection, protection, type Surface } from './protection.ts';
 import { clean } from './redact.ts';
@@ -214,7 +214,8 @@ export class Daemon {
     const cx = this.cfg.runtimes.codex;
     if (cx.enabled) {
       const version = codexVersion(cx) ?? null;
-      if (version || (cx.executable && resolveExecutable(cx.executable))) {
+      const exe = configuredExecutable(cx);
+      if (version || (exe && resolveExecutable(exe))) {
         out.push({ runtime: 'codex', version: version ?? 'unknown', surfaces: ['app_server', 'cli_hooks'], capabilities: this.capabilities('codex', 'app_server', version) });
       }
     }

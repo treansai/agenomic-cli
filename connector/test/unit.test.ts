@@ -11,7 +11,7 @@ import { ApiError, RunnerApi } from '../src/api.ts';
 import { manifest, saveProbe } from '../src/capabilities.ts';
 import { ClaudeSession, claudeCodeVersion, readClaudeCodeVersion, sdkPackage } from '../src/claude.ts';
 import { CODEX_PERMISSION_PROFILE, CodexSession, codexExecutable, codexSessionConfig, codexVersion, readCodexVersion } from '../src/codex.ts';
-import { defaultConfig, localFailMode, paths, runtimeEnv, runtimeSecrets, saveConfig, spellings } from '../src/config.ts';
+import { defaultConfig, loadConfig, localFailMode, paths, runtimeEnv, runtimeSecrets, saveConfig, spellings, validateConfig } from '../src/config.ts';
 import { main } from '../src/cli.ts';
 import { Daemon } from '../src/daemon.ts';
 import { EventSink } from '../src/events.ts';
@@ -21,7 +21,7 @@ import { clean, redact } from '../src/redact.ts';
 import { protection, TOOL_IDS } from '../src/protection.ts';
 import { ProbeApi, probeConfig, probedVersion, runProbe, tempRepo } from '../src/probe.ts';
 import { isTestCommand, type SessionContext } from '../src/session.ts';
-import { log, readExecutableVersion, realPathEscapes, sleep, ulid } from '../src/util.ts';
+import { log, readExecutableVersion, realPathEscapes, resolveExecutable, sleep, ulid } from '../src/util.ts';
 import * as ws from '../src/workspace.ts';
 
 const tmp = (p: string) => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), p)));
@@ -928,6 +928,98 @@ test('a diff snapshot is redacted before it is cut: a secret across the cut leav
       }
     } finally {
       delete process.env.AGN_UNIT_DIFF_CREDENTIAL;
+    }
+  });
+});
+
+test('a relative runtime executable is refused: the daemon never validates one file and spawns another in the worktree', async () => {
+  await withHome(async (home) => {
+    const cwd = process.cwd();
+    // The daemon's directory holds a binary answering --version; the
+    // repository (so the session's worktree) commits another at the same
+    // relative path, which must never run.
+    const daemonDir = tmp('agn-daemon-cwd-');
+    fs.mkdirSync(path.join(daemonDir, 'bin'));
+    fs.writeFileSync(path.join(daemonDir, 'bin', 'codex'), "#!/bin/sh\necho 'codex-cli 7.7.7'\n", { mode: 0o755 });
+    const repo = tempRepo();
+    const marker = path.join(home, 'repository-binary-ran');
+    fs.mkdirSync(path.join(repo, 'bin'));
+    fs.writeFileSync(path.join(repo, 'bin', 'codex'), `#!/bin/sh\ntouch ${marker}\necho 'codex-cli 7.7.7'\n`, { mode: 0o755 });
+    execFileSync('git', ['-C', repo, 'add', 'bin/codex']);
+    execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@e', 'commit', '-qm', 'bin']);
+    process.chdir(daemonDir);
+    try {
+      for (const relative of ['./bin/codex', 'bin/codex', '../bin/codex']) {
+        const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+        cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+        cfg.runtimes.codex.executable = relative;
+        // A configuration file or a saved one is refused with a configuration error.
+        assert.throws(() => validateConfig(cfg), /runtimes\.codex\.executable: .* must be an absolute path or a command name/);
+        fs.writeFileSync(paths.config(), JSON.stringify(cfg));
+        assert.throws(() => loadConfig(), /runtimes\.codex\.executable/);
+        assert.throws(() => saveConfig(cfg), /runtimes\.codex\.executable/);
+        // A configuration built in code: no version is read from the daemon's
+        // directory, and a launch is refused before anything is spawned.
+        assert.equal(codexVersion(cfg.runtimes.codex), null, relative);
+        assert.equal(await readCodexVersion(cfg.runtimes.codex), null, relative);
+        assert.throws(() => codexExecutable(cfg.runtimes.codex), /must be an absolute path/);
+        cfg.runtimes.claude_code.executable = relative;
+        assert.equal(await readClaudeCodeVersion(cfg.runtimes.claude_code), null, relative);
+        const api = new ProbeApi();
+        const daemon = new Daemon(cfg, api);
+        assert.equal(daemon.runtimes().find((r) => r.runtime === 'codex'), undefined, 'not offered: nothing can be validated for it');
+        for (const runtime of ['codex', 'claude_code']) {
+          const launch = ulid();
+          await daemon.handleCommand({ id: launch, kind: 'launch', coding_session_id: randomUUID(), payload: { runtime, workspace_id: 'w', mode: 'observe' } });
+          const r = api.results.get(launch);
+          assert.equal(r?.status, 'refused', `${runtime} ${relative}: ${JSON.stringify(r)}`);
+          assert.match(r.error, /must be an absolute path/);
+        }
+        await daemon.stop();
+      }
+      assert.equal(fs.existsSync(marker), false, 'the repository binary never ran');
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+});
+
+test('a runtime executable given as a command name is looked up once on the absolute PATH directories', async () => {
+  await withHome(async () => {
+    const dir = tmp('agn-path-');
+    const exe = path.join(dir, 'my-codex');
+    fs.writeFileSync(exe, "#!/bin/sh\necho 'codex-cli 8.1.2'\n", { mode: 0o755 });
+    const elsewhere = tmp('agn-path-rel-');
+    fs.writeFileSync(path.join(elsewhere, 'my-codex'), "#!/bin/sh\necho 'codex-cli 0.0.1'\n", { mode: 0o755 });
+    const cwd = process.cwd();
+    const prevPath = process.env.PATH;
+    process.chdir(path.dirname(elsewhere));
+    // A relative PATH entry would name another file from another directory: it is skipped.
+    process.env.PATH = [path.basename(elsewhere), '.', dir, prevPath].join(path.delimiter);
+    try {
+      assert.equal(resolveExecutable('my-codex'), exe);
+      const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+      cfg.runtimes.codex.executable = 'my-codex';
+      saveConfig(cfg);
+      const loaded = loadConfig();
+      assert.equal(loaded.runtimes.codex.executable, exe, 'resolved once, to an absolute path');
+      assert.equal(codexExecutable(loaded.runtimes.codex), exe, 'the file spawned');
+      assert.equal(await readCodexVersion(loaded.runtimes.codex), '8.1.2', 'the file whose version is read');
+      // Saving the loaded configuration keeps the name the developer wrote.
+      loaded.local_sessions.mode = 'shadow';
+      saveConfig(loaded);
+      assert.equal(JSON.parse(fs.readFileSync(paths.config(), 'utf8')).runtimes.codex.executable, 'my-codex');
+      // An enabled runtime whose command is not found is a configuration
+      // error; a disabled one still loads.
+      cfg.runtimes.codex.executable = 'agn-no-such-codex';
+      saveConfig(cfg);
+      assert.throws(() => loadConfig(), /runtimes\.codex\.executable: "agn-no-such-codex" was not found on PATH/);
+      cfg.runtimes.codex.enabled = false;
+      saveConfig(cfg);
+      assert.equal(loadConfig().runtimes.codex.executable, 'agn-no-such-codex');
+    } finally {
+      process.chdir(cwd);
+      process.env.PATH = prevPath;
     }
   });
 });

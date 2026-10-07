@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { readJson, writeSecretFile } from './util.ts';
+import { readJson, resolveExecutable, writeSecretFile } from './util.ts';
 
 export type Mode = 'observe' | 'shadow' | 'enforce';
 
@@ -26,7 +26,12 @@ export interface WorkspaceConfig {
 
 export interface RuntimeConfig {
   enabled: boolean;
-  /** Path to the runtime executable; default: the pinned npm package. */
+  /**
+   * The runtime executable; default: the pinned npm package. An absolute
+   * path, or a bare command name looked up on the daemon's PATH when the
+   * configuration is loaded; a relative path is refused (see
+   * runtimeExecutable).
+   */
   executable?: string;
   /** Names of environment variables passed to the runtime (provider auth). */
   env_passthrough: string[];
@@ -154,6 +159,89 @@ export function runtimeSecrets(runtime: RuntimeConfig, env: NodeJS.ProcessEnv = 
   return values.filter(Boolean);
 }
 
+/** Why a configured executable is refused before any lookup (not a string, empty, a relative path), or undefined. */
+function executableRefused(exe: unknown, field: string): string | undefined {
+  if (typeof exe === 'string' && (path.isAbsolute(exe) || (exe && !exe.includes('/') && !exe.includes(path.sep) && exe !== '.' && exe !== '..'))) return undefined;
+  return `${field}: ${JSON.stringify(exe)} must be an absolute path or a command name on PATH (a relative path would be resolved against the session's worktree)`;
+}
+
+/**
+ * The absolute path of a configured runtime executable: an absolute path
+ * as given; a bare command name looked up once on the absolute directories
+ * of the daemon's PATH. A relative path (`./bin/codex`, `bin/codex`) is
+ * refused: it would name one file for the daemon (its version, the probe)
+ * and another under the session's worktree, a repository-controlled file,
+ * when the runtime is spawned there. Never resolved against a worktree.
+ * Throws a configuration error naming `field` when it cannot be resolved.
+ *
+ * @example
+ * resolveRuntimeExecutable('codex', 'runtimes.codex.executable'); // '/usr/local/bin/codex'
+ * resolveRuntimeExecutable('./bin/codex', 'runtimes.codex.executable'); // throws: must be an absolute path or a command name
+ */
+export function resolveRuntimeExecutable(exe: string, field: string): string {
+  if (path.isAbsolute(exe)) return path.normalize(exe);
+  const refused = executableRefused(exe, field);
+  if (refused) throw new Error(refused);
+  const found = resolveExecutable(exe);
+  if (!found) throw new Error(`${field}: ${JSON.stringify(exe)} was not found on PATH; give its absolute path`);
+  return found;
+}
+
+/**
+ * The absolute path of a runtime's configured executable, undefined when
+ * none is configured (the pinned package runs). Already absolute once
+ * loadConfig() resolved it; a configuration built otherwise is resolved
+ * here the same way, so that every use (version, probe, hooks install,
+ * spawn) names the same file. Throws for a relative path or a command
+ * not found on PATH.
+ *
+ * @example
+ * const exe = runtimeExecutable(cfg.runtimes.codex) ?? bundledCodex;
+ */
+export function runtimeExecutable(runtime: Pick<RuntimeConfig, 'executable'>, field = 'executable'): string | undefined {
+  return runtime.executable === undefined ? undefined : resolveRuntimeExecutable(runtime.executable, field);
+}
+
+/**
+ * runtimeExecutable() that never throws: null when the configured
+ * executable is refused or not found (nothing can be validated for it).
+ *
+ * @example
+ * const exe = configuredExecutable(cfg.runtimes.codex); // undefined: the pinned package
+ */
+export function configuredExecutable(runtime: Pick<RuntimeConfig, 'executable'>): string | null | undefined {
+  try {
+    return runtimeExecutable(runtime);
+  } catch {
+    return null;
+  }
+}
+
+/** The configured spelling of each executable loadConfig() resolved, written back by saveConfig(). */
+const configuredExecutables = new WeakMap<object, { configured: string; resolved: string }>();
+
+/**
+ * Resolves the executable of every runtime once (resolveRuntimeExecutable),
+ * so that the daemon validates and spawns the same file. A disabled
+ * runtime whose command is not found keeps its name: it is resolved, or
+ * refused, when something uses it.
+ */
+function resolveExecutables(cfg: ConnectorConfig): void {
+  for (const [name, runtime] of Object.entries(cfg.runtimes) as [string, RuntimeConfig][]) {
+    if (runtime.executable === undefined) continue;
+    const field = `runtimes.${name}.executable`;
+    let resolved: string;
+    try {
+      resolved = resolveRuntimeExecutable(runtime.executable, field);
+    } catch (e) {
+      if (runtime.enabled) throw e;
+      continue;
+    }
+    if (resolved !== runtime.executable) configuredExecutables.set(runtime, { configured: runtime.executable, resolved });
+    runtime.executable = resolved;
+  }
+}
+
 /**
  * Reads and validates connector.json; throws when the machine is not enrolled.
  *
@@ -165,11 +253,12 @@ export function loadConfig(): ConnectorConfig {
   const cfg = readJson<ConnectorConfig>(paths.config());
   if (!cfg) throw new Error(`not enrolled: ${paths.config()} is missing (run "agenomic-connector enroll")`);
   validateConfig(cfg);
+  resolveExecutables(cfg);
   return cfg;
 }
 
 /**
- * Throws when a configuration would be unsafe or ambiguous: a non-loopback http endpoint, a bad or duplicate workspace id, a relative workspace path.
+ * Throws when a configuration would be unsafe or ambiguous: a non-loopback http endpoint, a bad or duplicate workspace id, a relative workspace path, a relative runtime executable path.
  *
  * @example
  * validateConfig(defaultConfig('http://gateway.example.com', 'x')); // throws: plain http is only accepted for a loopback endpoint
@@ -186,6 +275,10 @@ export function validateConfig(cfg: ConnectorConfig): void {
     ids.add(w.id);
     if (!path.isAbsolute(w.path)) throw new Error(`workspace ${w.id}: path must be absolute`);
   }
+  for (const [name, runtime] of Object.entries(cfg.runtimes ?? {}) as [string, RuntimeConfig][]) {
+    const refused = runtime?.executable === undefined ? undefined : executableRefused(runtime.executable, `runtimes.${name}.executable`);
+    if (refused) throw new Error(refused);
+  }
 }
 
 /**
@@ -198,7 +291,16 @@ export function validateConfig(cfg: ConnectorConfig): void {
  */
 export function saveConfig(cfg: ConnectorConfig): void {
   validateConfig(cfg);
-  writeSecretFile(paths.config(), JSON.stringify(cfg, null, 2) + '\n');
+  // A command name loadConfig() looked up on PATH is saved as configured, not as the path it found.
+  const json = JSON.stringify(
+    cfg,
+    function (this: any, key, value) {
+      const c = key === 'executable' ? configuredExecutables.get(this) : undefined;
+      return c && c.resolved === value ? c.configured : value;
+    },
+    2,
+  );
+  writeSecretFile(paths.config(), json + '\n');
   writeSecretFile(paths.localFailMode(), failModeOf(cfg.local_sessions.mode) + '\n');
 }
 

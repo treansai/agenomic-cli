@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { createRequire } from 'node:module';
-import { home as connectorHome, paths, runtimeEnv, spellings, type RuntimeConfig } from './config.ts';
+import { configuredExecutable, home as connectorHome, paths, runtimeEnv, runtimeExecutable, spellings, type RuntimeConfig } from './config.ts';
 import { installCodex } from './hooks-install.ts';
 import { isTestCommand, type SessionContext } from './session.ts';
 import { errorMessage, executableVersion, log, readExecutableVersion } from './util.ts';
@@ -14,13 +14,17 @@ import * as ws from './workspace.ts';
 const CLIENT_METHODS = new Set(['initialize', 'thread/start', 'thread/resume', 'thread/read', 'turn/start', 'turn/steer', 'turn/interrupt']);
 
 /**
- * Path of the Codex executable a session runs: the configured one, else the pinned package's.
+ * Absolute path of the Codex executable a session runs: the configured
+ * one (runtimeExecutable: never relative, so the file spawned in a
+ * worktree is the one whose version was read), else the pinned package's.
+ * Throws when the configured one is a relative path or not found on PATH.
  *
  * @example
  * const exe = codexExecutable(cfg.runtimes.codex);
  */
 export function codexExecutable(runtime: RuntimeConfig): string {
-  if (runtime.executable) return runtime.executable;
+  const configured = runtimeExecutable(runtime, 'runtimes.codex.executable');
+  if (configured) return configured;
   const req = createRequire(import.meta.url);
   const pkg = path.dirname(req.resolve('@openai/codex/package.json'));
   return path.join(pkg, 'bin', 'codex.js');
@@ -35,7 +39,10 @@ export function codexExecutable(runtime: RuntimeConfig): string {
  * const version = codexVersion(cfg.runtimes.codex) ?? 'unknown';
  */
 export function codexVersion(runtime: RuntimeConfig): string | null | undefined {
-  if (runtime.executable) return executableVersion(runtime.executable);
+  if (runtime.executable !== undefined) {
+    const exe = configuredExecutable(runtime);
+    return exe ? executableVersion(exe) : null;
+  }
   return packageVersion();
 }
 
@@ -46,7 +53,10 @@ export function codexVersion(runtime: RuntimeConfig): string | null | undefined 
  * const version = await readCodexVersion(cfg.runtimes.codex);
  */
 export async function readCodexVersion(runtime: RuntimeConfig): Promise<string | null> {
-  if (runtime.executable) return readExecutableVersion(runtime.executable);
+  if (runtime.executable !== undefined) {
+    const exe = configuredExecutable(runtime);
+    return exe ? readExecutableVersion(exe) : null;
+  }
   return packageVersion();
 }
 

@@ -54,6 +54,11 @@ Local hooks are cooperative, not a security boundary (see
 
 ## What is validated
 
+A runtime's `executable` in `connector.json` is an absolute path or a
+command name looked up on the daemon's PATH when the configuration is
+loaded; a relative path such as `./bin/codex` is refused, since a session
+starts the runtime in its worktree.
+
 `doctor --probe` runs the runtimes this machine is configured with (the
 enabled ones, with their configured `executable`) against local scripted
 model endpoints (no provider, no network) through the same adapters the

@@ -163,13 +163,15 @@ export function realPathEscapes(p: string, cwd: string, root: string): boolean {
 
 /**
  * Path of an executable, looked up on PATH when it is a bare command name.
+ * Only the absolute directories of PATH are searched: a relative one (`.`,
+ * `bin`) would name a different file from another working directory.
  *
  * @example
  * resolveExecutable('git'); // '/usr/bin/git', or null
  */
 export function resolveExecutable(exe: string): string | null {
   if (exe.includes('/')) return fs.existsSync(exe) ? path.resolve(exe) : null;
-  for (const dir of (process.env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
+  for (const dir of (process.env.PATH ?? '').split(path.delimiter).filter((d) => path.isAbsolute(d))) {
     const candidate = path.join(dir, exe);
     try {
       fs.accessSync(candidate, fs.constants.X_OK);
