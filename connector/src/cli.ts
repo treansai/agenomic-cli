@@ -159,7 +159,9 @@ export async function main(argv: string[]): Promise<number> {
         const exe = codexExecutable(cfg?.runtimes.codex ?? { enabled: true, env_passthrough: [], extra_env: {}, allowed_domains: [] });
         const r = await installCodex(file, failMode, exe, one(f, 'dir') ?? process.cwd(), dry);
         out(dry ? `would write ${file}:\n${r.plan.after}` : `installed Codex hooks in ${file}; trusted ${r.trusted} hook entries${r.backup ? ` (backup: ${r.backup})` : ''}`);
-        return 0;
+        if (dry || r.preToolUse) return 0;
+        out('codex does not report the Agenomic PreToolUse hook as trusted: shell calls are not controlled');
+        return 1;
       }
       throw new Error('--runtime claude-code|codex');
     }

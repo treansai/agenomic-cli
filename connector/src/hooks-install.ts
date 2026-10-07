@@ -156,6 +156,17 @@ function stripBlock(text: string): string {
 const tomlString = (s: string) => JSON.stringify(s);
 
 /**
+ * The command of the Codex PreToolUse hook the managed block declares: it
+ * answers 10 s before the hook's native timeout.
+ *
+ * @example
+ * codexPreToolCommand('closed', 900); // "… hook codex --fail closed --deadline 890000 …"
+ */
+export function codexPreToolCommand(failMode: FailMode, timeoutSec: number, socket = paths.socket()): string {
+  return hookCommand('codex', failMode, Math.max(1000, (timeoutSec - 10) * 1000), socket);
+}
+
+/**
  * The managed config.toml block that declares the Agenomic Codex hooks and their trust.
  *
  * @example
@@ -165,7 +176,7 @@ export function codexBlock(failMode: FailMode, timeoutSec: number, trust: Record
   const lines = [BLOCK_START];
   for (const event of CODEX_EVENTS) {
     const pre = event === 'PreToolUse';
-    const command = hookCommand('codex', failMode, pre ? Math.max(1000, (timeoutSec - 10) * 1000) : 10000, socket);
+    const command = pre ? codexPreToolCommand(failMode, timeoutSec, socket) : hookCommand('codex', failMode, 10000, socket);
     lines.push(`[[hooks.${event}]]`);
     if (pre || event === 'PostToolUse') lines.push('matcher = "*"');
     lines.push(`[[hooks.${event}.hooks]]`, 'type = "command"', `command = ${tomlString(command)}`, `timeout = ${pre ? timeoutSec : 30}`);
@@ -256,14 +267,18 @@ export async function codexListHooks(exe: string, codexHome: string, cwd: string
 /**
  * Install the Codex hooks and record the user's trust for exactly those
  * entries (Codex does not run an untrusted hook). Trust is recorded only
- * for commands this tool wrote, matched on the command string.
+ * for commands this tool wrote, matched on the command string. Codex is
+ * then asked again: `preToolUse` is true only when it reports the exact
+ * PreToolUse command this block declares, from this file, enabled and
+ * trusted. Pre-tool control depends on that one entry; trusting the
+ * other hooks does not give it.
  *
  * @example
- * const { trusted } = await installCodex(codexConfigFile(), 'local', codexExecutable(cfg.runtimes.codex), repo, false);
+ * const { trusted, preToolUse } = await installCodex(codexConfigFile(), 'local', codexExecutable(cfg.runtimes.codex), repo, false);
  */
-export async function installCodex(file: string, failMode: FailMode, exe: string, cwd: string, dryRun: boolean, timeoutSec = 600, socket = paths.socket()): Promise<{ plan: Plan; backup: string | null; trusted: number }> {
+export async function installCodex(file: string, failMode: FailMode, exe: string, cwd: string, dryRun: boolean, timeoutSec = 600, socket = paths.socket()): Promise<{ plan: Plan; backup: string | null; trusted: number; preToolUse: boolean }> {
   const first = planCodex(file, failMode, true, {}, timeoutSec, socket);
-  if (dryRun) return { plan: first, backup: null, trusted: 0 };
+  if (dryRun) return { plan: first, backup: null, trusted: 0, preToolUse: false };
   const backup = apply(first);
   const hooks = await codexListHooks(exe, path.dirname(file), cwd);
   const trust: Record<string, string> = {};
@@ -272,5 +287,9 @@ export async function installCodex(file: string, failMode: FailMode, exe: string
   }
   const second = planCodex(file, failMode, true, trust, timeoutSec, socket);
   apply(second);
-  return { plan: second, backup, trusted: Object.keys(trust).length };
+  const pre = codexPreToolCommand(failMode, timeoutSec, socket);
+  const listed = Object.keys(trust).length ? await codexListHooks(exe, path.dirname(file), cwd) : [];
+  const preToolUse = listed.some((h) =>
+    String(h.eventName ?? '').toLowerCase() === 'pretooluse' && h.handlerType === 'command' && h.command === pre && h.sourcePath === file && h.enabled !== false && h.trustStatus === 'trusted');
+  return { plan: second, backup, trusted: Object.keys(trust).length, preToolUse };
 }

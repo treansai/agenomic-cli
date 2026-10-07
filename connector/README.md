@@ -41,7 +41,8 @@ agenomic-connector hooks uninstall --runtime claude-code --scope project --dir ~
 Install keeps your existing hooks, is idempotent and backs the file up;
 uninstall removes exactly what install added. Codex runs only trusted
 hooks: the installer records trust for its own entries, by hash, because
-you ran the command. Restart sessions that were open before the install.
+you ran the command, then checks that Codex reports the PreToolUse
+entry itself as trusted, and exits 1 when it does not. Restart sessions that were open before the install.
 When the daemon does not answer, a hook follows the current
 `local-sessions` mode: enforce refuses the tool call, observe and shadow
 let the runtime decide. Changing the mode needs no reinstall (hooks

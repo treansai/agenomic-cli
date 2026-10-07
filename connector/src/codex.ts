@@ -178,9 +178,11 @@ export class CodexSession {
       // The session's own CODEX_HOME carries the trusted PreToolUse hook
       // that routes every shell call to this daemon: fail closed in
       // enforce, open in shadow. The agent cannot write this directory
-      // (outside the worktree, workspace-write sandbox).
+      // (outside the worktree, workspace-write sandbox). Codex must report
+      // that PreToolUse entry itself as trusted: other trusted hooks only
+      // observe, and an untrusted PreToolUse hook never runs.
       const r = await installCodex(path.join(this.home, 'config.toml'), this.o.ctx.mode === 'enforce' ? 'closed' : 'open', exe, this.o.cwd, false, 900, paths.socket());
-      if (r.trusted === 0) throw new Error('codex did not report the Agenomic hooks; refusing to start without pre-tool control');
+      if (!r.preToolUse) throw new Error(`codex did not report the Agenomic PreToolUse hook as trusted (${r.trusted} Agenomic hook entries trusted); refusing to start without pre-tool control`);
     }
     const args = ['app-server', '--listen', 'stdio://'];
     const command = exe.endsWith('.js') ? process.execPath : exe;

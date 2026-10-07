@@ -16,7 +16,7 @@ import { main } from '../src/cli.ts';
 import { Daemon } from '../src/daemon.ts';
 import { EventSink } from '../src/events.ts';
 import { eventOf, invokingExecutable } from '../src/hook.ts';
-import { apply, codexBlock, hookCommand, planClaude, planCodex } from '../src/hooks-install.ts';
+import { apply, codexBlock, codexPreToolCommand, hookCommand, installCodex, planClaude, planCodex } from '../src/hooks-install.ts';
 import { clean, redact } from '../src/redact.ts';
 import { protection, TOOL_IDS } from '../src/protection.ts';
 import { ProbeApi, probeConfig, probedVersion, runProbe, tempRepo } from '../src/probe.ts';
@@ -839,6 +839,81 @@ test('a Codex executable that cannot be spawned refuses the launch; the daemon s
       const send = ulid();
       await daemon.handleCommand({ id: send, kind: 'send_message', coding_session_id: session, payload: { text: 'hello' } });
       assert.equal(api.results.get(send)?.status, 'refused');
+    }
+  });
+});
+
+/**
+ * A fake `codex app-server` whose `hooks/list` reports the command hooks
+ * of $CODEX_HOME/config.toml, trusted once their trust is recorded.
+ * FAKE_HOOKS=no-pre leaves PreToolUse out, never-trust reports every
+ * entry untrusted; threads start as in a real App Server.
+ */
+function fakeHookingCodex(): string {
+  const fake = path.join(tmp('agn-bin-'), 'codex.js');
+  fs.writeFileSync(fake, [
+    "const fs = require('node:fs');",
+    "const path = require('node:path');",
+    "const file = path.join(process.env.CODEX_HOME, 'config.toml');",
+    'function hooks() {',
+    "  const text = fs.readFileSync(file, 'utf8');",
+    '  const out = [];',
+    '  for (const m of text.matchAll(/\\[\\[hooks\\.(\\w+)\\.hooks\\]\\]\\ntype = "command"\\ncommand = (".*")/g)) {',
+    "    if (m[1] === 'PreToolUse' && process.env.FAKE_HOOKS === 'no-pre') continue;",
+    "    const key = file + ':' + m[1] + ':0:0';",
+    "    const trusted = process.env.FAKE_HOOKS !== 'never-trust' && text.includes('[hooks.state.' + JSON.stringify(key) + ']');",
+    "    out.push({ key, eventName: m[1][0].toLowerCase() + m[1].slice(1), handlerType: 'command', command: JSON.parse(m[2]), sourcePath: file, enabled: true, currentHash: 'sha256:' + m[1], trustStatus: trusted ? 'trusted' : 'untrusted' });",
+    '  }',
+    '  return out;',
+    '}',
+    "const rl = require('node:readline').createInterface({ input: process.stdin });",
+    "rl.on('line', (line) => {",
+    '  const m = JSON.parse(line);',
+    '  if (m.id === undefined) return;',
+    "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : m.method === 'hooks/list' ? { data: [{ cwd: m.params.cwds[0], hooks: hooks(), warnings: [], errors: [] }] } : m.method.startsWith('thread/') ? { thread: { id: 'thread-fake' } } : {};",
+    "  process.stdout.write(JSON.stringify({ id: m.id, result }) + '\\n');",
+    '});',
+    "rl.on('close', () => process.exit(0));",
+  ].join('\n'));
+  return fake;
+}
+
+test('Codex pre-tool control needs the PreToolUse hook itself listed and trusted, not any Agenomic hook', async () => {
+  await withHome(async () => {
+    const repo = tempRepo();
+    const fake = fakeHookingCodex();
+    const prev = process.env.FAKE_HOOKS;
+    try {
+      for (const [mode, preToolUse] of [['all', true], ['no-pre', false], ['never-trust', false]] as const) {
+        process.env.FAKE_HOOKS = mode;
+        const file = path.join(tmp('agn-codex-home-'), 'config.toml');
+        const r = await installCodex(file, 'closed', fake, repo, false, 900);
+        assert.equal(r.preToolUse, preToolUse, mode);
+        assert.equal(r.trusted, mode === 'no-pre' ? 5 : 6, mode);
+        assert.ok(fs.readFileSync(file, 'utf8').includes(codexPreToolCommand('closed', 900).replace(/["\\]/g, (c) => '\\' + c)));
+      }
+      // A launched session: refused in shadow and enforce without it, started with it.
+      for (const [hooks, mode, status] of [['no-pre', 'enforce', 'refused'], ['no-pre', 'shadow', 'refused'], ['never-trust', 'enforce', 'refused'], ['all', 'enforce', 'applied']] as const) {
+        process.env.FAKE_HOOKS = hooks;
+        const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+        cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+        cfg.runtimes.codex.executable = fake;
+        const api = new ProbeApi();
+        const daemon = new Daemon(cfg, api);
+        const session = randomUUID();
+        const launch = ulid();
+        try {
+          await daemon.handleCommand({ id: launch, kind: 'launch', coding_session_id: session, payload: { runtime: 'codex', workspace_id: 'w', mode, ...(mode === 'enforce' ? { policy_ref: 'p' } : {}) } });
+          const r = api.results.get(launch);
+          assert.equal(r?.status, status, `${hooks} ${mode}: ${r?.error}`);
+          if (status === 'refused') assert.match(r.error, /PreToolUse hook as trusted/);
+        } finally {
+          await daemon.stop();
+        }
+      }
+    } finally {
+      if (prev === undefined) delete process.env.FAKE_HOOKS;
+      else process.env.FAKE_HOOKS = prev;
     }
   });
 });

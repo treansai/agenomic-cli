@@ -304,16 +304,16 @@ export async function probeCodexCli(fake: FakeServer, home: string, machine: Con
   fs.writeFileSync(file, codexProviderToml(fake.url) + '\n', { mode: 0o600 });
   const exe = codexExecutable(cfg.runtimes.codex);
   try {
-    const hooks = await installCodex(file, 'closed', exe, repo, false).catch((e: Error) => ({ trusted: 0, error: e.message }));
+    const hooks = await installCodex(file, 'closed', exe, repo, false).catch((e: Error) => ({ trusted: 0, preToolUse: false, error: e.message }));
     const shell = (cmd: string) => ({ tool: 'exec_command', input: { cmd } });
     const steps = [shell('echo in > inside.txt'), shell('echo deny-me > deny-me.txt'), shell('echo approve-me > approved.txt')];
-    const run = hooks.trusted > 0
+    const run = hooks.preToolUse
       ? await runCli(exe.endsWith('.js') ? process.execPath : exe, [...(exe.endsWith('.js') ? [exe] : []), 'exec', '--skip-git-repo-check', '-s', 'workspace-write', script(steps, 'cli probe')], {
           cwd: repo,
           env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: codexHome, CODEX_HOME: codexHome, AGENOMIC_SCRIPTED_KEY: 'probe-not-a-key' },
           timeoutMs: 180000,
         })
-      : { code: null, tail: 'error' in hooks ? hooks.error : 'codex did not report the installed hooks' };
+      : { code: null, tail: 'error' in hooks ? hooks.error : 'codex did not report the installed PreToolUse hook as trusted' };
     await until(() => api.has('session.ended'), 10000);
     const why = run.code === 0 ? '' : `; codex exec exited ${run.code}: ${clean(run.tail.split('\n').slice(-3).join(' '), 300, runtimeSecrets(cfg.runtimes.codex))}`;
     // Until this probe validated pre-tool control, the enforce session is reported blocked.
