@@ -381,7 +381,7 @@ export class ClaudeSession {
 
   /** Stops the runtime process and reports `applied` only once it exited. */
   async stop(): Promise<'applied' | 'unknown'> {
-    void this.o.ctx.settleOpen('session stopped before the tool reported');
+    void this.o.ctx.settleFinal('session stopped before the tool reported');
     this.inbox.close();
     try {
       this.query.close?.();

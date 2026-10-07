@@ -58,6 +58,8 @@ export class SessionContext {
    * settling them later delivers that outcome instead of a generic one.
    */
   private readonly open = new Map<string, Outcome | undefined>();
+  /** The settlement at the end of the session, once started. */
+  private final: Promise<void> | undefined;
 
   readonly api: RunnerApi;
   readonly id: string;
@@ -259,12 +261,41 @@ export class SessionContext {
    * flight is awaited rather than duplicated; an action whose report
    * fails again stays open for the next settlement.
    */
-  async settleOpen(summary: string): Promise<void> {
-    await Promise.all([...this.open].map(async ([id, retained]) => {
+  async settleOpen(summary: string, only?: ReadonlySet<string>): Promise<void> {
+    await Promise.all([...this.open].filter(([id]) => !only || only.has(id)).map(async ([id, retained]) => {
       if (retained?.sending) await retained.sending;
       if (!this.open.has(id) || this.open.get(id) !== retained) return;
       await (retained ? this.report(id, retained.outcome, retained.detail) : this.report(id, 'unknown', { summary }));
     }));
+  }
+
+  /**
+   * The settlement at the end of the session. Nothing settles its actions
+   * after it, so the outcomes the gateway did not acknowledge (it is still
+   * unavailable) are delivered again, with a growing delay, until they are
+   * or `budgetMs` has passed. It runs in the background of the daemon,
+   * whose process its waits do not keep alive. Only the actions open when
+   * it starts are retried: a resumed session's new actions are its own.
+   * Settling twice (a stop, then the session's end) shares one settlement.
+   */
+  settleFinal(summary: string, budgetMs = 10 * 60 * 1000, firstDelayMs = 2000): Promise<void> {
+    this.final ??= (async () => {
+      const ids = new Set(this.open.keys());
+      const deadline = Date.now() + budgetMs;
+      for (let delay = firstDelayMs; ; delay = Math.min(delay * 2, 60000)) {
+        await this.settleOpen(summary, ids);
+        const left = [...ids].filter((id) => this.open.has(id));
+        if (left.length === 0) return;
+        if (Date.now() + delay >= deadline) {
+          log('warn', 'action outcomes left unreported', { session: this.id, actions: left });
+          return;
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, delay).unref());
+      }
+    })().finally(() => {
+      this.final = undefined;
+    });
+    return this.final;
   }
 
   async state(update: Record<string, unknown>): Promise<any> {

@@ -441,7 +441,7 @@ export class CodexSession {
   }
 
   async stop(): Promise<'applied' | 'unknown'> {
-    void this.o.ctx.settleOpen('session stopped before the tool reported');
+    void this.o.ctx.settleFinal('session stopped before the tool reported');
     const child = this.child;
     if (!child || child.exitCode !== null || child.signalCode !== null) return 'applied';
     child.stdin?.end();

@@ -483,7 +483,7 @@ export class Daemon {
         return {};
       case 'SessionEnd':
         ctx.sink.emit('session.ended', 'runtime', 'native', { reason: input.reason });
-        void ctx.settleOpen('session ended before the tool reported');
+        void ctx.settleFinal('session ended before the tool reported');
         if (m.origin === 'local_connected') {
           await this.setStatus(m, 'stopped');
           await ctx.sink.close();

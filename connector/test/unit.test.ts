@@ -869,6 +869,44 @@ test('an outcome whose report fails is retained and delivered when the turn sett
   });
 });
 
+test('the settlement at a session\'s end keeps delivering retained outcomes until the gateway recovers', async () => {
+  await withHome(async () => {
+    const repo = tempRepo();
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+    const api = new FlakyReportApi();
+    const daemon: any = new Daemon(cfg, api);
+    const hook = (input: Record<string, unknown>) => daemon.onLocal({ op: 'hook', runtime: 'claude_code', input: { session_id: 'cli-3', cwd: repo, ...input } });
+    await hook({ hook_event_name: 'PreToolUse', tool_use_id: 'toolu_1', tool_name: 'Bash', tool_input: { command: 'ls' } });
+    await hook({ hook_event_name: 'PostToolUse', tool_use_id: 'toolu_1', tool_name: 'Bash' });
+    // The session ends (and is forgotten) while the gateway is still down.
+    await hook({ hook_event_name: 'SessionEnd', reason: 'exit' });
+    assert.equal(api.reports.length, 0);
+    api.down = false;
+    const until = Date.now() + 10000;
+    while (api.reports.length === 0 && Date.now() < until) await sleep(50);
+    assert.deepEqual(api.reports.map((r) => r.outcome), ['completed'], 'the real outcome reaches the gateway after the session ended');
+
+    // Only the actions open when the session ended are retried: a resumed
+    // session's new action is not settled by it.
+    const flaky = new FlakyReportApi();
+    const m = (new Daemon(defaultConfig('http://127.0.0.1:9', 'unit'), flaky) as any).manage(randomUUID(), 'claude_code', 'launched', 'enforce', { conversation: false, commands: false, diffs: false, outputs: false }, tmp('agn-wt-'), null);
+    const ctx: SessionContext = m.ctx;
+    const before = await ctx.authorize({ nativeId: 'toolu_1', tool: 'Read', input: { file_path: 'a' }, context: {}, phase: 'pre_tool', waitForApproval: false });
+    await ctx.report(before.actionId, 'failed', { exit_code: 2 });
+    const settled = ctx.settleFinal('session stopped before the tool reported', 10000, 20);
+    const after = await ctx.authorize({ nativeId: 'toolu_2', tool: 'Read', input: { file_path: 'b' }, context: {}, phase: 'pre_tool', waitForApproval: false });
+    await sleep(60);
+    flaky.down = false;
+    // The settlement's waits do not hold the process: the test does.
+    while (flaky.reports.length === 0 && Date.now() < until + 10000) await sleep(10);
+    await settled;
+    assert.deepEqual(flaky.reports, [{ action: before.actionId, outcome: 'failed' }]);
+    assert.ok(!flaky.reports.some((r) => r.action === after.actionId));
+    await ctx.sink.close();
+  });
+});
+
 test('local hook sessions: tool events correlated; a launched session\'s hooks do not report a call twice', async () => {
   await withHome(async () => {
     const repo = tempRepo();
