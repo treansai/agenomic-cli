@@ -23,19 +23,32 @@ function git(cwd: string, args: string[], maxBuffer = 16 * 1024 * 1024, opts: { 
 /**
  * Output of a git command read up to `limit` bytes: past it, git is
  * stopped and `more` is set, so a huge output is neither buffered whole
- * nor an error.
+ * nor an error. The bound is on the output only: stderr goes to a
+ * temporary file, of which the start is the error's reason, so that a
+ * verbose stderr never reads as a cut output.
  */
 function gitBounded(cwd: string, args: string[], limit: number, env: Record<string, string> = {}): { out: string; more: boolean } {
-  const r = spawnSync('git', ['-C', cwd, ...args], {
-    maxBuffer: limit,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', ...env },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  const more = (r.error as NodeJS.ErrnoException | undefined)?.code === 'ENOBUFS';
-  if (r.error && !more) throw r.error;
-  if (!more && r.status !== 0) throw new Error(`git ${args[0]} failed: ${String(r.stderr ?? '').trim().slice(0, 500)}`);
-  const out = r.stdout ?? Buffer.alloc(0);
-  return { out: out.subarray(0, limit).toString('utf8'), more: more || out.length > limit };
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agn-git-'));
+  const errFd = fs.openSync(path.join(tmp, 'stderr'), 'w+', 0o600);
+  try {
+    const r = spawnSync('git', ['-C', cwd, ...args], {
+      maxBuffer: limit,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', ...env },
+      stdio: ['ignore', 'pipe', errFd],
+    });
+    const more = (r.error as NodeJS.ErrnoException | undefined)?.code === 'ENOBUFS';
+    if (r.error && !more) throw r.error;
+    if (!more && r.status !== 0) {
+      const reason = Buffer.alloc(500);
+      const n = fs.readSync(errFd, reason, 0, reason.length, 0);
+      throw new Error(`git ${args[0]} failed: ${reason.subarray(0, n).toString('utf8').trim()}`);
+    }
+    const out = r.stdout ?? Buffer.alloc(0);
+    return { out: out.subarray(0, limit).toString('utf8'), more: more || out.length > limit };
+  } finally {
+    fs.closeSync(errFd);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 export interface WorkspaceState {

@@ -471,6 +471,23 @@ test('workspace: a diff larger than any buffer is read only up to its window; th
   }
 });
 
+test('workspace: a verbose stderr of a diff that succeeds is not read as a cut diff', () => {
+  const repo = tempRepo();
+  const git = (...a: string[]) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8' });
+  const base = git('rev-parse', 'HEAD').trim();
+  // A clean filter that writes 1 MiB to stderr each time git reads a file.
+  git('config', 'filter.noisy.clean', "head -c 1048576 /dev/zero | tr '\\000' w 1>&2; cat");
+  fs.writeFileSync(path.join(repo, '.git', 'info', 'attributes'), '* filter=noisy\n');
+  fs.writeFileSync(path.join(repo, 'README.md'), 'probe\nchanged\n');
+  try {
+    const d = ws.diff(repo, base, [], 8 * 1024);
+    assert.equal(d.truncated, false, d.text);
+    assert.match(d.text, /^\+changed$/m);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test('symlink escapes are detected on the real path', () => {
   const root = tmp('agn-root-');
   const outside = tmp('agn-out-');
