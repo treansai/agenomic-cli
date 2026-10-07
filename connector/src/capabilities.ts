@@ -88,10 +88,22 @@ function probeFile(): string {
   return path.join(paths.state(), 'validation.json');
 }
 
+/**
+ * The probe results `doctor --probe` saved on this machine.
+ *
+ * @example
+ * for (const p of loadProbes()) console.log(`${p.runtime}/${p.surface} ${p.version} validated at ${p.at}`);
+ */
 export function loadProbes(): ProbeResult[] {
   return readJson<ProbeResult[]>(probeFile()) ?? [];
 }
 
+/**
+ * Records a probe result, replacing the previous one of the same runtime and surface.
+ *
+ * @example
+ * saveProbe({ runtime: 'codex', surface: 'cli_hooks', version: '0.160.1', at: new Date().toISOString(), results: { observe: { ok: true, detail: 'hooks reported' } } });
+ */
 export function saveProbe(p: ProbeResult): void {
   const all = loadProbes().filter((x) => !(x.runtime === p.runtime && x.surface === p.surface));
   all.push(p);
@@ -99,6 +111,13 @@ export function saveProbe(p: ProbeResult): void {
   writeSecretFile(probeFile(), JSON.stringify(all, null, 2));
 }
 
+/**
+ * The capability manifest of a runtime surface: announced states, validated by a probe of this exact version.
+ *
+ * @example
+ * const caps = manifest('codex', 'app_server', '0.160.1');
+ * caps.pre_tool_control.validated; // 'unknown' until `doctor --probe` validated it
+ */
 export function manifest(runtime: string, surface: string, version: string | null): Record<string, CapEntry> {
   const announced = ANNOUNCED[`${runtime}:${surface}`];
   if (!announced) return {};

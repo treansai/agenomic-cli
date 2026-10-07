@@ -52,6 +52,11 @@ export interface SinkOptions {
  * per-epoch sequence numbers, bounded memory, a bounded disk spool for
  * evidence while the cloud is unreachable, and at-least-once delivery
  * (the server deduplicates on event id and producer sequence).
+ *
+ * @example
+ * const sink = new EventSink(api, sessionId, () => [token], paths.spool());
+ * sink.emit('turn.completed', 'runtime', 'native', {}, { runtime_turn_id: '1' });
+ * await sink.close();
  */
 export class EventSink {
   private readonly queue: CodingEvent[] = [];
@@ -88,6 +93,12 @@ export class EventSink {
     this.timer.unref();
   }
 
+  /**
+   * Queues an event, redacted first; evidence is spooled to disk rather than dropped.
+   *
+   * @example
+   * sink.emit('file.changed', 'runtime', 'native', { path: 'src/app.ts', tool: 'Edit' });
+   */
   emit(type: EventType, source: Source, trust: Trust, payload: Record<string, unknown> = {}, extra: Partial<CodingEvent> = {}): CodingEvent {
     const event: CodingEvent = {
       event_id: ulid(),
@@ -151,11 +162,22 @@ export class EventSink {
     this.writeSpool(Buffer.concat([data.subarray(0, at), lines, data.subarray(at)]));
   }
 
-  /** Events not delivered yet: queued, and in flight. */
+  /**
+   * Events not delivered yet: queued, and in flight.
+   *
+   * @example
+   * if (sink.pending() > 0) await sink.flush();
+   */
   pending(): number {
     return this.queue.length + this.inflight.length;
   }
 
+  /**
+   * Sends the spooled and queued events, oldest first.
+   *
+   * @example
+   * await sink.flush();
+   */
   async flush(): Promise<void> {
     if (this.flushing) return this.flushing;
     this.flushing = this.doFlush().finally(() => {
@@ -290,6 +312,12 @@ export class EventSink {
     await this.api.request('POST', `/v1/coding/runner/sessions/${this.sessionId}/events`, { body: { events }, retry: true, timeoutMs: 20000 });
   }
 
+  /**
+   * Stops the periodic flush and sends what is left.
+   *
+   * @example
+   * await sink.close();
+   */
   async close(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;

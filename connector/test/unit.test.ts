@@ -1266,3 +1266,24 @@ test('enroll refuses an insecure endpoint before the one time token is sent', as
     }
   });
 });
+
+test('every public function, class and method of the connector has a doc comment with an example', () => {
+  const dir = path.resolve(import.meta.dirname, '../src');
+  const missing: string[] = [];
+  for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.ts'))) {
+    const lines = fs.readFileSync(path.join(dir, file), 'utf8').split('\n');
+    let inClass = false;
+    lines.forEach((line, i) => {
+      if (/^export class /.test(line)) inClass = true;
+      else if (/^\S/.test(line) && !/^}/.test(line)) inClass = false;
+      const exported = /^export (async )?function |^export class |^export const \w+ = (async )?\(/.test(line);
+      const method = inClass && /^  (static |async |override )*(?!constructor\b)[a-zA-Z]\w*(<[^>]*>)?\(/.test(line);
+      if (!exported && !method) return;
+      let j = i - 1;
+      if (!lines[j]?.trim().endsWith('*/')) return void missing.push(`${file}:${i + 1} ${line.trim()}`);
+      while (j > 0 && !lines[j]!.trim().startsWith('/**')) j--;
+      if (!lines.slice(j, i).some((l) => l.includes('@example'))) missing.push(`${file}:${i + 1} ${line.trim()}`);
+    });
+  }
+  assert.deepEqual(missing, []);
+});

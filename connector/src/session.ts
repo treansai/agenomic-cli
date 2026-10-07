@@ -47,6 +47,10 @@ export interface AuthorizeArgs {
 /**
  * State and Agenomic calls shared by the Claude Code and Codex adapters for
  * one coding session.
+ *
+ * @example
+ * const ctx = new SessionContext(api, sessionId, 'codex', 'enforce', sink, DEFAULT_CAPTURE, worktree, baseRevision);
+ * const v = await ctx.authorize({ nativeId: 'call_1', tool: 'exec_command', input: { cmd: 'git push' }, context: { cwd: worktree }, phase: 'pre_tool', waitForApproval: false });
  */
 export class SessionContext {
   private readonly verdicts = new Map<string, Verdict>();
@@ -92,22 +96,41 @@ export class SessionContext {
    * Captured content made safe to ship: the session's credential values
    * are redacted before the text is bounded, so that a cut never leaves
    * a partial secret the event-level redaction cannot recognise.
+   *
+   * @example
+   * ctx.cleanText(toolOutput, 4000);
    */
   cleanText(text: string, max: number): string {
     return clean(text, max, this.secrets());
   }
 
-  /** The decision already obtained for a native request id, if any. */
+  /**
+   * The decision already obtained for a native request id, if any.
+   *
+   * @example
+   * const prior = ctx.known(toolUseId); // the PreToolUse verdict, reused by canUseTool
+   */
   known(nativeId: string): Verdict | undefined {
     return this.verdicts.get(nativeId);
   }
 
-  /** Record that the call `callId` was decided under the native request id `nativeId`. */
+  /**
+   * Record that the call `callId` was decided under the native request id `nativeId`.
+   *
+   * @example
+   * ctx.alias(itemId, `${itemId}:${approvalId}`);
+   */
   alias(callId: string, nativeId: string): void {
     if (callId !== nativeId) this.aliases.set(callId, nativeId);
   }
 
-  /** The decision that governs the call `callId`: its own, or the one it was decided under. */
+  /**
+   * The decision that governs the call `callId`: its own, or the one it was decided under.
+   *
+   * @example
+   * const verdict = ctx.lookup(itemId);
+   * await ctx.report(verdict?.actionId, 'completed');
+   */
   lookup(callId: string): Verdict | undefined {
     const alias = this.aliases.get(callId);
     return this.verdicts.get(callId) ?? (alias !== undefined ? this.verdicts.get(alias) : undefined);
@@ -119,6 +142,9 @@ export class SessionContext {
    * attempt_id are the action's native request id and attempt, and
    * action_id is set whenever a decision exists for the call. Without
    * one (no decision was asked), the event is an observation only.
+   *
+   * @example
+   * const v = ctx.toolEvent('tool.completed', toolUseId, { native_tool: 'Bash', duration_ms: 120 });
    */
   toolEvent(type: 'tool.started' | 'tool.completed' | 'tool.failed', callId: string, payload: Record<string, unknown>, extra: Partial<CodingEvent> = {}): Verdict | undefined {
     const v = this.lookup(callId);
@@ -130,6 +156,16 @@ export class SessionContext {
     return v;
   }
 
+  /**
+   * Asks the gateway to decide a tool call and records it
+   * (tool.requested). When the gateway cannot answer, enforce fails
+   * closed and the other modes defer to the runtime; a pending approval
+   * is waited for when `waitForApproval` is set.
+   *
+   * @example
+   * const v = await ctx.authorize({ nativeId: toolUseId, tool: 'Bash', input: { command: 'rm -rf build' }, context: { cwd }, phase: 'pre_tool', waitForApproval: true });
+   * if (v.decision === 'deny') console.log(v.reason);
+   */
   async authorize(a: AuthorizeArgs): Promise<Verdict> {
     const attempt = a.attempt ?? 1;
     const body = {
@@ -221,6 +257,12 @@ export class SessionContext {
     return 'expired';
   }
 
+  /**
+   * Reports the observed outcome of an admitted action, retained until the gateway acknowledges it.
+   *
+   * @example
+   * await ctx.report(verdict?.actionId, 'failed', { exit_code: 1, duration_ms: 950 });
+   */
   async report(actionId: string | undefined, outcome: OutcomeKind, detail: OutcomeDetail = {}): Promise<void> {
     if (!actionId) return;
     if (outcome === 'started') {
@@ -262,6 +304,9 @@ export class SessionContext {
    * gateway settles them instead of leaving them pending. A report in
    * flight is awaited rather than duplicated; an action whose report
    * fails again stays open for the next settlement.
+   *
+   * @example
+   * await ctx.settleOpen('turn ended before the tool reported');
    */
   async settleOpen(summary: string, only?: ReadonlySet<string>): Promise<void> {
     await Promise.all([...this.open].filter(([id]) => !only || only.has(id)).map(async ([id, retained]) => {
@@ -279,6 +324,9 @@ export class SessionContext {
    * whose process its waits do not keep alive. Only the actions open when
    * it starts are retried: a resumed session's new actions are its own.
    * Settling twice (a stop, then the session's end) shares one settlement.
+   *
+   * @example
+   * void ctx.settleFinal('session stopped before the tool reported');
    */
   settleFinal(summary: string, budgetMs = 10 * 60 * 1000, firstDelayMs = 2000): Promise<void> {
     this.final ??= (async () => {
@@ -300,6 +348,12 @@ export class SessionContext {
     return this.final;
   }
 
+  /**
+   * Reports a state change of the session to the gateway.
+   *
+   * @example
+   * await ctx.state({ status: 'idle' });
+   */
   async state(update: Record<string, unknown>): Promise<any> {
     return this.api.request('POST', `/v1/coding/runner/sessions/${this.id}/state`, { body: update, retry: true, timeoutMs: 15000 });
   }
@@ -314,6 +368,12 @@ function refused(error: unknown): boolean {
   return error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
 }
 
+/**
+ * The command a tool call runs (redacted, bounded), or the file it touches.
+ *
+ * @example
+ * commandText('Bash', { command: 'npm test' }); // 'npm test'
+ */
 export function commandText(tool: string, input: unknown, secrets: string[] = []): string | undefined {
   const i = (input ?? {}) as Record<string, unknown>;
   const c = i.command ?? i.cmd;
@@ -325,7 +385,12 @@ export function commandText(tool: string, input: unknown, secrets: string[] = []
 
 const TEST_RUNNERS = /(^|\s|\/|['"])(cargo test|npm test|npm run test|pnpm test|pnpm run test|yarn test|pytest|go test|vitest|jest|mvn test|gradle test|make test|ctest|tox|node --test)(\s|$|['"])/;
 
-/** A command that looks like a test run. Its exit code is a derived signal, not a proof. */
+/**
+ * A command that looks like a test run. Its exit code is a derived signal, not a proof.
+ *
+ * @example
+ * isTestCommand('npx vitest run'); // true
+ */
 export function isTestCommand(command: string | undefined): boolean {
   return !!command && TEST_RUNNERS.test(command);
 }

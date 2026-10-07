@@ -1,6 +1,16 @@
 import { loadCredentials, saveCredentials, type Credentials } from './config.ts';
 import { errorMessage, log, sleep } from './util.ts';
 
+/**
+ * An error answered by the gateway (or a network failure, status 0), with its stable code.
+ *
+ * @example
+ * try {
+ *   await api.request('GET', '/v1/coding/runner/commands');
+ * } catch (error) {
+ *   if (error instanceof ApiError && error.status === 401) console.error(error.code);
+ * }
+ */
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
@@ -24,6 +34,10 @@ export interface RequestOptions {
  * Runner side of the coding API. Credentials are short lived bearer tokens
  * rotated with the refresh token; they never appear in URLs, arguments or
  * logs, and are never handed to the runtimes.
+ *
+ * @example
+ * const api = new RunnerApi('https://agenomic.example.com');
+ * await api.request('POST', '/v1/coding/runner/heartbeat', { body: { boot_id: ulid() }, retry: true });
  */
 export class RunnerApi {
   readonly endpoint: string;
@@ -37,7 +51,15 @@ export class RunnerApi {
     this.persist = persist;
   }
 
-  /** Public enrollment: exchanges a one time token for credentials. */
+  /**
+   * Public enrollment: exchanges a one time token for credentials.
+   *
+   * @example
+   * const { runner, credentials } = await RunnerApi.enroll('https://agenomic.example.com', {
+   *   enrollment_token: 'agmcen_…', name: 'laptop', kind: 'local_machine', os: process.platform, arch: process.arch, connector_version: '0.1.0',
+   * });
+   * saveCredentials(credentials);
+   */
   static async enroll(endpoint: string, body: Record<string, unknown>): Promise<{ runner: { id: string }; credentials: Credentials }> {
     const res = await fetch(`${endpoint.replace(/\/+$/, '')}/v1/coding/runners/enroll`, {
       method: 'POST',
@@ -50,6 +72,12 @@ export class RunnerApi {
     return json as any;
   }
 
+  /**
+   * The current runner credentials, rotated in place by request().
+   *
+   * @example
+   * const token = api.credentials()?.access_token; // redacted from every event, never logged
+   */
   credentials(): Credentials | undefined {
     return this.creds;
   }
@@ -77,6 +105,12 @@ export class RunnerApi {
     return this.refreshing;
   }
 
+  /**
+   * Calls the runner API with the current credentials, refreshing them once on a 401; `retry` retries network errors and 5xx within `timeoutMs`.
+   *
+   * @example
+   * const { commands } = await api.request<{ commands: unknown[] }>('GET', '/v1/coding/runner/commands?wait=25', { timeoutMs: 40000 });
+   */
   async request<T = any>(method: string, path: string, opts: RequestOptions = {}): Promise<T> {
     const deadline = Date.now() + (opts.timeoutMs ?? 30000);
     let attempt = 0;

@@ -72,7 +72,14 @@ function serve(handler: (body: any, url: string, res: http.ServerResponse) => vo
   });
 }
 
-/** Anthropic Messages API (streaming). */
+/**
+ * Anthropic Messages API (streaming).
+ *
+ * @example
+ * const fake = await fakeAnthropic();
+ * cfg.runtimes.claude_code.extra_env = { ANTHROPIC_BASE_URL: fake.url };
+ * await fake.close();
+ */
 export function fakeAnthropic(): Promise<FakeServer> {
   return serve((body, url, res) => {
     if (!url.startsWith('/v1/messages') || url.includes('count_tokens')) {
@@ -113,7 +120,13 @@ export function fakeAnthropic(): Promise<FakeServer> {
   });
 }
 
-/** OpenAI Responses API (streaming), as Codex uses it. */
+/**
+ * OpenAI Responses API (streaming), as Codex uses it.
+ *
+ * @example
+ * const fake = await fakeResponses();
+ * fs.writeFileSync(path.join(codexHome, 'config.toml'), codexProviderToml(fake.url));
+ */
 export function fakeResponses(): Promise<FakeServer> {
   return serve((body, url, res) => {
     if (!url.includes('/responses')) {
@@ -149,10 +162,22 @@ export function fakeResponses(): Promise<FakeServer> {
   });
 }
 
+/**
+ * A user message that makes the fake models play `steps`, one tool call per model call.
+ *
+ * @example
+ * const prompt = script([{ tool: 'Bash', input: { command: 'echo hi > hi.txt' } }]);
+ */
 export function script(steps: ScriptStep[], text = 'scripted task'): string {
   return `${text} AGN_SCRIPT:${JSON.stringify(steps)}END`;
 }
 
+/**
+ * A Codex config.toml fragment that points a model provider at a fake Responses endpoint.
+ *
+ * @example
+ * const toml = codexProviderToml('http://127.0.0.1:4010');
+ */
 export function codexProviderToml(url: string): string {
   return [
     'model = "scripted-model"',

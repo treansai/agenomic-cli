@@ -55,6 +55,13 @@ export interface Credentials {
   refresh_expires_at: string;
 }
 
+/**
+ * The connector's home directory (AGENOMIC_CONNECTOR_HOME, else ~/.config/agenomic/connector).
+ *
+ * @example
+ * process.env.AGENOMIC_CONNECTOR_HOME = '/tmp/agn';
+ * home(); // '/tmp/agn'
+ */
 export function home(): string {
   return process.env.AGENOMIC_CONNECTOR_HOME || path.join(os.homedir(), '.config', 'agenomic', 'connector');
 }
@@ -74,6 +81,12 @@ export const paths = {
 
 const defaultRuntime = (): RuntimeConfig => ({ enabled: true, env_passthrough: [], extra_env: {}, allowed_domains: [] });
 
+/**
+ * A configuration with no workspace, observe local sessions and both runtimes enabled.
+ *
+ * @example
+ * const cfg = defaultConfig('https://agenomic.example.com', os.hostname());
+ */
 export function defaultConfig(endpoint: string, name: string): ConnectorConfig {
   return {
     endpoint,
@@ -94,6 +107,9 @@ const SECRET_NAME = /KEY|TOKEN|SECRET|PASSW|CREDENTIAL|AUTH/i;
  * Credential values of a runtime: the variables passed through to it
  * (provider authentication) and the extra_env values whose name says they
  * are secret. They are redacted from every event before it is buffered.
+ *
+ * @example
+ * runtimeSecrets({ enabled: true, env_passthrough: ['OPENAI_API_KEY'], extra_env: { GATEWAY_TOKEN: 't0k' }, allowed_domains: [] }); // [process.env.OPENAI_API_KEY, 't0k']
  */
 export function runtimeSecrets(runtime: RuntimeConfig, env: NodeJS.ProcessEnv = process.env): string[] {
   const values = runtime.env_passthrough.map((k) => env[k] ?? '');
@@ -101,6 +117,13 @@ export function runtimeSecrets(runtime: RuntimeConfig, env: NodeJS.ProcessEnv = 
   return values.filter(Boolean);
 }
 
+/**
+ * Reads and validates connector.json; throws when the machine is not enrolled.
+ *
+ * @example
+ * const cfg = loadConfig();
+ * console.log(cfg.endpoint, cfg.workspaces.length);
+ */
 export function loadConfig(): ConnectorConfig {
   const cfg = readJson<ConnectorConfig>(paths.config());
   if (!cfg) throw new Error(`not enrolled: ${paths.config()} is missing (run "agenomic-connector enroll")`);
@@ -108,6 +131,12 @@ export function loadConfig(): ConnectorConfig {
   return cfg;
 }
 
+/**
+ * Throws when a configuration would be unsafe or ambiguous: a non-loopback http endpoint, a bad or duplicate workspace id, a relative workspace path.
+ *
+ * @example
+ * validateConfig(defaultConfig('http://gateway.example.com', 'x')); // throws: plain http is only accepted for a loopback endpoint
+ */
 export function validateConfig(cfg: ConnectorConfig): void {
   if (!/^https?:\/\//.test(cfg.endpoint)) throw new Error('endpoint must be an http(s) URL');
   if (cfg.endpoint.startsWith('http://') && !/^http:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(cfg.endpoint)) {
@@ -122,6 +151,14 @@ export function validateConfig(cfg: ConnectorConfig): void {
   }
 }
 
+/**
+ * Validates and writes connector.json (mode 0600), with the fail mode the local hooks fall back to.
+ *
+ * @example
+ * const cfg = loadConfig();
+ * cfg.local_sessions.mode = 'shadow';
+ * saveConfig(cfg);
+ */
 export function saveConfig(cfg: ConnectorConfig): void {
   validateConfig(cfg);
   writeSecretFile(paths.config(), JSON.stringify(cfg, null, 2) + '\n');
@@ -138,6 +175,9 @@ const failModeOf = (mode: Mode): 'closed' | 'open' => (mode === 'enforce' ? 'clo
  * be read, the mode recorded with the last configuration change decides;
  * if that cannot be read either while a configuration exists, the hook
  * fails closed.
+ *
+ * @example
+ * if (localFailMode() === 'closed') console.log('local hooks refuse tool calls while the daemon is down');
  */
 export function localFailMode(): 'closed' | 'open' {
   try {
@@ -155,6 +195,12 @@ export function localFailMode(): 'closed' | 'open' {
   return fs.existsSync(paths.config()) ? 'closed' : 'open';
 }
 
+/**
+ * The runner credentials, if enrolled; throws when the file is readable by other users.
+ *
+ * @example
+ * const creds = loadCredentials(); // undefined before `enroll`
+ */
 export function loadCredentials(): Credentials | undefined {
   const file = paths.credentials();
   if (fs.existsSync(file) && (fs.statSync(file).mode & 0o077) !== 0) {
@@ -163,6 +209,12 @@ export function loadCredentials(): Credentials | undefined {
   return readJson<Credentials>(file);
 }
 
+/**
+ * Writes the runner credentials (mode 0600).
+ *
+ * @example
+ * saveCredentials((await RunnerApi.enroll(endpoint, body)).credentials);
+ */
 export function saveCredentials(c: Credentials): void {
   writeSecretFile(paths.credentials(), JSON.stringify(c) + '\n');
 }

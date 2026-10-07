@@ -75,6 +75,13 @@ function split(mode: Mode, covered: ToolId[], notes: string[], limitations: stri
   };
 }
 
+/**
+ * The coverage a session reports for its runtime, surface and mode.
+ *
+ * @example
+ * protection('codex', 'app_server', 'enforce').protected; // shell, git, dependency, network and patch tool ids
+ * protection('claude_code', 'sdk', 'shadow').protected; // []
+ */
 export function protection(runtime: Runtime, surface: Surface, mode: Mode): Protection {
   if (mode === 'observe') {
     return split(mode, [], ['native protections remain active (sandbox, native permission rules)'], ['observe mode: Agenomic records, it adds no blocking']);
@@ -129,6 +136,10 @@ export function protection(runtime: Runtime, surface: Surface, mode: Mode): Prot
  * The coverage reported for a blocked session: the requested mode could
  * not be established and the gateway refuses every call, so no tool id is
  * protected; `reason` says why.
+ *
+ * @example
+ * const prot = blockedProtection(protection('codex', 'cli_hooks', 'enforce'), 'pre-tool control is not validated');
+ * prot.protected; // []
  */
 export function blockedProtection(p: Protection, reason: string): Protection {
   return { protected: [], not_covered: [...TOOL_IDS], notes: [...p.notes, `blocked: ${reason}`], limitations: p.limitations };

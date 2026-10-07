@@ -13,6 +13,12 @@ import * as ws from './workspace.ts';
 /** Methods this adapter calls. Nothing else of the App Server is reachable from Agenomic. */
 const CLIENT_METHODS = new Set(['initialize', 'thread/start', 'thread/resume', 'thread/read', 'turn/start', 'turn/steer', 'turn/interrupt']);
 
+/**
+ * Path of the Codex executable a session runs: the configured one, else the pinned package's.
+ *
+ * @example
+ * const exe = codexExecutable(cfg.runtimes.codex);
+ */
 export function codexExecutable(runtime: RuntimeConfig): string {
   if (runtime.executable) return runtime.executable;
   const req = createRequire(import.meta.url);
@@ -24,13 +30,21 @@ export function codexExecutable(runtime: RuntimeConfig): string {
  * Version of the Codex binary a session runs: a configured executable's
  * own (`undefined` until it has answered, see executableVersion), or the
  * pinned package's.
+ *
+ * @example
+ * const version = codexVersion(cfg.runtimes.codex) ?? 'unknown';
  */
 export function codexVersion(runtime: RuntimeConfig): string | null | undefined {
   if (runtime.executable) return executableVersion(runtime.executable);
   return packageVersion();
 }
 
-/** codexVersion(), waiting for a configured executable's answer. */
+/**
+ * codexVersion(), waiting for a configured executable's answer.
+ *
+ * @example
+ * const version = await readCodexVersion(cfg.runtimes.codex);
+ */
 export async function readCodexVersion(runtime: RuntimeConfig): Promise<string | null> {
   if (runtime.executable) return readExecutableVersion(runtime.executable);
   return packageVersion();
@@ -65,6 +79,10 @@ export interface CodexLaunchOptions {
  * A Codex session driven through `codex app-server` over stdio. The
  * protocol stays private to this process: the browser and the cloud only
  * see Agenomic commands, never raw App Server methods.
+ *
+ * @example
+ * const session = new CodexSession({ ctx, cwd: worktree, prompt: 'fix the tests', runtime: cfg.runtimes.codex, onNativeSession: register, onStatus: report });
+ * await session.start();
  */
 export class CodexSession {
   private child: ChildProcess | undefined;
@@ -145,6 +163,14 @@ export class CodexSession {
     this.child?.stdin?.write(JSON.stringify(msg) + '\n');
   }
 
+  /**
+   * Starts the App Server, starts or resumes the thread and registers it
+   * (onNativeSession), then sends the launch prompt, if any.
+   *
+   * @example
+   * await session.start(); // throws when Codex could not start
+   * session.native(); // the registered thread id
+   */
   async start(): Promise<void> {
     const exe = codexExecutable(this.o.runtime);
     this.home = this.codexHome();
@@ -403,6 +429,12 @@ export class CodexSession {
 
   // ── Commands ──────────────────────────────────────────────────────────
 
+  /**
+   * Sends a user message: a new turn, or a steer of the active turn (refused when `expectedTurnId` is stale).
+   *
+   * @example
+   * await session.send('also update the changelog', activeTurnId);
+   */
   async send(text: string, expectedTurnId?: string): Promise<'applied' | 'refused'> {
     if (this.ended || !this.threadId) return 'refused';
     const ctx = this.o.ctx;
@@ -417,6 +449,12 @@ export class CodexSession {
     return 'applied';
   }
 
+  /**
+   * Answers a pending requestUserInput; refused when no such question waits.
+   *
+   * @example
+   * session.answer(questionId, 'yes');
+   */
   answer(questionId: string, text: string): 'applied' | 'refused' {
     const r = this.questions.get(questionId);
     if (!r) return 'refused';
@@ -424,6 +462,12 @@ export class CodexSession {
     return 'applied';
   }
 
+  /**
+   * Interrupts the active turn; refused when no turn runs.
+   *
+   * @example
+   * await session.interrupt(); // 'applied', 'refused' or 'unknown'
+   */
   async interrupt(): Promise<'applied' | 'refused' | 'unknown'> {
     if (!this.threadId || !this.activeTurn) return 'refused';
     try {
@@ -435,6 +479,12 @@ export class CodexSession {
     }
   }
 
+  /**
+   * Stops the App Server and reports `applied` only once it exited.
+   *
+   * @example
+   * await session.stop();
+   */
   async stop(): Promise<'applied' | 'unknown'> {
     void this.o.ctx.settleFinal('session stopped before the tool reported');
     const child = this.child;
@@ -456,10 +506,22 @@ export class CodexSession {
     return exited ? 'applied' : 'unknown';
   }
 
+  /**
+   * Whether the App Server process still runs this session.
+   *
+   * @example
+   * if (!session.alive()) console.log('ended');
+   */
   alive(): boolean {
     return !this.ended && !!this.child && this.child.exitCode === null && this.child.signalCode === null;
   }
 
+  /**
+   * The native Codex thread id, known once start() resolved.
+   *
+   * @example
+   * const threadId = session.native(); // resume with { resume: threadId }
+   */
   native(): string | null {
     return this.threadId;
   }

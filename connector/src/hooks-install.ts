@@ -33,6 +33,12 @@ const MARK = 'agenomic-connector';
 const BLOCK_START = '# >>> agenomic-connector hooks (managed; remove with `agenomic-connector hooks uninstall`)';
 const BLOCK_END = '# <<< agenomic-connector hooks';
 
+/**
+ * The shell command an installed hook runs: this connector's `hook` subcommand, quoted.
+ *
+ * @example
+ * hookCommand('claude-code', 'local', 590000); // "'/usr/bin/node' '…/agenomic-connector.mjs' hook claude-code --fail local …"
+ */
 export function hookCommand(runtime: 'claude-code' | 'codex', failMode: FailMode, deadlineMs = 25000, socket = paths.socket()): string {
   const bin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'agenomic-connector.mjs');
   const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
@@ -48,6 +54,12 @@ export interface Plan {
 
 // ── Claude Code (settings.json) ─────────────────────────────────────────
 
+/**
+ * The Claude Code settings file of a scope: the project's settings.local.json or the user's settings.json.
+ *
+ * @example
+ * claudeSettingsFile('project', '/src/app'); // '/src/app/.claude/settings.local.json'
+ */
 export function claudeSettingsFile(scope: 'project' | 'user', dir?: string): string {
   if (scope === 'user') return path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude'), 'settings.json');
   if (!dir) throw new Error('--dir is required for the project scope');
@@ -70,6 +82,13 @@ function withoutOurs(entry: any): any | undefined {
   return hooks.length ? { ...entry, hooks } : undefined;
 }
 
+/**
+ * The change that installs (or removes) the Agenomic hooks in a Claude Code settings file, without writing it.
+ *
+ * @example
+ * const plan = planClaude(claudeSettingsFile('user'), 'local', true);
+ * if (plan.changed) apply(plan);
+ */
 export function planClaude(file: string, failMode: FailMode, install: boolean): Plan {
   const before = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
   const settings = before ? JSON.parse(before) : {};
@@ -94,6 +113,12 @@ export function planClaude(file: string, failMode: FailMode, install: boolean): 
   return { file, before, after, changed: after !== (before ?? '') && !(before === null && !install) };
 }
 
+/**
+ * Writes a plan atomically and returns the backup of the previous file, if any.
+ *
+ * @example
+ * const backup = apply(planClaude(file, 'local', false)); // uninstall
+ */
 export function apply(plan: Plan): string | null {
   if (!plan.changed) return null;
   let backup: string | null = null;
@@ -110,6 +135,12 @@ export function apply(plan: Plan): string | null {
 
 // ── Codex (config.toml) ─────────────────────────────────────────────────
 
+/**
+ * The Codex config.toml of a CODEX_HOME (default: $CODEX_HOME, else ~/.codex).
+ *
+ * @example
+ * codexConfigFile('/tmp/codex-home'); // '/tmp/codex-home/config.toml'
+ */
 export function codexConfigFile(codexHome?: string): string {
   return path.join(codexHome ?? process.env.CODEX_HOME ?? path.join(os.homedir(), '.codex'), 'config.toml');
 }
@@ -124,6 +155,12 @@ function stripBlock(text: string): string {
 
 const tomlString = (s: string) => JSON.stringify(s);
 
+/**
+ * The managed config.toml block that declares the Agenomic Codex hooks and their trust.
+ *
+ * @example
+ * const block = codexBlock('closed', 600, { [hookKey]: hookHash });
+ */
 export function codexBlock(failMode: FailMode, timeoutSec: number, trust: Record<string, string> = {}, socket = paths.socket()): string {
   const lines = [BLOCK_START];
   for (const event of CODEX_EVENTS) {
@@ -140,6 +177,13 @@ export function codexBlock(failMode: FailMode, timeoutSec: number, trust: Record
   return lines.join('\n');
 }
 
+/**
+ * The change that installs (or removes) the managed Agenomic block of a Codex config.toml, without writing it.
+ *
+ * @example
+ * const plan = planCodex(codexConfigFile(), 'local', false);
+ * if (plan.changed) apply(plan);
+ */
 export function planCodex(file: string, failMode: FailMode, install: boolean, trust: Record<string, string> = {}, timeoutSec = 600, socket = paths.socket()): Plan {
   const before = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
   if (before && /^\s*\[hooks\]\s*$/m.test(stripBlock(before))) {
@@ -151,7 +195,12 @@ export function planCodex(file: string, failMode: FailMode, install: boolean, tr
   return { file, before, after, changed: after !== (before ?? '') };
 }
 
-/** Asks Codex for the hooks it sees and their hashes (`hooks/list`). */
+/**
+ * Asks Codex for the hooks it sees and their hashes (`hooks/list`).
+ *
+ * @example
+ * const hooks = await codexListHooks(codexExecutable(cfg.runtimes.codex), codexHome, repo);
+ */
 export async function codexListHooks(exe: string, codexHome: string, cwd: string): Promise<any[]> {
   const command = exe.endsWith('.js') ? process.execPath : exe;
   const argv = exe.endsWith('.js') ? [exe, 'app-server'] : ['app-server'];
@@ -208,6 +257,9 @@ export async function codexListHooks(exe: string, codexHome: string, cwd: string
  * Install the Codex hooks and record the user's trust for exactly those
  * entries (Codex does not run an untrusted hook). Trust is recorded only
  * for commands this tool wrote, matched on the command string.
+ *
+ * @example
+ * const { trusted } = await installCodex(codexConfigFile(), 'local', codexExecutable(cfg.runtimes.codex), repo, false);
  */
 export async function installCodex(file: string, failMode: FailMode, exe: string, cwd: string, dryRun: boolean, timeoutSec = 600, socket = paths.socket()): Promise<{ plan: Plan; backup: string | null; trusted: number }> {
   const first = planCodex(file, failMode, true, {}, timeoutSec, socket);

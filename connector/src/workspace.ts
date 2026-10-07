@@ -44,6 +44,12 @@ export interface WorkspaceState {
   preexisting_changes: string[];
 }
 
+/**
+ * The HEAD revision, branch and uncommitted changes of a checkout; it is only read.
+ *
+ * @example
+ * const { base_revision, branch, preexisting_changes } = inspect('/src/app');
+ */
 export function inspect(dir: string): WorkspaceState {
   const rev = (() => {
     try {
@@ -80,6 +86,9 @@ const BRANCH_RE = /^(?!-)(?!.*\.\.)(?!.*[ ~^:?*[\\])[A-Za-z0-9._/-]{1,200}$/;
  * A dedicated worktree for a launched session. The branch must not exist:
  * an existing branch may hold someone's work, so it is never reused or
  * reset.
+ *
+ * @example
+ * const tree = createWorktree('/src/app', path.join(paths.worktrees(), sessionId), 'agenomic/fix-tests');
  */
 export function createWorktree(workspace: string, target: string, branch: string | null): WorkspaceState & { path: string } {
   const human = inspect(workspace);
@@ -111,7 +120,12 @@ export interface FileChange {
   deleted: number | null;
 }
 
-/** Changes in `dir` relative to `base` (committed, staged, unstaged and untracked). */
+/**
+ * Changes in `dir` relative to `base` (committed, staged, unstaged and untracked).
+ *
+ * @example
+ * const files = changes(worktree, baseRevision); // [{ path: 'src/app.ts', status: 'modified', added: 3, deleted: 1 }, …]
+ */
 export function changes(dir: string, base: string): FileChange[] {
   const out = new Map<string, FileChange>();
   const numstat = git(dir, ['diff', '--numstat', '-M', base]);
@@ -150,6 +164,9 @@ const REDACTION_SLACK = 64 * 1024;
  * copy of the index, so the checkout's own index is never touched. They
  * are read only up to the bytes a diff reads, in total: one larger than
  * that, or past it, is named, not read.
+ *
+ * @example
+ * const { text, truncated } = diff(worktree, baseRevision, ctx.secrets());
  */
 export function diff(dir: string, base: string, secrets: string[] = [], maxBytes = 256 * 1024): { text: string; truncated: boolean } {
   const window = maxBytes + REDACTION_SLACK;
@@ -171,6 +188,9 @@ export function diff(dir: string, base: string, secrets: string[] = [], maxBytes
  * Payload of a `diff.snapshot` event: the changed files against `base`
  * and, when diffs are captured, the bounded redacted diff. A diff that
  * cannot be read leaves the file list in place, with the reason.
+ *
+ * @example
+ * sink.emit('diff.snapshot', 'filesystem', 'observed', snapshot(worktree, baseRevision, capture.diffs, ctx.secrets()));
  */
 export function snapshot(dir: string, base: string, captureDiff: boolean, secrets: string[] = []): Record<string, unknown> {
   const payload: Record<string, unknown> = { base_revision: base, files: changes(dir, base) };
@@ -192,6 +212,9 @@ const C_ESCAPES: Record<number, string> = { 7: 'a', 8: 'b', 9: 't', 10: 'n', 11:
  * A path as git writes it in a diff header (core.quotePath): one with a
  * control character, a quote, a backslash or a non-ASCII byte is quoted,
  * C-style, so that it cannot read as a header or a hunk of its own.
+ *
+ * @example
+ * quotePath('a/new\nfile.txt'); // '"a/new\\nfile.txt"'
  */
 export function quotePath(name: string): string {
   const bytes = Buffer.from(name, 'utf8');
@@ -249,6 +272,12 @@ function withUntracked<T>(dir: string, maxBytes: number, fn: (env: Record<string
   }
 }
 
+/**
+ * The HEAD commit of a checkout, or null.
+ *
+ * @example
+ * const head = headRevision(worktree);
+ */
 export function headRevision(dir: string): string | null {
   try {
     return git(dir, ['rev-parse', 'HEAD']).trim();

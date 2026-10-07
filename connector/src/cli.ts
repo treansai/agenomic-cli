@@ -46,6 +46,12 @@ function flags(args: string[]): { pos: string[]; f: Record<string, string[]> } {
 const one = (f: Record<string, string[]>, k: string): string | undefined => f[k]?.[f[k]!.length - 1];
 const out = (s: string) => process.stdout.write(s + '\n');
 
+/**
+ * Runs one `agenomic-connector` command and returns its exit code.
+ *
+ * @example
+ * process.exitCode = await main(['workspace', 'add', '--id', 'app', '--path', '/src/app']);
+ */
 export async function main(argv: string[]): Promise<number> {
   const { pos, f } = flags(argv);
   const cmd = pos[0];

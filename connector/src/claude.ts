@@ -17,7 +17,13 @@ async function loadSdk(): Promise<Sdk> {
   return sdk;
 }
 
-/** The SDK's package.json (its `exports` hide the file from require). */
+/**
+ * The SDK's package.json (its `exports` hide the file from require).
+ *
+ * @example
+ * const pkg = sdkPackage(); // null when the SDK is not installed
+ * console.log(pkg?.version, pkg?.claudeCodeVersion);
+ */
 export function sdkPackage(): { version: string; claudeCodeVersion?: string } | null {
   try {
     const req = createRequire(import.meta.url);
@@ -36,6 +42,12 @@ export function sdkPackage(): { version: string; claudeCodeVersion?: string } | 
   return null;
 }
 
+/**
+ * Version of the installed Claude Agent SDK, or null.
+ *
+ * @example
+ * if (!sdkVersion()) console.log('claude_code is not offered: the Agent SDK is not installed');
+ */
 export function sdkVersion(): string | null {
   return sdkPackage()?.version ?? null;
 }
@@ -45,13 +57,21 @@ export function sdkVersion(): string | null {
  * executable reports itself (`undefined` until it has answered, see
  * executableVersion), otherwise the version the pinned SDK bundles.
  * Never the bundled version for a custom executable.
+ *
+ * @example
+ * const version = claudeCodeVersion(cfg.runtimes.claude_code); // undefined while a custom executable has not answered
  */
 export function claudeCodeVersion(runtime: RuntimeConfig): string | null | undefined {
   if (runtime.executable) return executableVersion(runtime.executable);
   return sdkPackage()?.claudeCodeVersion ?? null;
 }
 
-/** claudeCodeVersion(), waiting for a configured executable's answer. */
+/**
+ * claudeCodeVersion(), waiting for a configured executable's answer.
+ *
+ * @example
+ * const version = await readClaudeCodeVersion(cfg.runtimes.claude_code);
+ */
 export async function readClaudeCodeVersion(runtime: RuntimeConfig): Promise<string | null> {
   if (runtime.executable) return readExecutableVersion(runtime.executable);
   return sdkPackage()?.claudeCodeVersion ?? null;
@@ -95,7 +115,14 @@ export interface LaunchOptions {
   initTimeoutMs?: number;
 }
 
-/** A Claude Code session driven through the Claude Agent SDK. */
+/**
+ * A Claude Code session driven through the Claude Agent SDK.
+ *
+ * @example
+ * const session = new ClaudeSession({ ctx, cwd: worktree, prompt: 'fix the tests', runtime: cfg.runtimes.claude_code, onNativeSession: register, onStatus: report });
+ * await session.start();
+ * await session.done;
+ */
 export class ClaudeSession {
   private readonly inbox = new Inbox<any>();
   private query: any;
@@ -157,6 +184,10 @@ export class ClaudeSession {
    * which a launch without a prompt does not start. A runtime that fails
    * or exits before it initialized, or does not within initTimeoutMs,
    * rejects the start instead of being reported running.
+   *
+   * @example
+   * await session.start(); // throws when Claude Code could not start
+   * session.native(); // the registered native session id
    */
   async start(): Promise<void> {
     const { query } = await loadSdk();
@@ -388,12 +419,24 @@ export class ClaudeSession {
 
   // ── Commands ──────────────────────────────────────────────────────────
 
+  /**
+   * Sends a user message as a new turn; refused once the session ended.
+   *
+   * @example
+   * session.send('now run the linter'); // 'applied' or 'refused'
+   */
   send(text: string): 'applied' | 'refused' {
     if (this.ended) return 'refused';
     this.pushUser(text);
     return 'applied';
   }
 
+  /**
+   * Answers a pending AskUserQuestion; refused when no such question waits.
+   *
+   * @example
+   * session.answer(questionId, JSON.stringify({ 'Which option?': 'b' }));
+   */
   answer(questionId: string, text: string): 'applied' | 'refused' {
     const resolve = this.questions.get(questionId);
     if (!resolve) return 'refused';
@@ -401,7 +444,12 @@ export class ClaudeSession {
     return 'applied';
   }
 
-  /** Interrupts the current turn; the process and session stay alive. */
+  /**
+   * Interrupts the current turn; the process and session stay alive.
+   *
+   * @example
+   * if ((await session.interrupt()) === 'applied') console.log('turn interrupted, session alive');
+   */
   async interrupt(): Promise<'applied' | 'unknown'> {
     try {
       await this.query.interrupt();
@@ -413,7 +461,12 @@ export class ClaudeSession {
     }
   }
 
-  /** Stops the runtime process and reports `applied` only once it exited. */
+  /**
+   * Stops the runtime process and reports `applied` only once it exited.
+   *
+   * @example
+   * const r = await session.stop(); // 'unknown' when the process could not be confirmed gone
+   */
   async stop(): Promise<'applied' | 'unknown'> {
     void this.o.ctx.settleFinal('session stopped before the tool reported');
     this.inbox.close();
@@ -437,10 +490,22 @@ export class ClaudeSession {
     return exited ? 'applied' : 'unknown';
   }
 
+  /**
+   * Whether the Claude Code process still runs this session.
+   *
+   * @example
+   * if (!session.alive()) console.log('ended');
+   */
   alive(): boolean {
     return !this.ended && !!this.child && this.child.exitCode === null && this.child.signalCode === null;
   }
 
+  /**
+   * The native Claude Code session id, known once start() resolved.
+   *
+   * @example
+   * const nativeId = session.native(); // resume with { resume: nativeId }
+   */
   native(): string | null {
     return this.nativeId;
   }

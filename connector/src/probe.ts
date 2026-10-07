@@ -19,6 +19,11 @@ import { sleep, ulid } from './util.ts';
  * probe: it decides deterministically (inputs containing `deny-me` are
  * refused, `approve-me` needs one approval, granted after a delay) and
  * records everything the connector sent.
+ *
+ * @example
+ * const api = new ProbeApi();
+ * await new Daemon(cfg, api).handleCommand(launch);
+ * api.has('session.started'); // true once the runtime started
  */
 export class ProbeApi extends RunnerApi {
   events: any[] = [];
@@ -32,6 +37,13 @@ export class ProbeApi extends RunnerApi {
     super('http://127.0.0.1:9', { access_token: 'probe', refresh_token: 'probe', access_expires_at: new Date(Date.now() + 3600e3).toISOString(), refresh_expires_at: new Date(Date.now() + 3600e3).toISOString() }, false);
   }
 
+  /**
+   * Answers a runner API call in process, recording what it carries.
+   *
+   * @example
+   * await api.request('POST', `/v1/coding/runner/sessions/${id}/state`, { body: { status: 'idle' } });
+   * api.states.at(-1); // { status: 'idle' }
+   */
   override async request<T = any>(method: string, p: string, opts: { body?: any } = {}): Promise<T> {
     const b = opts.body ?? {};
     if (p.endsWith('/events')) {
@@ -80,6 +92,12 @@ export class ProbeApi extends RunnerApi {
     return {} as T;
   }
 
+  /**
+   * Whether a recorded event of `type` matches `pred`.
+   *
+   * @example
+   * api.has('diff.snapshot', (e) => e.payload.files.length > 0);
+   */
   has(type: string, pred: (e: any) => boolean = () => true): boolean {
     return this.events.some((e) => e.type === type && pred(e));
   }
@@ -94,6 +112,13 @@ async function until(pred: () => boolean, ms: number): Promise<boolean> {
   return pred();
 }
 
+/**
+ * A throwaway git checkout with one commit and one uncommitted human file.
+ *
+ * @example
+ * const repo = tempRepo();
+ * cfg.workspaces = [{ id: 'probe', name: 'probe', path: repo }];
+ */
 export function tempRepo(): string {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'agn-probe-repo-')));
   const git = (...a: string[]) => execFileSync('git', ['-C', dir, ...a], { stdio: 'ignore' });
@@ -117,6 +142,9 @@ async function command(d: Daemon, api: ProbeApi, kind: string, session: string, 
  * (its executable and sandbox domains), with the provider settings
  * replaced by the scripted model, so that no credential is used and no
  * request leaves the machine. The other runtime is disabled.
+ *
+ * @example
+ * const cfg = probeConfig(loadConfig(), 'codex', fake.url, tempRepo());
  */
 export function probeConfig(machine: ConnectorConfig, runtime: 'claude_code' | 'codex', fakeUrl: string, repo: string): ConnectorConfig {
   const cfg: ConnectorConfig = defaultConfig('http://127.0.0.1:9', 'probe');
@@ -136,11 +164,22 @@ export function probeConfig(machine: ConnectorConfig, runtime: 'claude_code' | '
   return cfg;
 }
 
-/** Version of the binary the probe runs, read from the binary as the daemon does. */
+/**
+ * Version of the binary the probe runs, read from the binary as the daemon does.
+ *
+ * @example
+ * const version = await probedVersion(loadConfig(), 'claude_code');
+ */
 export async function probedVersion(cfg: ConnectorConfig, runtime: 'claude_code' | 'codex'): Promise<string> {
   return (await (runtime === 'claude_code' ? readClaudeCodeVersion(cfg.runtimes.claude_code) : readCodexVersion(cfg.runtimes.codex))) ?? 'unknown';
 }
 
+/**
+ * Validates the capabilities of a runtime's launched surface (SDK or App Server) with a scripted enforce session.
+ *
+ * @example
+ * const result = await probeRuntime('codex', await fakeResponses(), tmpHome, loadConfig());
+ */
 export async function probeRuntime(runtime: 'claude_code' | 'codex', fake: FakeServer, home: string, machine: ConnectorConfig): Promise<ProbeResult> {
   process.env.AGENOMIC_CONNECTOR_HOME = home;
   const repo = tempRepo();
@@ -245,6 +284,9 @@ function runCli(command: string, args: string[], opts: { cwd: string; env: NodeJ
  * by this daemon. It validates what those hooks can do: report the
  * session, refuse a shell call before it runs, and hold one until its
  * approval. The other capabilities of the surface are unsupported.
+ *
+ * @example
+ * const result = await probeCodexCli(await fakeResponses(), tmpHome, loadConfig());
  */
 export async function probeCodexCli(fake: FakeServer, home: string, machine: ConnectorConfig): Promise<ProbeResult> {
   process.env.AGENOMIC_CONNECTOR_HOME = home;
@@ -296,6 +338,9 @@ const SURFACES = [['claude_code', 'sdk'], ['codex', 'app_server'], ['codex', 'cl
  * is configured with (enabled ones only, with their configured
  * executable) and records the result under the version of the binary
  * that ran.
+ *
+ * @example
+ * for (const r of await runProbe()) console.log(r.runtime, r.surface, r.results);
  */
 export async function runProbe(machine: ConnectorConfig = loadConfig()): Promise<ProbeResult[]> {
   const realHome = process.env.AGENOMIC_CONNECTOR_HOME;

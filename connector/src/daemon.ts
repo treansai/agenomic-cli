@@ -44,6 +44,13 @@ interface Persisted {
   [codingSessionId: string]: { runtime: Runtime; cwd: string; base_revision: string | null; native_id?: string; mode: Mode; capture: Capture; workspace_id?: string };
 }
 
+/**
+ * Whether the Claude Code sandbox can run here (seatbelt on macOS, bubblewrap on Linux).
+ *
+ * @example
+ * const sb = sandboxAvailable();
+ * if (!sb.ok) console.log(`enforce is unavailable: ${sb.detail}`);
+ */
 export function sandboxAvailable(): { ok: boolean; detail: string } {
   if (process.platform === 'darwin') return { ok: true, detail: 'macOS seatbelt' };
   if (process.platform !== 'linux') return { ok: false, detail: `no supported sandbox on ${process.platform}` };
@@ -60,6 +67,11 @@ export function sandboxAvailable(): { ok: boolean; detail: string } {
  * Agenomic (heartbeat, long-poll of commands, events), the adapters that
  * own launched runtime processes, and a local socket for the command hooks
  * of the developer's own sessions. Nothing listens on the network.
+ *
+ * @example
+ * const daemon = new Daemon(loadConfig());
+ * await daemon.start();
+ * process.once('SIGTERM', () => void daemon.stop());
  */
 export class Daemon {
   readonly api: RunnerApi;
@@ -84,6 +96,12 @@ export class Daemon {
     writeSecretFile(paths.sessions(), JSON.stringify(this.persisted, null, 2));
   }
 
+  /**
+   * The runtimes this machine offers, with their versions, surfaces and capability manifests, as heartbeats report them.
+   *
+   * @example
+   * const codex = daemon.runtimes().find((r) => r.runtime === 'codex');
+   */
   runtimes(): any[] {
     const out: any[] = [];
     const sb = sandboxAvailable();
@@ -112,6 +130,12 @@ export class Daemon {
     return out;
   }
 
+  /**
+   * Reports the runner, its runtimes, workspaces and sessions to the gateway.
+   *
+   * @example
+   * await daemon.heartbeat();
+   */
   async heartbeat(): Promise<void> {
     await this.api.request('POST', '/v1/coding/runner/heartbeat', {
       body: {
@@ -130,6 +154,12 @@ export class Daemon {
     });
   }
 
+  /**
+   * Listens on the local hook socket, sends the first heartbeat, then keeps heartbeating and polling commands.
+   *
+   * @example
+   * await new Daemon(loadConfig()).start();
+   */
   async start(): Promise<void> {
     fs.mkdirSync(paths.state(), { recursive: true, mode: 0o700 });
     await this.listen();
@@ -153,6 +183,12 @@ export class Daemon {
     return pending;
   }
 
+  /**
+   * Stops polling, closes the hook socket, stops the runtimes it launched and flushes their events.
+   *
+   * @example
+   * await daemon.stop();
+   */
   async stop(): Promise<void> {
     this.abort.abort();
     this.server?.close();
@@ -214,6 +250,12 @@ export class Daemon {
     }
   }
 
+  /**
+   * Executes one gateway command and posts its result (applied, refused or unknown).
+   *
+   * @example
+   * await daemon.handleCommand({ id: commandId, kind: 'interrupt_turn', coding_session_id: sessionId, payload: {} });
+   */
   async handleCommand(cmd: any): Promise<void> {
     const s = this.sessions.get(cmd.coding_session_id);
     try {

@@ -5,7 +5,12 @@ import path from 'node:path';
 
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
-/** Monotonic-enough ULID (time prefix + 80 random bits). */
+/**
+ * Monotonic-enough ULID (time prefix + 80 random bits).
+ *
+ * @example
+ * const id = ulid(); // 26 characters, time ordered
+ */
 export function ulid(now = Date.now()): string {
   let time = '';
   let t = now;
@@ -19,6 +24,12 @@ export function ulid(now = Date.now()): string {
   return time + rand;
 }
 
+/**
+ * Resolves after `ms`, or as soon as `signal` aborts.
+ *
+ * @example
+ * await sleep(3000, abort.signal);
+ */
 export const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve) => {
     const t = setTimeout(resolve, ms);
@@ -28,7 +39,12 @@ export const sleep = (ms: number, signal?: AbortSignal) =>
     }, { once: true });
   });
 
-/** Write a file atomically with mode 0600 (secrets and config). */
+/**
+ * Write a file atomically with mode 0600 (secrets and config).
+ *
+ * @example
+ * writeSecretFile(paths.credentials(), JSON.stringify(credentials));
+ */
 export function writeSecretFile(file: string, content: string): void {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
@@ -37,6 +53,12 @@ export function writeSecretFile(file: string, content: string): void {
   fs.chmodSync(file, 0o600);
 }
 
+/**
+ * A JSON file's value, or undefined when it does not exist.
+ *
+ * @example
+ * const sessions = readJson<Record<string, unknown>>(paths.sessions()) ?? {};
+ */
 export function readJson<T>(file: string): T | undefined {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8')) as T;
@@ -49,18 +71,35 @@ export function readJson<T>(file: string): T | undefined {
 export type Level = 'debug' | 'info' | 'warn' | 'error';
 const LEVELS: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40 };
 
-/** Structured logs on stderr. Never pass secrets: callers log ids only. */
+/**
+ * Structured logs on stderr. Never pass secrets: callers log ids only.
+ *
+ * @example
+ * log('warn', 'command poll failed', { error: errorMessage(error) });
+ */
 export function log(level: Level, msg: string, fields: Record<string, unknown> = {}): void {
   const min = (process.env.AGENOMIC_CONNECTOR_LOG as Level) || 'info';
   if (LEVELS[level] < (LEVELS[min] ?? 20)) return;
   process.stderr.write(JSON.stringify({ ts: new Date().toISOString(), level, msg, ...fields }) + '\n');
 }
 
+/**
+ * The message of a thrown value, whatever it is.
+ *
+ * @example
+ * errorMessage(new Error('boom')); // 'boom'
+ * errorMessage('plain'); // 'plain'
+ */
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Resolve `p` against `cwd` and report whether its real path leaves `root`. */
+/**
+ * Resolve `p` against `cwd` and report whether its real path leaves `root`.
+ *
+ * @example
+ * realPathEscapes('notes/link.md', worktree, worktree); // true when link.md is a symlink out of the worktree
+ */
 export function realPathEscapes(p: string, cwd: string, root: string): boolean {
   const abs = path.resolve(cwd, p);
   let probe = abs;
@@ -84,7 +123,12 @@ export function realPathEscapes(p: string, cwd: string, root: string): boolean {
   return lexicalInside && !realInside;
 }
 
-/** Path of an executable, looked up on PATH when it is a bare command name. */
+/**
+ * Path of an executable, looked up on PATH when it is a bare command name.
+ *
+ * @example
+ * resolveExecutable('git'); // '/usr/bin/git', or null
+ */
 export function resolveExecutable(exe: string): string | null {
   if (exe.includes('/')) return fs.existsSync(exe) ? path.resolve(exe) : null;
   for (const dir of (process.env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
@@ -122,6 +166,9 @@ function revision(exe: string): { file: string; key: string } | null {
  * process the caller never waits for (it can take seconds, and the
  * daemon answers hooks on the same event loop): `undefined` means it has
  * not answered yet, and it is being read in the background.
+ *
+ * @example
+ * executableVersion('/opt/codex/bin/codex'); // '0.160.1', null, or undefined while it has not answered
  */
 export function executableVersion(exe: string): string | null | undefined {
   const rev = revision(exe);
@@ -131,7 +178,12 @@ export function executableVersion(exe: string): string | null | undefined {
   return undefined;
 }
 
-/** executableVersion(), waiting for the answer; one `--version` per file revision. */
+/**
+ * executableVersion(), waiting for the answer; one `--version` per file revision.
+ *
+ * @example
+ * const version = await readExecutableVersion('/opt/codex/bin/codex');
+ */
 export function readExecutableVersion(exe: string): Promise<string | null> {
   const rev = revision(exe);
   if (!rev) return Promise.resolve(null);

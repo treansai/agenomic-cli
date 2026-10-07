@@ -16,6 +16,9 @@ const MAX_INPUT = 1024 * 1024;
  * The hooks of the developer's own sessions use `local`: the fail mode
  * follows the connector's current local-sessions mode (enforce fails
  * closed), read when it is needed rather than fixed at install time.
+ *
+ * @example
+ * process.exitCode = await runHook('claude-code', 'local', 25000); // reads the hook payload on stdin
  */
 export async function runHook(runtime: 'claude-code' | 'codex', failMode: 'closed' | 'open' | 'local', deadlineMs: number): Promise<number> {
   let raw: string;
@@ -50,6 +53,9 @@ export async function runHook(runtime: 'claude-code' | 'codex', failMode: 'close
  * (the daemon could not handle the call, for example the gateway was
  * unreachable when a new session was registered) and a malformed reply
  * are failures, routed through the fail mode like a transport error.
+ *
+ * @example
+ * hookOutput({ output: { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'Agenomic: policy' } } });
  */
 export function hookOutput(reply: unknown): Record<string, unknown> | undefined {
   if (!reply || typeof reply !== 'object' || Array.isArray(reply)) throw new Error('malformed connector reply');
@@ -74,7 +80,12 @@ function fallback(_runtime: string, event: string | undefined, failMode: 'closed
   return 0;
 }
 
-/** The event name of a payload that could not be read whole, if its start names it. */
+/**
+ * The event name of a payload that could not be read whole, if its start names it.
+ *
+ * @example
+ * eventOf('{"session_id":"s","hook_event_name":"PreToolUse","tool_input":{"content":"…'); // 'PreToolUse'
+ */
 export function eventOf(head: string): string | undefined {
   return /"hook_event_name"\s*:\s*"([A-Za-z]+)"/.exec(head)?.[1];
 }
@@ -112,6 +123,12 @@ function readStdin(max: number): Promise<string> {
   });
 }
 
+/**
+ * Sends one request to the daemon's local socket and resolves with its reply, rejecting past `deadlineMs`.
+ *
+ * @example
+ * const reply = await ask({ op: 'hook', runtime: 'codex', input }, 25000);
+ */
 export function ask(request: unknown, deadlineMs: number, socketPath = paths.socket()): Promise<any> {
   return new Promise((resolve, reject) => {
     const sock = net.createConnection(socketPath);

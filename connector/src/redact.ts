@@ -18,6 +18,12 @@ const URL_CREDENTIALS = /(:\/\/[^/\s:@]+:)[^@\s/]+@/g;
 
 export const REDACTED = '[REDACTED]';
 
+/**
+ * Replaces known secret patterns and the given secret values with [REDACTED].
+ *
+ * @example
+ * redact('token is s3cret-value-123', ['s3cret-value-123']); // 'token is [REDACTED]'
+ */
 export function redact(text: string, extraSecrets: string[] = []): string {
   let out = text;
   for (const secret of extraSecrets) {
@@ -30,13 +36,23 @@ export function redact(text: string, extraSecrets: string[] = []): string {
 // CSI, OSC and other escape sequences, then remaining C0 controls.
 const ANSI = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(\u0007|\u001b\\)|\u001b[@-Z\\-_]/g;
 
-/** Text safe to ship: redacted, no terminal control sequences, bounded. */
+/**
+ * Text safe to ship: redacted, no terminal control sequences, bounded.
+ *
+ * @example
+ * clean('\u001b[31mOPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwx\u001b[0m', 200); // no key, no escape sequence
+ */
 export function clean(text: string, max = 4000, extraSecrets: string[] = []): string {
   const stripped = redact(text, extraSecrets).replace(ANSI, '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
   return stripped.length > max ? stripped.slice(0, max) + '…' : stripped;
 }
 
-/** Deep redaction of a JSON value's strings. */
+/**
+ * Deep redaction of a JSON value's strings.
+ *
+ * @example
+ * redactValue({ env: { TOKEN: 'ghp_abcdefghijklmnopqrstuvwxyz0123' } }); // { env: { TOKEN: '[REDACTED]' } }
+ */
 export function redactValue(value: unknown, extraSecrets: string[] = []): unknown {
   if (typeof value === 'string') return redact(value, extraSecrets);
   if (Array.isArray(value)) return value.map((v) => redactValue(v, extraSecrets));
