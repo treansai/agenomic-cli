@@ -2,7 +2,8 @@
 
 The Agenomic machine connector. It connects Claude Code and Codex sessions
 on a machine to Agenomic: sessions you launch from agenomic.io run here,
-in a dedicated git worktree, under the runtime's own sandbox; sessions you
+in a dedicated git worktree, under the runtime's own sandbox, which cannot
+read the connector's credentials, configuration or other sessions; sessions you
 start yourself in a terminal are reported through hooks you install
 explicitly. AGPL-3.0-only.
 

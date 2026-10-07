@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import { ApiError, RunnerApi } from '../src/api.ts';
 import { manifest, saveProbe } from '../src/capabilities.ts';
 import { ClaudeSession, claudeCodeVersion, readClaudeCodeVersion, sdkPackage } from '../src/claude.ts';
-import { CodexSession, codexVersion, readCodexVersion } from '../src/codex.ts';
+import { CODEX_PERMISSION_PROFILE, CodexSession, codexExecutable, codexSessionConfig, codexVersion, readCodexVersion } from '../src/codex.ts';
 import { defaultConfig, localFailMode, paths, runtimeEnv, runtimeSecrets, saveConfig, spellings } from '../src/config.ts';
 import { main } from '../src/cli.ts';
 import { Daemon } from '../src/daemon.ts';
@@ -991,7 +991,7 @@ function fakeHookingCodex(): string {
     '  const m = JSON.parse(line);',
     '  if (m.id === undefined) return;',
     "  if (m.method === 'hooks/list' && process.env.FAKE_ENV_OUT) fs.writeFileSync(process.env.FAKE_ENV_OUT, JSON.stringify(process.env));",
-    "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : m.method === 'hooks/list' ? { data: [{ cwd: m.params.cwds[0], hooks: hooks(), warnings: [], errors: [] }] } : m.method.startsWith('thread/') ? { thread: { id: 'thread-fake' } } : {};",
+    "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : m.method === 'hooks/list' ? { data: [{ cwd: m.params.cwds[0], hooks: hooks(), warnings: [], errors: [] }] } : m.method.startsWith('thread/') ? { thread: { id: 'thread-fake' }, activePermissionProfile: { id: 'agenomic-session', extends: ':workspace' } } : {};",
     "  process.stdout.write(JSON.stringify({ id: m.id, result }) + '\\n');",
     '});',
     "rl.on('close', () => process.exit(0));",
@@ -1087,6 +1087,84 @@ test('the hooks/list App Server and a runtime asked its version get a minimal en
   });
 });
 
+test('a launched Codex session runs under a permissions profile that cannot read the connector credentials', { timeout: 60000 }, async () => {
+  await withHome(async (home) => {
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.runtimes.codex.extra_config_toml = 'model = "m"\n[model_providers.p]\nname = "p"';
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(paths.credentials(), '{"access_token":"runner-secret-token"}\n', { mode: 0o600 });
+    fs.writeFileSync(paths.config(), '{}\n');
+    const id = randomUUID();
+    const cwd = path.join(paths.worktrees(), id);
+    const other = path.join(paths.worktrees(), randomUUID());
+    fs.mkdirSync(cwd, { recursive: true });
+    fs.mkdirSync(other, { recursive: true });
+    fs.writeFileSync(path.join(cwd, 'README.md'), 'own checkout\n');
+    fs.writeFileSync(path.join(other, 'README.md'), 'another session\n');
+    const codexHome = path.join(paths.runtimeHome('codex'), id);
+    fs.mkdirSync(codexHome, { recursive: true });
+    const toml = codexSessionConfig(cfg.runtimes.codex);
+    fs.writeFileSync(path.join(codexHome, 'config.toml'), toml);
+    // The profile is the default, set before the first table (the extra config ends in one).
+    const lines = toml.split('\n');
+    const key = lines.indexOf(`default_permissions = "${CODEX_PERMISSION_PROFILE}"`);
+    assert.ok(key >= 0 && key < lines.findIndex((l) => l.startsWith('[')), toml);
+    assert.ok(lines.includes(`${JSON.stringify(path.resolve(home))} = "deny"`), toml);
+    assert.ok(!toml.includes('sandbox_workspace_write'), 'not the legacy mode, which reads the whole disk');
+    if (spawnSync('bwrap', ['--version']).status !== 0) return;
+    // The real Codex sandbox, under the session's profile.
+    const exe = codexExecutable(cfg.runtimes.codex);
+    const run = (cmd: string) => spawnSync(process.execPath, [exe, 'sandbox', '-P', CODEX_PERMISSION_PROFILE, '-C', cwd, 'sh', '-c', cmd], {
+      cwd, env: { PATH: process.env.PATH!, HOME: paths.runtimeHome('codex'), CODEX_HOME: codexHome }, encoding: 'utf8', timeout: 30000,
+    });
+    const own = run('cat README.md && echo changed > new.txt && cat new.txt');
+    assert.equal(own.stdout, 'own checkout\nchanged\n', own.stderr);
+    for (const secret of [paths.credentials(), paths.config(), path.join(other, 'README.md')]) {
+      const r = run(`cat ${JSON.stringify(secret)}`);
+      assert.notEqual(r.status, 0, `${secret} was readable`);
+      assert.ok(!r.stdout.includes('runner-secret-token') && !r.stdout.includes('another session'), r.stdout);
+    }
+    assert.notEqual(run(`echo x > ${JSON.stringify(path.join(other, 'planted'))}`).status, 0);
+  });
+});
+
+test('a launched Codex thread is started without a sandbox override, and refused unless it runs under the session profile', { timeout: 30000 }, async () => {
+  await withHome(async () => {
+    for (const applied of [true, false]) {
+      const bin = tmp('agn-bin-');
+      const fake = path.join(bin, 'codex.js');
+      const seen = path.join(bin, 'seen.jsonl');
+      fs.writeFileSync(fake, [
+        "const fs = require('node:fs');",
+        "const rl = require('node:readline').createInterface({ input: process.stdin });",
+        "rl.on('line', (line) => {",
+        '  const m = JSON.parse(line);',
+        `  fs.appendFileSync(${JSON.stringify(seen)}, line + '\\n');`,
+        '  if (m.id === undefined) return;',
+        `  const profile = ${applied} ? { activePermissionProfile: { id: 'agenomic-session', extends: ':workspace' } } : { activePermissionProfile: null };`,
+        "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : m.method.startsWith('thread/') ? { thread: { id: 'thread-fake' }, ...profile } : {};",
+        "  process.stdout.write(JSON.stringify({ id: m.id, result }) + '\\n');",
+        '});',
+      ].join('\n'));
+      const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+      cfg.runtimes.codex.executable = fake;
+      const { ctx } = codexHarness(cfg, 'observe');
+      const session = new CodexSession({ ctx, cwd: tmp('agn-wt-'), runtime: cfg.runtimes.codex, onNativeSession: async () => undefined, onStatus: () => undefined });
+      try {
+        if (applied) await session.start();
+        else await assert.rejects(session.start(), /permissions profile agenomic-session/);
+        const start = fs.readFileSync(seen, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).find((m) => m.method === 'thread/start');
+        assert.equal('sandbox' in start.params, false, 'a sandbox override would replace the profile');
+        const written = fs.readFileSync(path.join(paths.runtimeHome('codex'), ctx.id, 'config.toml'), 'utf8');
+        assert.match(written, /^default_permissions = "agenomic-session"$/m);
+      } finally {
+        await session.stop();
+        await ctx.sink.close();
+      }
+    }
+  });
+});
+
 test('an App Server that closes its input fails the pending call at once and ends the session; the daemon stays up', { timeout: 30000 }, async () => {
   await withHome(async () => {
     // Answers initialize and thread/start, then closes its stdin and keeps running.
@@ -1098,7 +1176,7 @@ test('an App Server that closes its input fails the pending call at once and end
       "rl.on('line', (line) => {",
       '  const m = JSON.parse(line);',
       '  if (m.id === undefined) return;',
-      "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : { thread: { id: 'thread-fake' } };",
+      "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : { thread: { id: 'thread-fake' }, activePermissionProfile: { id: 'agenomic-session', extends: ':workspace' } };",
       "  process.stdout.write(JSON.stringify({ id: m.id, result }) + '\\n');",
       "  if (m.method === 'thread/start') { rl.close(); process.stdin.destroy(); fs.closeSync(0); }",
       '});',
@@ -1142,7 +1220,7 @@ test('a launch or resume whose start fails after the spawn stops the process and
       "rl.on('line', (line) => {",
       '  const m = JSON.parse(line);',
       '  if (m.id === undefined) return;',
-      "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : m.method.startsWith('thread/') ? { thread: { id: 'thread-fake' } } : {};",
+      "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : m.method.startsWith('thread/') ? { thread: { id: 'thread-fake' }, activePermissionProfile: { id: 'agenomic-session', extends: ':workspace' } } : {};",
       "  process.stdout.write(JSON.stringify({ id: m.id, result }) + '\\n');",
       '});',
       "rl.on('close', () => process.exit(0));",
@@ -1334,7 +1412,7 @@ function fakeAppServer(turns?: string): string {
     '  const m = JSON.parse(line);',
     '  if (m.id === undefined) return;',
     ...(turns ? [`  if (m.method === 'turn/start') require('node:fs').appendFileSync(${JSON.stringify(turns)}, m.params.input[0].text + '\\n');`] : []),
-    "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : m.method.startsWith('thread/') ? { thread: { id: 'thread-fake' } } : {};",
+    "  const result = m.method === 'initialize' ? { userAgent: 'fake' } : m.method.startsWith('thread/') ? { thread: { id: 'thread-fake' }, activePermissionProfile: { id: 'agenomic-session', extends: ':workspace' } } : {};",
     "  process.stdout.write(JSON.stringify({ id: m.id, result }) + '\\n');",
     '});',
     "rl.on('close', () => process.exit(0));",
