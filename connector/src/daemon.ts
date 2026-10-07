@@ -537,6 +537,15 @@ export class Daemon {
     // Like a launch: a runtime disabled since the session was recorded is
     // not started, and the session is not managed again.
     if (!rcfg.enabled) return this.result(cmd.id, 'refused', undefined, `${rec.runtime} is disabled on this runner`);
+    // The other start-time refusals of a launch hold for a resume too: a
+    // workspace no longer declared here, or an enforce session of Claude
+    // Code whose sandbox has since become unavailable.
+    if (rec.workspace_id !== undefined && !this.workspace(rec.workspace_id)) {
+      return this.result(cmd.id, 'refused', undefined, 'workspace not declared on this runner');
+    }
+    if (rec.mode === 'enforce' && rec.runtime === 'claude_code' && !sandboxAvailable().ok) {
+      return this.result(cmd.id, 'refused', undefined, 'enforce needs the Claude Code sandbox, which is unavailable on this machine');
+    }
     const m = live ?? this.manage(cmd.coding_session_id, rec.runtime, 'launched', rec.mode, rec.capture, rec.cwd, rec.base_revision, undefined, rec.workspace_id);
     // The gateway's resumed session is not connected until this runner
     // re-establishes its mode: statuses are held until then.

@@ -931,6 +931,52 @@ test('a resume for a runtime disabled on this runner is refused before anything 
   });
 });
 
+test('a resume is refused, like a launch, for an undeclared workspace or an enforce session without the sandbox', async () => {
+  await withHome(async () => {
+    const repo = tempRepo();
+    const bin = tmp('agn-bin-');
+    const pidFile = path.join(bin, 'pid');
+    const fake = path.join(bin, 'fake.js');
+    fs.writeFileSync(fake, "require('node:fs').writeFileSync(process.env.FAKE_PID_FILE, String(process.pid));\n");
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+    for (const r of [cfg.runtimes.codex, cfg.runtimes.claude_code]) {
+      r.enabled = true;
+      r.executable = fake;
+      r.extra_env = { FAKE_PID_FILE: pidFile };
+    }
+    const api = new ProbeApi();
+    const daemon: any = new Daemon(cfg, api);
+    const capture = { conversation: false, commands: false, diffs: false, outputs: false };
+    const resume = async (rec: Record<string, unknown>) => {
+      const session = randomUUID();
+      daemon.persisted[session] = { cwd: repo, base_revision: null, native_id: 'native-fake', capture, ...rec };
+      const id = ulid();
+      await daemon.handleCommand({ id, kind: 'resume_session', coding_session_id: session, payload: { prompt: 'continue' } });
+      return { session, r: api.results.get(id) };
+    };
+    // A workspace removed from the configuration since the launch.
+    const gone = await resume({ runtime: 'codex', mode: 'observe', workspace_id: 'removed' });
+    assert.equal(gone.r?.status, 'refused');
+    assert.match(gone.r.error, /workspace not declared on this runner/);
+    assert.equal(daemon.sessions.has(gone.session), false, 'the session is not managed');
+    // No bubblewrap on PATH: the Claude Code sandbox is unavailable.
+    const savedPath = process.env.PATH;
+    process.env.PATH = tmp('agn-empty-path-');
+    try {
+      const unsandboxed = await resume({ runtime: 'claude_code', mode: 'enforce', workspace_id: 'w' });
+      assert.equal(unsandboxed.r?.status, 'refused');
+      assert.match(unsandboxed.r.error, /enforce needs the Claude Code sandbox/);
+      assert.equal(daemon.sessions.has(unsandboxed.session), false, 'the session is not managed');
+    } finally {
+      process.env.PATH = savedPath;
+    }
+    await sleep(200);
+    assert.equal(fs.existsSync(pidFile), false, 'no runtime was started');
+    assert.equal(api.states.length, 0, 'no state reported for the refused resumes');
+  });
+});
+
 test('a Claude Code launch is applied only once the runtime initialized and its native session is registered', { timeout: 120000 }, async () => {
   await withHome(async () => {
     const repo = tempRepo();
