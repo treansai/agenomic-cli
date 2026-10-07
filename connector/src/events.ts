@@ -143,23 +143,39 @@ export class EventSink {
     fs.renameSync(tmp, this.spoolFile);
   }
 
-  /** Appends evidence to the spool, or inserts it at byte offset `at` (ahead of what was spilled after it). */
+  /**
+   * Appends evidence to the spool, or inserts it at byte offset `at` (ahead
+   * of what was spilled after it). The spool never grows past
+   * `maxSpoolBytes`: only the events whose lines fit in the room left are
+   * written, evidence (MANDATORY) first, in their order; the others are
+   * counted as dropped and reported (events_dropped).
+   */
   private spill(events: CodingEvent[], at?: number): void {
     if (events.length === 0) return;
     const size = this.spoolSize();
-    if (size > this.opts.maxSpoolBytes) {
+    const lines = events.map((e) => Buffer.from(JSON.stringify(e) + '\n'));
+    let room = this.opts.maxSpoolBytes - size;
+    const kept = new Set<number>();
+    for (const evidence of [true, false]) {
+      lines.forEach((line, i) => {
+        if (MANDATORY.has(events[i]!.type) !== evidence || line.length > room) return;
+        kept.add(i);
+        room -= line.length;
+      });
+    }
+    if (kept.size < events.length) {
       // Evidence would be lost: say so loudly and keep counting.
-      this.dropped += events.length;
-      log('error', 'event spool full: evidence events dropped', { session: this.sessionId, count: events.length });
-      return;
+      this.dropped += events.length - kept.size;
+      log('error', 'event spool full: events dropped', { session: this.sessionId, count: events.length - kept.size });
     }
-    const lines = Buffer.from(events.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    if (kept.size === 0) return;
+    const data = Buffer.concat(lines.filter((_, i) => kept.has(i)));
     if (at === undefined || at >= size) {
-      fs.appendFileSync(this.spoolFile, lines, { mode: 0o600 });
+      fs.appendFileSync(this.spoolFile, data, { mode: 0o600 });
       return;
     }
-    const data = fs.readFileSync(this.spoolFile);
-    this.writeSpool(Buffer.concat([data.subarray(0, at), lines, data.subarray(at)]));
+    const spooled = fs.readFileSync(this.spoolFile);
+    this.writeSpool(Buffer.concat([spooled.subarray(0, at), data, spooled.subarray(at)]));
   }
 
   /**

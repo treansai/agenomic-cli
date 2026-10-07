@@ -338,6 +338,39 @@ test('event sink: bounded memory, evidence spooled to disk while offline, then d
   assert.equal(new Set(seqs).size, seqs.length, 'producer sequence numbers are unique');
 });
 
+test('event sink: the spool cap counts the bytes being appended; what does not fit is counted dropped, evidence kept first', async () => {
+  const api = new FlakyApi();
+  const spool = tmp('agn-spool-');
+  const cap = 2000;
+  const sink = new EventSink(api, 'session-cap', () => [], spool, { maxBuffered: 2, maxSpoolBytes: cap, batchSize: 100, flushIntervalMs: 60000 });
+  const file = path.join(spool, 'session-cap.jsonl');
+  const size = () => (fs.existsSync(file) ? fs.statSync(file).size : 0);
+  const emitted = 40;
+  for (let i = 0; i < emitted; i++) {
+    sink.emit('tool.started', 'runtime', 'native', { i, pad: 'x'.repeat(200) });
+    assert.ok(size() <= cap, `spool ${size()} bytes after event ${i}, cap ${cap}`);
+  }
+  assert.ok(cap - size() < 600, `filled until the next line (about 510 bytes) does not fit: ${size()}`);
+  api.up = true;
+  await sink.close();
+  const delivered = api.sent.filter((e) => e.type === 'tool.started').length;
+  const dropped = api.sent.filter((e) => e.type === 'error' && e.payload.code === 'events_dropped').reduce((n, e) => n + e.payload.count, 0);
+  assert.equal(delivered + dropped, emitted, 'every event is delivered or counted dropped');
+
+  // Room for one line: the evidence event is kept, the other one dropped.
+  const small = new EventSink(api, 'session-small', () => [], tmp('agn-spool-'), { maxBuffered: 100, maxSpoolBytes: 1, batchSize: 100, flushIntervalMs: 60000 });
+  const message = small.emit('message.assistant', 'runtime', 'native', {});
+  const tool = small.emit('tool.started', 'runtime', 'native', { pad: 'y'.repeat(50) });
+  (small as any).opts.maxSpoolBytes = Buffer.byteLength(JSON.stringify(tool) + '\n');
+  assert.ok(Buffer.byteLength(JSON.stringify(message) + '\n') < (small as any).opts.maxSpoolBytes, 'either line fits alone');
+  (small as any).queue.length = 0;
+  (small as any).spill([message, tool]);
+  const spooled = fs.readFileSync((small as any).spoolFile, 'utf8').trim().split('\n').map((l: string) => JSON.parse(l).type);
+  assert.deepEqual(spooled, ['tool.started']);
+  assert.equal((small as any).dropped, 1);
+  await small.close();
+});
+
 /** A runner API whose event sends wait until the test settles them. */
 class GatedApi extends RunnerApi {
   hold = true;
