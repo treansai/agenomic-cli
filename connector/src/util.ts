@@ -190,7 +190,9 @@ function revision(exe: string): { file: string; key: string } | null {
   if (!file) return null;
   try {
     const st = fs.statSync(file);
-    return { file, key: `${file}\0${st.size}\0${st.mtimeMs}` };
+    // A binary replaced in place (an update that keeps the size and
+    // restores the mtime) is a new inode or at least a new ctime.
+    return { file, key: [file, st.dev, st.ino, st.size, st.mtimeMs, st.ctimeMs].join('\0') };
   } catch {
     return null;
   }

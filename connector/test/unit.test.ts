@@ -707,6 +707,27 @@ test('a configured runtime executable reports its own version; a probe of anothe
   }
 });
 
+test('a runtime binary replaced with the same size and mtime is asked its version again', async () => {
+  const file = fakeBinary('1.0.0');
+  const atime = 1700000000;
+  const mtime = 1700000000;
+  fs.utimesSync(file, atime, mtime);
+  assert.equal(await readExecutableVersion(file), '1.0.0');
+  // Replaced by a rename (a new inode), the size and mtime restored.
+  const next = `${file}.new`;
+  fs.writeFileSync(next, `#!/bin/sh\necho '2.0.0'\n`, { mode: 0o755 });
+  fs.utimesSync(next, atime, mtime);
+  fs.renameSync(next, file);
+  assert.equal(fs.statSync(file).mtimeMs, mtime * 1000);
+  assert.equal(fs.statSync(file).size, fs.statSync(fakeBinary('1.0.0')).size);
+  assert.equal(await readExecutableVersion(file), '2.0.0');
+  // Rewritten in place (the same inode): its ctime changed.
+  await sleep(20);
+  fs.writeFileSync(file, `#!/bin/sh\necho '3.0.0'\n`);
+  fs.utimesSync(file, atime, mtime);
+  assert.equal(await readExecutableVersion(file), '3.0.0');
+});
+
 test('a slow --version never delays a heartbeat or a hook reply', async () => {
   await withHome(async () => {
     const repo = tempRepo();
