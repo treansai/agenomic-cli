@@ -449,6 +449,28 @@ test('workspace: an untracked file named, not captured, has its path quoted as g
   assert.ok(!d.text.split('\n').includes('+forged'), 'the name adds no line of its own');
 });
 
+test('workspace: a diff larger than any buffer is read only up to its window; the snapshot keeps its file list', () => {
+  const repo = tempRepo();
+  const base = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  // Past the 64 MiB a buffered read accepted.
+  const line = 'y'.repeat(99) + '\n';
+  const fd = fs.openSync(path.join(repo, 'README.md'), 'w');
+  const chunk = line.repeat(10000);
+  for (let i = 0; i < 70; i++) fs.writeSync(fd, chunk);
+  fs.closeSync(fd);
+  try {
+    const d = ws.diff(repo, base);
+    assert.equal(d.truncated, true);
+    assert.equal(d.text.length, 256 * 1024);
+    const snap = ws.snapshot(repo, base, true);
+    assert.deepEqual((snap.files as ws.FileChange[]).find((f) => f.path === 'README.md'), { path: 'README.md', status: 'modified', added: 700000, deleted: 1 });
+    assert.equal(snap.truncated, true);
+    assert.equal((snap.diff as string).length, 256 * 1024);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test('symlink escapes are detected on the real path', () => {
   const root = tmp('agn-root-');
   const outside = tmp('agn-out-');

@@ -394,12 +394,7 @@ export class CodexSession {
     const ctx = this.o.ctx;
     if (!ctx.baseRevision) return;
     try {
-      const payload: Record<string, unknown> = { base_revision: ctx.baseRevision, files: ws.changes(this.o.cwd, ctx.baseRevision) };
-      if (ctx.capture.diffs) {
-        const d = ws.diff(this.o.cwd, ctx.baseRevision, ctx.secrets());
-        payload.diff = d.text;
-        payload.truncated = d.truncated;
-      }
+      const payload = ws.snapshot(this.o.cwd, ctx.baseRevision, ctx.capture.diffs, ctx.secrets());
       ctx.sink.emit('diff.snapshot', 'filesystem', 'observed', payload, { runtime_turn_id: turn });
     } catch (error) {
       log('warn', 'diff snapshot failed', { error: errorMessage(error) });

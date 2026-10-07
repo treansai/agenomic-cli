@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -18,6 +18,24 @@ function git(cwd: string, args: string[], maxBuffer = 16 * 1024 * 1024, opts: { 
     input: opts.input,
     stdio: [opts.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
   });
+}
+
+/**
+ * Output of a git command read up to `limit` bytes: past it, git is
+ * stopped and `more` is set, so a huge output is neither buffered whole
+ * nor an error.
+ */
+function gitBounded(cwd: string, args: string[], limit: number, env: Record<string, string> = {}): { out: string; more: boolean } {
+  const r = spawnSync('git', ['-C', cwd, ...args], {
+    maxBuffer: limit,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', ...env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const more = (r.error as NodeJS.ErrnoException | undefined)?.code === 'ENOBUFS';
+  if (r.error && !more) throw r.error;
+  if (!more && r.status !== 0) throw new Error(`git ${args[0]} failed: ${String(r.stderr ?? '').trim().slice(0, 500)}`);
+  const out = r.stdout ?? Buffer.alloc(0);
+  return { out: out.subarray(0, limit).toString('utf8'), more: more || out.length > limit };
 }
 
 export interface WorkspaceState {
@@ -135,15 +153,37 @@ const REDACTION_SLACK = 64 * 1024;
  */
 export function diff(dir: string, base: string, secrets: string[] = [], maxBytes = 256 * 1024): { text: string; truncated: boolean } {
   const window = maxBytes + REDACTION_SLACK;
-  const { raw, uncaptured } = withUntracked(dir, window, (env) => git(dir, ['diff', '-M', base], 64 * 1024 * 1024, { env }));
-  let full = raw;
+  // git output is read only up to the window: a diff of any size costs
+  // the window, never the whole diff.
+  const { raw, uncaptured } = withUntracked(dir, window, (env) => gitBounded(dir, ['diff', '-M', base], window + 1, env));
+  let full = raw.out;
   for (const f of uncaptured) {
     // Past the bytes read, the rest would only be cut off.
-    if (full.length > window) break;
+    if (raw.more || full.length > window) break;
     full += `diff --git ${quotePath(`a/${f.path}`)} ${quotePath(`b/${f.path}`)}\nnew file mode 100644\n(untracked file of ${f.size} bytes, not captured)\n`;
   }
+  const cut = raw.more || full.length > window;
   const text = redact(full.length > window ? full.slice(0, window) : full, secrets);
-  return text.length > maxBytes ? { text: text.slice(0, maxBytes), truncated: true } : { text, truncated: full.length > window };
+  return text.length > maxBytes ? { text: text.slice(0, maxBytes), truncated: true } : { text, truncated: cut };
+}
+
+/**
+ * Payload of a `diff.snapshot` event: the changed files against `base`
+ * and, when diffs are captured, the bounded redacted diff. A diff that
+ * cannot be read leaves the file list in place, with the reason.
+ */
+export function snapshot(dir: string, base: string, captureDiff: boolean, secrets: string[] = []): Record<string, unknown> {
+  const payload: Record<string, unknown> = { base_revision: base, files: changes(dir, base) };
+  if (!captureDiff) return payload;
+  try {
+    const d = diff(dir, base, secrets);
+    payload.diff = d.text;
+    payload.truncated = d.truncated;
+  } catch (error) {
+    payload.diff = null;
+    payload.diff_error = redact(error instanceof Error ? error.message : String(error), secrets).slice(0, 500);
+  }
+  return payload;
 }
 
 const C_ESCAPES: Record<number, string> = { 7: 'a', 8: 'b', 9: 't', 10: 'n', 11: 'v', 12: 'f', 13: 'r', 34: '"', 92: '\\' };
@@ -172,7 +212,7 @@ export function quotePath(name: string): string {
  * out. Many untracked files (a venv, generated data) are thereby neither
  * read nor diffed beyond what the capture keeps.
  */
-function withUntracked(dir: string, maxBytes: number, fn: (env: Record<string, string>) => string): { raw: string; uncaptured: { path: string; size: number }[] } {
+function withUntracked<T>(dir: string, maxBytes: number, fn: (env: Record<string, string>) => T): { raw: T; uncaptured: { path: string; size: number }[] } {
   const included: string[] = [];
   let budget = maxBytes;
   const uncaptured: { path: string; size: number }[] = [];
