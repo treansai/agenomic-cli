@@ -920,7 +920,7 @@ export class Daemon {
         return cwd;
       }
     })();
-    const workspace = this.cfg.workspaces.find((w) => real === w.path || real.startsWith(w.path + path.sep));
+    const workspace = ws.workspaceOf(this.cfg.workspaces, real);
     if (!workspace) return undefined;
     const state = ws.inspect(workspace.path);
     const local = this.cfg.local_sessions;

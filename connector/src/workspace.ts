@@ -351,3 +351,30 @@ export function commonDir(dir: string): string | null {
     return null;
   }
 }
+
+/**
+ * The declared workspace a directory belongs to: the most specific one,
+ * whatever the declaration order. Both sides are compared by real path,
+ * on path-component boundaries (`/repo` does not contain `/repo2`); an
+ * exact match is the longest. Undefined when it is in none.
+ *
+ * @example
+ * workspaceOf([{ path: '/src' }, { path: '/src/app' }], '/src/app/lib'); // { path: '/src/app' }
+ */
+export function workspaceOf<W extends { path: string }>(workspaces: W[], dir: string): W | undefined {
+  const real = (p: string) => {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  const target = real(dir);
+  let best: { w: W; len: number } | undefined;
+  for (const w of workspaces) {
+    const root = real(w.path);
+    const inside = target === root || target.startsWith(root.endsWith(path.sep) ? root : root + path.sep);
+    if (inside && (!best || root.length > best.len)) best = { w, len: root.length };
+  }
+  return best?.w;
+}

@@ -2119,6 +2119,36 @@ test('enroll refuses an insecure endpoint before the one time token is sent', as
   });
 });
 
+test('a local session belongs to the most specific declared workspace, whatever the declaration order', async () => {
+  const outer = tempRepo();
+  const inner = path.join(outer, 'packages', 'app');
+  fs.mkdirSync(path.join(inner, 'src'), { recursive: true });
+  const sibling = `${outer}2`;
+  fs.mkdirSync(sibling);
+  const link = path.join(tmp('agn-link-'), 'checkout');
+  fs.symlinkSync(outer, link);
+  const declared = [{ id: 'outer', name: 'outer', path: outer }, { id: 'inner', name: 'inner', path: link + '/packages/app' }];
+  for (const workspaces of [declared, [...declared].reverse()]) {
+    assert.equal(ws.workspaceOf(workspaces, path.join(inner, 'src'))?.id, 'inner');
+    assert.equal(ws.workspaceOf(workspaces, inner)?.id, 'inner', 'an exact match');
+    assert.equal(ws.workspaceOf(workspaces, path.join(link, 'packages'))?.id, 'outer');
+    assert.equal(ws.workspaceOf(workspaces, sibling), undefined, '/repo does not contain /repo2');
+    await withHome(async () => {
+      const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+      cfg.workspaces = workspaces;
+      const daemon: any = new Daemon(cfg, new ProbeApi());
+      try {
+        const m = await daemon.registerLocal('claude_code', randomUUID(), path.join(inner, 'src'));
+        assert.equal(m.workspaceId, 'inner');
+        assert.equal(await daemon.registerLocal('claude_code', randomUUID(), sibling), undefined);
+        await m.ctx.sink.close();
+      } finally {
+        await daemon.stop();
+      }
+    });
+  }
+});
+
 /** A fake SDK query(): Claude Code reports `reported` as its session id, before or after it initialized. */
 function fakeClaude(reported: string, initFirst: boolean) {
   const gates = { emit: () => {}, end: () => {}, chosen: undefined as string | undefined };
