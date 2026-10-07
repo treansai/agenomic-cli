@@ -306,6 +306,38 @@ test('a daemon error reply or a malformed reply takes the fail mode, never a sil
   }
 });
 
+test('a daemon connection closed without a complete reply takes the fail mode at once, not at the deadline', async () => {
+  const pre = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', tool_name: 'Bash', tool_input: { command: 'ls' } });
+  // Closed with nothing, with a partial line, and destroyed outright.
+  const servers: ((c: net.Socket) => void)[] = [
+    (c) => c.once('data', () => c.end()),
+    (c) => c.once('data', () => c.end('{"output":')),
+    (c) => c.once('data', () => c.destroy()),
+  ];
+  for (const [i, handle] of servers.entries()) {
+    const sock = path.join(tmp('agn-sock-'), 'state', 'connector.sock');
+    fs.mkdirSync(path.dirname(sock));
+    const server = net.createServer(handle);
+    await new Promise<void>((resolve) => server.listen(sock, resolve));
+    try {
+      for (const fail of ['closed', 'open']) {
+        const started = Date.now();
+        const r = await hookAsync(['codex', '--fail', fail, '--deadline', '30000', '--socket', sock], pre);
+        assert.ok(Date.now() - started < 10000, `case ${i} ${fail}: answered in ${Date.now() - started} ms, before the deadline`);
+        assert.equal(r.status, 0, r.stderr);
+        if (fail === 'open') assert.equal(r.stdout, '', `case ${i}`);
+        else {
+          const out = JSON.parse(r.stdout).hookSpecificOutput;
+          assert.equal(out.permissionDecision, 'deny', `case ${i}`);
+          assert.match(out.permissionDecisionReason, /^Agenomic connector unavailable/);
+        }
+      }
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  }
+});
+
 class FlakyApi extends RunnerApi {
   up = false;
   sent: any[] = [];

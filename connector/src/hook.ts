@@ -283,27 +283,40 @@ export function ask(request: unknown, deadlineMs: number, socketPath = paths.soc
   return new Promise((resolve, reject) => {
     const sock = net.createConnection(socketPath);
     let buf = '';
+    let settled = false;
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn();
+    };
     const timer = setTimeout(() => {
       sock.destroy();
-      reject(new Error('timed out'));
+      settle(() => reject(new Error('timed out')));
     }, deadlineMs);
     sock.on('connect', () => sock.write(JSON.stringify(request) + '\n'));
     sock.on('data', (d) => {
       buf += d;
       const nl = buf.indexOf('\n');
       if (nl >= 0) {
-        clearTimeout(timer);
         sock.end();
-        try {
-          resolve(JSON.parse(buf.slice(0, nl)));
-        } catch (e) {
-          reject(e);
-        }
+        settle(() => {
+          try {
+            resolve(JSON.parse(buf.slice(0, nl)));
+          } catch (e) {
+            reject(e);
+          }
+        });
       }
     });
-    sock.on('error', (e) => {
-      clearTimeout(timer);
-      reject(e);
-    });
+    // A connection closed before a complete reply line is a failure now
+    // (the fail mode applies), not a wait until the deadline.
+    const closed = () => {
+      sock.destroy();
+      settle(() => reject(new Error('the daemon closed the connection without a reply')));
+    };
+    sock.on('end', closed);
+    sock.on('close', closed);
+    sock.on('error', (e) => settle(() => reject(e)));
   });
 }
