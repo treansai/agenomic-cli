@@ -3,13 +3,13 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { RunnerApi } from './api.ts';
+import { ApiError, RunnerApi } from './api.ts';
 import { manifest } from './capabilities.ts';
 import { ClaudeSession, claudeCodeVersion, readClaudeCodeVersion, sdkVersion } from './claude.ts';
 import { CodexSession, codexVersion, readCodexVersion } from './codex.ts';
 import { DEFAULT_CAPTURE, paths, runtimeSecrets, type Capture, type ConnectorConfig, type Mode, type WorkspaceConfig } from './config.ts';
 import { EventSink } from './events.ts';
-import { protection } from './protection.ts';
+import { protection, type Surface } from './protection.ts';
 import { clean } from './redact.ts';
 import { SessionContext, type Runtime, type Verdict } from './session.ts';
 import { errorMessage, log, readJson, resolveExecutable, sleep, ulid, writeSecretFile } from './util.ts';
@@ -29,6 +29,15 @@ interface Managed {
   cwd: string;
   nativeId?: string;
   workspaceId?: string;
+  /**
+   * Whether the report that establishes the session's mode (connect) was
+   * made. Until then a status the runtime reports is only held: no
+   * connected status reaches the gateway without the effective mode.
+   */
+  connected: boolean;
+  held?: string;
+  /** State reports of the session, sent one after the other. */
+  reports: Promise<void>;
 }
 
 interface Persisted {
@@ -249,9 +258,76 @@ export class Daemon {
   private async setStatus(s: Managed, status: string, extra: Record<string, unknown> = {}): Promise<void> {
     s.status = status;
     try {
-      await s.ctx.state({ status, ...extra });
+      await this.report(s, { status, ...extra });
     } catch (error) {
       log('warn', 'state update failed', { session: s.id, error: errorMessage(error) });
+    }
+  }
+
+  /**
+   * Sends a state report after the session's earlier ones, so that the
+   * gateway applies them in order. The promise settles with the first
+   * attempt; a `persistent` report that failed is retried in the
+   * background, ahead of the later reports, until it is delivered or the
+   * gateway refuses it.
+   */
+  private report(m: Managed, body: Record<string, unknown>, persistent = false): Promise<void> {
+    let settle!: (error?: unknown) => void;
+    const first = new Promise<void>((resolve, reject) => (settle = (error) => (error === undefined ? resolve() : reject(error))));
+    m.reports = m.reports.then(async () => {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await m.ctx.state(body);
+          return settle();
+        } catch (error) {
+          settle(error);
+          const refused = error instanceof ApiError && error.status >= 400 && error.status < 500;
+          if (!persistent || refused || this.abort.signal.aborted) return;
+          log('warn', 'state report failed; retrying', { session: m.id, error: errorMessage(error) });
+          await sleep(Math.min(1000 * 2 ** attempt, 30000), this.abort.signal);
+        }
+      }
+    });
+    return first;
+  }
+
+  /** A status the runtime reports: held until the session is connected. */
+  private async adapterStatus(m: Managed, status: string): Promise<void> {
+    if (!m.connected) {
+      m.held = status;
+      return;
+    }
+    await this.setStatus(m, status);
+  }
+
+  /**
+   * The report that connects a session once its runtime is attached and
+   * its native session registered: the connected status (running, or the
+   * one the runtime reported meanwhile) together with the effective mode,
+   * the protection and the capabilities, in one report, so that the
+   * gateway never holds a connected status without a mode. It is retried
+   * until delivered.
+   */
+  private async connect(m: Managed, surface: Surface, extra: { limitations?: string[]; workspace?: unknown } = {}): Promise<void> {
+    const status = m.held ?? 'running';
+    m.connected = true;
+    m.held = undefined;
+    m.status = status;
+    const caps = surface === 'cli_hooks'
+      ? manifest(m.runtime, 'cli_hooks', this.runtimes().find((r) => r.runtime === m.runtime)?.version ?? null)
+      : this.runtimes().find((r) => r.runtime === m.runtime)?.capabilities ?? {};
+    const prot = protection(m.runtime, surface, m.ctx.mode);
+    try {
+      await this.report(m, {
+        status,
+        mode_effective: m.ctx.mode,
+        protection: { protected: prot.protected, not_covered: prot.not_covered, notes: prot.notes },
+        limitations: [...prot.limitations, ...(extra.limitations ?? [])],
+        capabilities: caps,
+        ...(extra.workspace ? { workspace: extra.workspace } : {}),
+      }, true);
+    } catch (error) {
+      log('warn', 'connected state report failed; retrying', { session: m.id, error: errorMessage(error) });
     }
   }
 
@@ -298,14 +374,7 @@ export class Daemon {
       await managed.ctx.sink.close();
       return this.result(cmd.id, 'refused', undefined, errorMessage(error));
     }
-    const prot = protection(runtime, runtime === 'claude_code' ? 'sdk' : 'app_server', mode);
-    const caps = this.runtimes().find((r) => r.runtime === runtime)?.capabilities ?? {};
-    await managed.ctx.state({
-      mode_effective: mode,
-      protection: { protected: prot.protected, not_covered: prot.not_covered, notes: prot.notes },
-      limitations: prot.limitations,
-      capabilities: caps,
-    });
+    await this.connect(managed, runtime === 'claude_code' ? 'sdk' : 'app_server');
     return this.result(cmd.id, 'applied', { worktree: 'dedicated', native_session_id: managed.nativeId ?? null });
   }
 
@@ -316,7 +385,9 @@ export class Daemon {
     const secrets = () => [this.api.credentials()?.access_token ?? '', this.api.credentials()?.refresh_token ?? '', ...runtimeSecrets(rcfg)].filter(Boolean);
     const sink = new EventSink(this.api, id, secrets, paths.spool());
     const ctx = new SessionContext(this.api, id, runtime, mode, sink, capture, cwd, base, traceId, secrets);
-    const m: Managed = { id, runtime, origin, ctx, status: 'starting', cwd, workspaceId };
+    const m: Managed = { id, runtime, origin, ctx, status: 'starting', cwd, workspaceId, connected: false, reports: Promise.resolve() };
+    // Statuses the session context reports (waiting for an approval) follow the same order.
+    ctx.reportStatus = (status) => void this.adapterStatus(m, status);
     this.sessions.set(id, m);
     return m;
   }
@@ -335,7 +406,7 @@ export class Daemon {
         retry: true,
       });
     };
-    const onStatus = (status: string) => void this.setStatus(m, status);
+    const onStatus = (status: string) => void this.adapterStatus(m, status);
     const common = { ctx: m.ctx, cwd: m.cwd, model: o.model ?? null, prompt: o.prompt ?? null, resume: o.resume ?? null, runtime: rcfg, onNativeSession, onStatus };
     const adapter: Adapter = m.runtime === 'claude_code' ? new ClaudeSession(common) : new CodexSession(common);
     m.adapter = adapter;
@@ -352,7 +423,7 @@ export class Daemon {
       throw error;
     }
     void adapter.done.then(async () => {
-      if (m.status !== 'stopped') await this.setStatus(m, 'stopped');
+      if (m.status !== 'stopped') await this.adapterStatus(m, 'stopped');
       await m.ctx.sink.flush();
     });
   }
@@ -364,6 +435,11 @@ export class Daemon {
     if (!rec?.native_id) return this.result(cmd.id, 'refused', undefined, 'no native session recorded on this runner');
     const rcfg = rec.runtime === 'claude_code' ? this.cfg.runtimes.claude_code : this.cfg.runtimes.codex;
     const m = live ?? this.manage(cmd.coding_session_id, rec.runtime, 'launched', rec.mode, rec.capture, rec.cwd, rec.base_revision, undefined, rec.workspace_id);
+    // The gateway's resumed session is not connected until this runner
+    // re-establishes its mode: statuses are held until then.
+    const before = { connected: m.connected, held: m.held };
+    m.connected = false;
+    m.held = undefined;
     // Resume is always by explicit native id, never "the last session".
     try {
       await this.startAdapter(m, rcfg, { resume: rec.native_id, prompt: cmd.payload?.prompt ?? undefined });
@@ -371,10 +447,10 @@ export class Daemon {
       if (!live) {
         this.sessions.delete(m.id);
         await m.ctx.sink.close();
-      }
+      } else Object.assign(m, before);
       return this.result(cmd.id, 'refused', undefined, errorMessage(error));
     }
-    await this.setStatus(m, 'running');
+    await this.connect(m, rec.runtime === 'claude_code' ? 'sdk' : 'app_server');
     return this.result(cmd.id, 'applied');
   }
 
@@ -537,17 +613,10 @@ export class Daemon {
       return existing;
     }
     const m = this.manage(id, runtime, 'local_connected', local.mode, local.capture, workspace.path, state.base_revision, res.session.trace_id, workspace.id);
-    m.status = 'running';
     m.nativeId = native;
     this.byNative.set(`${runtime}:${native}`, m);
-    const caps = manifest(runtime, 'cli_hooks', this.runtimes().find((r) => r.runtime === runtime)?.version ?? null);
-    const prot = protection(runtime, 'cli_hooks', local.mode);
-    await m.ctx.state({
-      status: 'running',
-      mode_effective: local.mode,
-      protection: { protected: prot.protected, not_covered: prot.not_covered, notes: prot.notes },
-      capabilities: caps,
-      limitations: [...prot.limitations, 'a session that was already open before the hooks were installed must be restarted to be connected'],
+    await this.connect(m, 'cli_hooks', {
+      limitations: ['a session that was already open before the hooks were installed must be restarted to be connected'],
       workspace: { base_revision: state.base_revision, branch: state.branch, preexisting_changes: state.preexisting_changes.length },
     });
     return m;

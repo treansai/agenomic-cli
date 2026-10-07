@@ -72,6 +72,8 @@ export class SessionContext {
   readonly traceId?: string;
   /** Values redacted from content before it is shipped (runner and runtime credentials). */
   readonly secrets: () => string[];
+  /** Reports a status change of the session; the daemon orders it with its other reports. */
+  reportStatus: (status: string) => void = (status) => void this.state({ status }).catch(() => undefined);
 
   constructor(api: RunnerApi, id: string, runtime: Runtime, mode: Mode, sink: EventSink, capture: Capture, workspaceRoot: string, baseRevision: string | null, traceId?: string, secrets: () => string[] = () => []) {
     this.api = api;
@@ -175,9 +177,9 @@ export class SessionContext {
         const v: Verdict = { decision: 'deny', reason: `Waiting for approval ${res.approval_id} in Agenomic; retry after it is approved`, actionId: res.action_id, ...key };
         return v;
       }
-      void this.state({ status: 'waiting_approval' }).catch(() => undefined);
+      this.reportStatus('waiting_approval');
       const resolved = await this.waitForApproval(res.action_id, res.approval_expires_at, a.signal);
-      void this.state({ status: 'running' }).catch(() => undefined);
+      this.reportStatus('running');
       this.sink.emit('approval.resolved', 'gateway', 'native', { approval_id: res.approval_id, status: resolved }, { action_id: res.action_id });
       if (resolved !== 'approved') {
         // Let the gateway record the final refusal (rejected or expired)

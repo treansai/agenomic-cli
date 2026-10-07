@@ -902,6 +902,67 @@ test('a launch whose starting report fails still starts, and is not left half ha
   });
 });
 
+test('the first connected status carries the effective mode, after the native session is registered, on launch and on resume', async () => {
+  await withHome(async () => {
+    const repo = tempRepo();
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+    cfg.runtimes.codex.executable = fakeAppServer();
+    const log: [string, any][] = [];
+    let failConnected = 1;
+    const api = new (class extends ProbeApi {
+      override async request<T = any>(method: string, p: string, opts: { body?: any } = {}): Promise<T> {
+        if (p === '/v1/coding/runner/sessions') {
+          log.push(['register', opts.body]);
+          return { session: {} } as T;
+        }
+        if (p.endsWith('/state')) {
+          // The gateway is unavailable for the first report that connects the session.
+          if (opts.body?.mode_effective && failConnected-- > 0) throw new ApiError(0, 'network', 'gateway unavailable');
+          log.push(['state', opts.body]);
+        }
+        return super.request<T>(method, p, opts);
+      }
+    })();
+    const daemon: any = new Daemon(cfg, api);
+    const session = randomUUID();
+    const command = async (kind: string, payload: unknown = {}) => {
+      const id = ulid();
+      await daemon.handleCommand({ id, kind, coding_session_id: session, payload });
+      return api.results.get(id);
+    };
+    const connectedAfterRegistration = (from: number) => {
+      const rest = log.slice(from);
+      const states = rest.filter(([k]) => k === 'state').map(([, b]) => b);
+      for (const b of states) {
+        if (b.mode_effective !== undefined) assert.notEqual(b.status, 'starting', 'never a mode while starting');
+      }
+      const first = states.findIndex((b) => b.status && b.status !== 'starting');
+      assert.ok(first >= 0, 'a connected status was reported');
+      const report = states[first];
+      assert.equal(report.status, 'running');
+      assert.equal(report.mode_effective, 'observe', 'the first connected status carries the mode');
+      assert.ok(report.protection && report.capabilities && report.limitations);
+      const at = rest.findIndex(([, b]) => b === report);
+      assert.ok(rest.slice(0, at).some(([k, b]) => k === 'register' && b.runtime_session_id === 'thread-fake'), 'registered before');
+    };
+    try {
+      const launched = await command('launch', { runtime: 'codex', workspace_id: 'w', mode: 'observe' });
+      assert.equal(launched?.status, 'applied');
+      assert.equal(launched.result.native_session_id, 'thread-fake');
+      // The connected report that failed is retried and delivered.
+      for (let i = 0; i < 50 && !log.some(([k, b]) => k === 'state' && b.mode_effective); i++) await sleep(100);
+      connectedAfterRegistration(0);
+      assert.equal((await command('stop_process'))?.status, 'applied');
+      const from = log.length;
+      assert.equal((await command('resume_session'))?.status, 'applied');
+      connectedAfterRegistration(from);
+    } finally {
+      await daemon.sessions.get(session)?.adapter?.stop();
+    }
+  });
+});
+
 test('a local Codex terminal session reports the codex:cli_hooks capabilities, validated by its own probe', async () => {
   await withHome(async () => {
     const version = codexVersion(defaultConfig('x', 'x').runtimes.codex)!;
