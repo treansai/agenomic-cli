@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { readJson, resolveExecutable, writeSecretFile } from './util.ts';
+import { absolutePath, readJson, resolveExecutable, writeSecretFile } from './util.ts';
 
 export type Mode = 'observe' | 'shadow' | 'enforce';
 
@@ -135,14 +135,18 @@ const SECRET_NAME = /KEY|TOKEN|SECRET|PASSW|CREDENTIAL|AUTH/i;
  * Server): PATH, the given base variables, the configured variables
  * passed through and the configured extra_env. Nothing else of the
  * daemon's environment (its own or the developer's credentials) reaches it.
+ * PATH keeps only its absolute directories (absolutePath), whichever set
+ * it: a relative one would resolve against the session's worktree.
  *
  * @example
  * runtimeEnv(cfg.runtimes.codex, { HOME: paths.runtimeHome('codex'), CODEX_HOME: home }); // { PATH, HOME, CODEX_HOME, ...passthrough, ...extra_env }
  */
 export function runtimeEnv(runtime: Pick<RuntimeConfig, 'env_passthrough' | 'extra_env'>, base: Record<string, string>, env: NodeJS.ProcessEnv = process.env): Record<string, string> {
-  const out: Record<string, string> = { PATH: env.PATH ?? '/usr/bin:/bin', ...base };
+  const out: Record<string, string> = { PATH: env.PATH ?? '', ...base };
   for (const k of runtime.env_passthrough) if (env[k]) out[k] = env[k]!;
-  return Object.assign(out, runtime.extra_env);
+  Object.assign(out, runtime.extra_env);
+  out.PATH = absolutePath(out.PATH);
+  return out;
 }
 
 /**

@@ -21,7 +21,7 @@ import { clean, redact } from '../src/redact.ts';
 import { protection, TOOL_IDS } from '../src/protection.ts';
 import { ProbeApi, probeConfig, probedVersion, runProbe, tempRepo } from '../src/probe.ts';
 import { isTestCommand, type SessionContext } from '../src/session.ts';
-import { log, readExecutableVersion, realPathEscapes, resolveExecutable, sleep, ulid } from '../src/util.ts';
+import { absolutePath, log, readExecutableVersion, realPathEscapes, resolveExecutable, sleep, ulid } from '../src/util.ts';
 import * as ws from '../src/workspace.ts';
 
 const tmp = (p: string) => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), p)));
@@ -1057,6 +1057,47 @@ test('a runtime executable given as a command name is looked up once on the abso
       process.chdir(cwd);
       process.env.PATH = prevPath;
     }
+  });
+});
+
+test('a runtime process gets only the absolute PATH directories, so a script interpreter is never found in a worktree', async () => {
+  assert.equal(absolutePath(['.', '', '/usr/bin', 'bin', '/bin', ''].join(path.delimiter)), ['/usr/bin', '/bin'].join(path.delimiter));
+  assert.equal(absolutePath(':.:'), ['/usr/bin', '/bin'].join(path.delimiter));
+  const env = { PATH: `:.${path.delimiter}/usr/bin${path.delimiter}` } as NodeJS.ProcessEnv;
+  assert.equal(runtimeEnv({ env_passthrough: [], extra_env: {} }, { HOME: '/h' }, env).PATH, '/usr/bin');
+  assert.equal(runtimeEnv({ env_passthrough: [], extra_env: { PATH: `bin${path.delimiter}/opt/x` } }, { HOME: '/h' }, env).PATH, '/opt/x', 'whichever set it');
+  await withHome(async () => {
+    // A runtime installed as a script run by `env`: the interpreter is looked up on PATH.
+    const repo = tempRepo();
+    const marker = path.join(tmp('agn-interp-'), 'ran');
+    fs.writeFileSync(path.join(repo, 'agn-interp'), `#!/bin/sh\ntouch ${marker}\necho 'codex-cli 6.6.6'\n`, { mode: 0o755 });
+    execFileSync('git', ['-C', repo, 'add', 'agn-interp']);
+    execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@e', 'commit', '-qm', 'interp']);
+    const exe = path.join(tmp('agn-bin-'), 'codex');
+    fs.writeFileSync(exe, '#!/usr/bin/env agn-interp\n', { mode: 0o755 });
+    const cwd = process.cwd();
+    const prevPath = process.env.PATH;
+    // An empty entry (leading, doubled or trailing colon) and `.` both mean the current directory.
+    process.env.PATH = ['', '.', prevPath, ''].join(path.delimiter);
+    process.chdir(repo);
+    try {
+      assert.equal(await readExecutableVersion(exe), null, 'the version read does not run the directory\'s interpreter');
+      const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+      cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+      cfg.runtimes.codex.executable = exe;
+      const api = new ProbeApi();
+      const daemon = new Daemon(cfg, api);
+      try {
+        await daemon.handleCommand({ id: ulid(), kind: 'launch', coding_session_id: randomUUID(), payload: { runtime: 'codex', workspace_id: 'w', mode: 'observe' } });
+        await sleep(300);
+      } finally {
+        await daemon.stop();
+      }
+    } finally {
+      process.chdir(cwd);
+      process.env.PATH = prevPath;
+    }
+    assert.equal(fs.existsSync(marker), false, 'the repository\'s interpreter never ran');
   });
 });
 

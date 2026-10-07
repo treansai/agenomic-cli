@@ -162,6 +162,23 @@ export function realPathEscapes(p: string, cwd: string, root: string): boolean {
 }
 
 /**
+ * A PATH with only its absolute directories, for every runtime process
+ * the connector starts: a relative entry (`.`, `bin`, or the empty one of
+ * `:/usr/bin` or a trailing colon, which means the current directory)
+ * would name a file in the daemon's directory when a version is read and
+ * a repository-controlled one in the session's worktree at spawn, such as
+ * the `node` of a script's `#!/usr/bin/env node`. `/usr/bin:/bin` when
+ * nothing absolute is left.
+ *
+ * @example
+ * absolutePath('.:/usr/bin::bin:'); // '/usr/bin'
+ */
+export function absolutePath(value: string | undefined = process.env.PATH): string {
+  const dirs = (value ?? '').split(path.delimiter).filter((d) => path.isAbsolute(d));
+  return dirs.length ? dirs.join(path.delimiter) : ['/usr/bin', '/bin'].join(path.delimiter);
+}
+
+/**
  * Path of an executable, looked up on PATH when it is a bare command name.
  * Only the absolute directories of PATH are searched: a relative one (`.`,
  * `bin`) would name a different file from another working directory.
@@ -171,7 +188,7 @@ export function realPathEscapes(p: string, cwd: string, root: string): boolean {
  */
 export function resolveExecutable(exe: string): string | null {
   if (exe.includes('/')) return fs.existsSync(exe) ? path.resolve(exe) : null;
-  for (const dir of (process.env.PATH ?? '').split(path.delimiter).filter((d) => path.isAbsolute(d))) {
+  for (const dir of absolutePath().split(path.delimiter)) {
     const candidate = path.join(dir, exe);
     try {
       fs.accessSync(candidate, fs.constants.X_OK);
@@ -247,9 +264,10 @@ function runVersion(file: string, timeoutMs = 10000): Promise<string | null> {
     const script = /\.[cm]?js$/.test(file);
     let child: ChildProcess;
     try {
-      // Only PATH and HOME of the daemon's environment: the runtime asked
-      // its version never sees the daemon's or the developer's credentials.
-      const env = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: os.homedir() };
+      // Only PATH (its absolute directories, absolutePath) and HOME of the
+      // daemon's environment: the runtime asked its version never sees the
+      // daemon's or the developer's credentials.
+      const env = { PATH: absolutePath(), HOME: os.homedir() };
       child = spawn(script ? process.execPath : file, script ? [file, '--version'] : ['--version'], { env, stdio: ['ignore', 'pipe', 'ignore'] });
     } catch {
       return resolve(null);

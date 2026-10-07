@@ -12,7 +12,7 @@ import { Daemon } from './daemon.ts';
 import { codexProviderToml, fakeAnthropic, fakeResponses, script, type FakeServer } from './fakes.ts';
 import { installCodex } from './hooks-install.ts';
 import { clean } from './redact.ts';
-import { sleep, ulid } from './util.ts';
+import { absolutePath, sleep, ulid } from './util.ts';
 
 /**
  * An in-memory stand-in for the Agenomic runner API used only by the
@@ -312,7 +312,7 @@ export async function probeCodexCli(fake: FakeServer, home: string, machine: Con
     const run = hooks.preToolUse
       ? await runCli(exe.endsWith('.js') ? process.execPath : exe, [...(exe.endsWith('.js') ? [exe] : []), 'exec', '--skip-git-repo-check', '-s', 'workspace-write', script(steps, 'cli probe')], {
           cwd: repo,
-          env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: codexHome, CODEX_HOME: codexHome, AGENOMIC_SCRIPTED_KEY: 'probe-not-a-key' },
+          env: { PATH: absolutePath(), HOME: codexHome, CODEX_HOME: codexHome, AGENOMIC_SCRIPTED_KEY: 'probe-not-a-key' },
           timeoutMs: 180000,
         })
       : { code: null, tail: 'error' in hooks ? hooks.error : 'codex did not report the installed PreToolUse hook as trusted' };
