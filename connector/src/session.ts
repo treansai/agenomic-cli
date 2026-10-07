@@ -185,13 +185,15 @@ export class SessionContext {
       this.mode === 'enforce'
         ? { decision: 'deny', reason: `Agenomic could not authorize this action (${why}); refused in enforce mode`, ...key }
         : { decision: 'defer', reason: `Agenomic unavailable (${why}); ${this.mode} mode leaves the decision to the runtime`, ...key };
+    // A closed context admits nothing more: its open actions were handed over.
+    const signal = a.signal ? AbortSignal.any([a.signal, this.closing.signal]) : this.closing.signal;
     let res: any;
     try {
       res = await this.api.request('POST', `/v1/coding/runner/sessions/${this.id}/authorize`, {
         body,
         timeoutMs: a.timeoutMs ?? 20000,
         retry: true,
-        signal: a.signal,
+        signal,
       });
     } catch (error) {
       log('warn', 'authorize failed', { session: this.id, error: this.cleanText(errorMessage(error), 500) });
@@ -217,7 +219,7 @@ export class SessionContext {
         return v;
       }
       this.reportStatus('waiting_approval');
-      const resolved = await this.waitForApproval(res.action_id, res.approval_expires_at, a.signal);
+      const resolved = await this.waitForApproval(res.action_id, res.approval_expires_at, signal);
       this.reportStatus('running');
       this.sink.emit('approval.resolved', 'gateway', 'native', { approval_id: res.approval_id, status: resolved }, { action_id: res.action_id });
       if (resolved !== 'approved') {

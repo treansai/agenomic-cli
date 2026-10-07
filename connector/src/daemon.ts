@@ -82,6 +82,13 @@ export function sandboxAvailable(): { ok: boolean; detail: string } {
   }
 }
 
+/** Waits for `p`, at most `ms`. */
+async function within(p: Promise<unknown>, ms: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  await Promise.race([p, new Promise<void>((resolve) => (timer = setTimeout(resolve, Math.max(0, ms))))]);
+  clearTimeout(timer);
+}
+
 /** Real path of `p`, or `p` itself when it cannot be resolved. */
 function realPath(p: string): string {
   try {
@@ -145,8 +152,9 @@ export class Daemon {
    */
   versionWaitMs = 3000;
   /**
-   * How long a stop waits for the final settlements in flight before it
-   * saves the outcomes still unacknowledged for the next start.
+   * How long a stop waits for the hook requests being answered and the
+   * final settlements in flight before it saves the outcomes still
+   * unacknowledged for the next start.
    */
   shutdownSettleMs = 10000;
   /** How long a session's final settlement keeps delivering its outcomes again (10 min). */
@@ -157,6 +165,8 @@ export class Daemon {
    * it could not deliver are retained, so that a stop saves them.
    */
   private readonly settlingContexts = new Set<SessionContext>();
+  /** Hook requests being answered, waited for by a stop. */
+  private readonly hooks = new Set<Promise<unknown>>();
   /** Saved outcomes of a previous run, not delivered yet. */
   private saved: PendingOutcome[] = [];
 
@@ -386,6 +396,12 @@ export class Daemon {
     for (const s of this.sessions.values()) {
       if (s.adapter?.alive()) await s.adapter.stop();
     }
+    const deadline = Date.now() + this.shutdownSettleMs;
+    // A hook request still being answered (an authorization, an approval
+    // being waited for) is cut by the abort and waited for, bounded, so
+    // that an action the gateway admitted meanwhile is in its context
+    // before the contexts are closed and handed over.
+    await within(Promise.allSettled([...this.hooks]), deadline - Date.now());
     // A tool still running in a session that outlives the daemon (a local
     // terminal session) can no longer be correlated once it reports: its
     // action is settled now too, as `unknown`. The final settlements (of
@@ -394,12 +410,7 @@ export class Daemon {
     // instead of being lost with the process.
     for (const s of this.sessions.values()) this.settleFinal(s.ctx, 'connector stopped before the tool reported');
     const contexts = new Set([...this.sessions.values()].map((s) => s.ctx).concat([...this.settlingContexts]));
-    let timer: NodeJS.Timeout | undefined;
-    await Promise.race([
-      Promise.all([...contexts].map((c) => c.finalsSettled())),
-      new Promise<void>((resolve) => (timer = setTimeout(resolve, this.shutdownSettleMs))),
-    ]);
-    clearTimeout(timer);
+    await within(Promise.all([...contexts].map((c) => c.finalsSettled())), deadline - Date.now());
     const left = [...contexts].flatMap((c) => c.close('connector stopped before the tool reported'));
     const keep = this.saved.filter((o) => !left.some((l) => l.action_id === o.action_id));
     if (left.length > 0) log('warn', 'action outcomes saved for the next start', { actions: left.map((o) => o.action_id) });
@@ -838,7 +849,18 @@ export class Daemon {
     fs.chmodSync(sock, 0o600);
   }
 
-  private async onLocal(req: any): Promise<unknown> {
+  /** Answers a hook request; a stop waits for the requests being answered. */
+  private onLocal(req: any): Promise<unknown> {
+    // A stopping daemon admits nothing more: the hook's fail mode applies.
+    if (this.abort.signal.aborted) return Promise.reject(new Error('the connector is stopping'));
+    const reply = this.answerHook(req);
+    this.hooks.add(reply);
+    const drop = () => this.hooks.delete(reply);
+    reply.then(drop, drop);
+    return reply;
+  }
+
+  private async answerHook(req: any): Promise<unknown> {
     if (req?.op !== 'hook') throw new Error('unsupported request');
     const runtime: Runtime = req.runtime === 'codex' ? 'codex' : 'claude_code';
     const input = req.input ?? {};
@@ -876,6 +898,7 @@ export class Daemon {
           phase: 'pre_tool',
           turnId: input.turn_id,
           waitForApproval: true,
+          signal: this.abort.signal,
         });
         if (v.decision === 'deny') {
           return { output: { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: `Agenomic: ${v.reason}` } } };

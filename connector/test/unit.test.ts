@@ -1986,6 +1986,44 @@ test('a stop settles the actions still running in a local session, now or on the
   });
 });
 
+/** A gateway slow to authorize, that answers even a request the connector cut. */
+class SlowAuthorizeApi extends FlakyReportApi {
+  signals: (AbortSignal | undefined)[] = [];
+  override async request<T = any>(method: string, p: string, opts: { body?: any; signal?: AbortSignal } = {}): Promise<T> {
+    if (p.endsWith('/authorize')) {
+      this.signals.push(opts.signal);
+      await sleep(200);
+    }
+    return super.request<T>(method, p, opts);
+  }
+}
+
+test('a stop waits for the hook authorizations in flight, cuts them, and hands over what they admitted', async () => {
+  await withHome(async () => {
+    const repo = tempRepo();
+    const cfg = defaultConfig('http://127.0.0.1:9', 'unit');
+    cfg.workspaces = [{ id: 'w', name: 'w', path: repo }];
+    const api = new SlowAuthorizeApi();
+    const daemon: any = new Daemon(cfg, api);
+    daemon.shutdownSettleMs = 2000;
+    const hook = (input: Record<string, unknown>) => daemon.onLocal({ op: 'hook', runtime: 'claude_code', input: { session_id: 'cli-12', cwd: repo, ...input } });
+    await hook({ hook_event_name: 'SessionStart' });
+    const pre = hook({ hook_event_name: 'PreToolUse', tool_use_id: 'toolu_1', tool_name: 'Bash', tool_input: { command: 'sleep 99' } });
+    while (api.signals.length < 1) await sleep(5);
+    await daemon.stop();
+    assert.equal(api.signals[0]?.aborted, true, 'the authorization is cut by the stop');
+    assert.deepEqual(await pre, {}, 'the hook was answered before the stop returned');
+    // The gateway admitted the action anyway: it is handed over, not left open.
+    const admitted = api.authorizations.length;
+    assert.equal(admitted, 1);
+    const saved = JSON.parse(fs.readFileSync(paths.outcomes(), 'utf8'));
+    assert.deepEqual(saved.map((o: any) => o.outcome), ['unknown'], 'the action admitted during the stop is saved');
+    // A hook request reaching a stopping daemon is refused (the hook's fail mode applies).
+    await assert.rejects(hook({ hook_event_name: 'PreToolUse', tool_use_id: 'toolu_2', tool_name: 'Bash', tool_input: { command: 'ls' } }), /stopping/);
+    assert.equal(api.authorizations.length, admitted);
+  });
+});
+
 test('a runtime failure that quotes a runtime credential is redacted before it is logged or reported', async () => {
   await withHome(async () => {
     const passthrough = 'corp-provider-credential-7f3a9b2c4d5e';
