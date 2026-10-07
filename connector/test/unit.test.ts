@@ -1047,11 +1047,16 @@ test('protection lists tool ids of the closed vocabulary; mechanisms go to notes
       assert.deepEqual([...p.protected, ...p.not_covered].sort(), [...VOCABULARY].sort(), `${at}: every id is either protected or not covered`);
       assert.ok(p.notes.length <= 32 && p.notes.every((n) => typeof n === 'string' && n.length > 0 && n.length <= 300), `${at}: notes`);
       assert.ok(p.limitations.every((n) => typeof n === 'string' && n.length > 0), `${at}: limitations`);
-      if (mode === 'observe') assert.deepEqual(p.protected, [], `${at}: observe protects nothing`);
+      if (mode !== 'enforce') assert.deepEqual(p.protected, [], `${at}: only enforce gates calls`);
     }
   }
   assert.deepEqual(protection('claude_code', 'sdk', 'enforce').protected, VOCABULARY, 'every Claude Code tool goes through PreToolUse');
-  assert.deepEqual(protection('claude_code', 'sdk', 'shadow').protected, VOCABULARY);
+  const shadow = protection('claude_code', 'sdk', 'shadow');
+  assert.deepEqual(shadow.protected, [], 'shadow records would-be decisions, it gates nothing');
+  assert.deepEqual(shadow.not_covered, VOCABULARY);
+  assert.ok(shadow.notes.includes('shadow evaluates every tool call before it runs, without gating it'), 'what shadow evaluates is described in notes');
+  assert.ok(protection('codex', 'app_server', 'shadow').notes.some((n) => n.startsWith('shadow evaluates coding.shell.exec, coding.git.read')));
+  assert.ok(!protection('claude_code', 'sdk', 'enforce').notes.some((n) => n.startsWith('shadow evaluates')));
   const codex = protection('codex', 'app_server', 'enforce');
   for (const id of ['coding.shell.interactive_input', 'coding.mcp.call', 'coding.web.search', 'coding.subagent.spawn', 'coding.unknown', 'coding.fs.read']) {
     assert.ok(codex.not_covered.includes(id as any), `codex enforce: ${id} is not re-checked`);

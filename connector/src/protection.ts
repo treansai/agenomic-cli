@@ -25,13 +25,15 @@ export type ToolId = (typeof TOOL_IDS)[number];
 export type Surface = 'sdk' | 'app_server' | 'cli_hooks';
 
 /**
- * What a session's decision point covers, reported in its state:
- * `protected` lists the tool ids every native route of which passes an
- * Agenomic pre-execution decision (binding in enforce, recorded as
- * would_have_been in shadow), `not_covered` the others. `notes` describe
- * the mechanisms behind the coverage and `limitations` what is not
- * covered; neither changes the badge, which only reads `protected`
- * together with the effective mode.
+ * What a session's decision point covers, reported in its state. Only
+ * enforce gates calls: `protected` lists the tool ids every native route
+ * of which passes a binding Agenomic pre-execution decision in enforce,
+ * `not_covered` the others. In observe and shadow nothing is gated, so
+ * `protected` is empty and every tool id is `not_covered`; what shadow
+ * evaluates before a call runs (recorded as would_have_been) is described
+ * in `notes`. `notes` describe the mechanisms behind the coverage and
+ * `limitations` what is not covered; neither changes the badge, which
+ * only reads `protected` together with the effective mode.
  */
 export interface Protection {
   protected: ToolId[];
@@ -55,23 +57,31 @@ const COOPERATIVE = [
   'no Agenomic sandbox around a developer terminal session',
 ];
 
-function split(covered: ToolId[], notes: string[], limitations: string[]): Protection {
-  const set = new Set(covered);
+/**
+ * The coverage of a decision point as reported in `mode`: `covered` is
+ * protected in enforce only. In shadow the same tool ids are evaluated
+ * before they run without being gated, which a note says.
+ */
+function split(mode: Mode, covered: ToolId[], notes: string[], limitations: string[]): Protection {
+  const set = new Set(mode === 'enforce' ? covered : []);
+  const evaluated = mode === 'shadow' && covered.length
+    ? [`shadow evaluates ${covered.length === TOOL_IDS.length ? 'every tool call' : covered.join(', ')} before it runs, without gating it`]
+    : [];
   return {
     protected: TOOL_IDS.filter((id) => set.has(id)),
     not_covered: TOOL_IDS.filter((id) => !set.has(id)),
-    notes,
+    notes: [...notes, ...evaluated],
     limitations,
   };
 }
 
 export function protection(runtime: Runtime, surface: Surface, mode: Mode): Protection {
   if (mode === 'observe') {
-    return split([], ['native protections remain active (sandbox, native permission rules)'], ['observe mode: Agenomic records, it adds no blocking']);
+    return split(mode, [], ['native protections remain active (sandbox, native permission rules)'], ['observe mode: Agenomic records, it adds no blocking']);
   }
   const shadow = mode === 'shadow' ? [SHADOW_NOTE] : [];
   if (runtime === 'claude_code' && surface === 'sdk') {
-    return split([...TOOL_IDS], [
+    return split(mode, [...TOOL_IDS], [
       'pre-tool decision on every native tool call (PreToolUse callback and canUseTool)',
       'Bash writes limited to the session worktree by the Claude Code sandbox',
       'network limited to the allowed domains by the sandbox proxy',
@@ -85,12 +95,12 @@ export function protection(runtime: Runtime, surface: Surface, mode: Mode): Prot
   }
   if (runtime === 'claude_code') {
     // cli_hooks: the PreToolUse command hook matches every tool.
-    return split([...TOOL_IDS], ['pre-tool decision on every native tool call from the PreToolUse command hook of this session', ...shadow], COOPERATIVE);
+    return split(mode, [...TOOL_IDS], ['pre-tool decision on every native tool call from the PreToolUse command hook of this session', ...shadow], COOPERATIVE);
   }
   const notCheckedByHook = 'view_image, write_stdin (input to a running process), MCP, web search and subagent tool calls are not checked by the Codex PreToolUse hook';
   if (surface === 'app_server') {
     const enforce = mode === 'enforce';
-    return split(enforce ? [...CODEX_SHELL, ...CODEX_PATCH] : CODEX_SHELL, [
+    return split(mode, enforce ? [...CODEX_SHELL, ...CODEX_PATCH] : CODEX_SHELL, [
       'pre-tool decision on shell calls (trusted PreToolUse hook)',
       ...(enforce
         ? [
@@ -108,7 +118,7 @@ export function protection(runtime: Runtime, surface: Surface, mode: Mode): Prot
     ]);
   }
   // Codex cli_hooks: shell calls only, nothing answers apply_patch.
-  return split(CODEX_SHELL, ['pre-tool decision on shell calls from the PreToolUse command hook of this session', ...shadow], [
+  return split(mode, CODEX_SHELL, ['pre-tool decision on shell calls from the PreToolUse command hook of this session', ...shadow], [
     ...COOPERATIVE,
     notCheckedByHook,
     'apply_patch edits get no decision before they apply',
