@@ -640,6 +640,42 @@ test('workspace: a change set larger than a listing reads lists the files that f
   }
 });
 
+test('workspace: an untracked listing or a status larger than any buffer is read only in part; the diff and the changes are still captured', () => {
+  const repo = tempRepo();
+  const base = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  fs.writeFileSync(path.join(repo, 'README.md'), 'probe\nchanged\n');
+  fs.writeFileSync(path.join(repo, 'real-untracked.txt'), 'kept\n');
+  // A git whose untracked listing and status are 20 MiB, past the 16 MiB a
+  // buffered read accepted (a huge generated tree, without making it).
+  const realGit = resolveExecutable('git')!;
+  const bin = tmp('agn-git-stub-');
+  const name = 'generated/' + 'n'.repeat(100);
+  fs.writeFileSync(path.join(bin, 'git'), [
+    '#!/bin/sh',
+    'for a in "$@"; do case "$a" in --others) others=1;; -z) z=1;; status) status=1;; esac; done',
+    `if [ -n "$others" ] && [ -n "$z" ]; then "${realGit}" "$@"; yes '${name}' | head -c 20971520 | tr '\\n' '\\000'; exit 0; fi`,
+    `if [ -n "$status" ]; then "${realGit}" "$@"; yes '?? ${name}' | head -c 20971520; exit 0; fi`,
+    `exec "${realGit}" "$@"`,
+  ].join('\n') + '\n', { mode: 0o755 });
+  const prevPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${prevPath}`;
+  try {
+    const snap = ws.snapshot(repo, base, true);
+    assert.equal(snap.diff_error, undefined, String(snap.diff_error));
+    assert.match(snap.diff as string, /^\+changed$/m, 'the tracked change is captured');
+    assert.match(snap.diff as string, /\+\+\+ b\/real-untracked\.txt\n@@ -0,0 \+1 @@\n\+kept/, 'the untracked files listed first are captured');
+    assert.equal(snap.truncated, true, 'a listing read in part marks the diff truncated');
+    assert.ok((snap.diff as string).length <= 256 * 1024);
+    const state = ws.inspect(repo);
+    assert.equal(state.preexisting_changes.length, 500, 'a huge status still lists the first changes');
+    assert.ok(state.preexisting_changes.includes('README.md'));
+  } finally {
+    process.env.PATH = prevPath;
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(bin, { recursive: true, force: true });
+  }
+});
+
 test('workspace: a verbose stderr of a diff that succeeds is not read as a cut diff', () => {
   const repo = tempRepo();
   const git = (...a: string[]) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8' });
