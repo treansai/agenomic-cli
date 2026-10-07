@@ -803,6 +803,43 @@ test('tool events carry the correlation key of their coding action (native_reque
   });
 });
 
+/** A gateway whose outcome reports fail (beyond the retry window) until it recovers. */
+class FlakyReportApi extends RecordingApi {
+  down = true;
+  override async request<T = any>(method: string, p: string, opts: { body?: any } = {}): Promise<T> {
+    if (p.endsWith('/report') && this.down) throw new ApiError(0, 'network', 'gateway unavailable');
+    return super.request<T>(method, p, opts);
+  }
+}
+
+test('an outcome whose report fails is retained and delivered when the turn settles, not replaced by unknown', async () => {
+  await withHome(async () => {
+    const api = new FlakyReportApi();
+    const daemon = new Daemon(defaultConfig('http://127.0.0.1:9', 'unit'), api);
+    const m = (daemon as any).manage(randomUUID(), 'claude_code', 'launched', 'enforce', { conversation: false, commands: false, diffs: false, outputs: false }, tmp('agn-wt-'), null);
+    const ctx: SessionContext = m.ctx;
+    const done = await ctx.authorize({ nativeId: 'toolu_1', tool: 'Read', input: { file_path: 'a' }, context: {}, phase: 'pre_tool', waitForApproval: false });
+    const broke = await ctx.authorize({ nativeId: 'toolu_2', tool: 'Bash', input: { command: 'false' }, context: {}, phase: 'pre_tool', waitForApproval: false });
+    const lost = await ctx.authorize({ nativeId: 'toolu_3', tool: 'Bash', input: { command: 'sleep 9' }, context: {}, phase: 'pre_tool', waitForApproval: false });
+    await ctx.report(done.actionId, 'completed', { duration_ms: 5 });
+    await ctx.report(broke.actionId, 'failed', { exit_code: 1 });
+    assert.deepEqual(api.reports, [], 'nothing reached the gateway while it was down');
+    // Still down: the settlement fails too, and loses nothing.
+    await ctx.settleOpen('turn ended before the tool reported');
+    assert.deepEqual(api.reports, []);
+    api.down = false;
+    await ctx.settleOpen('turn ended before the tool reported');
+    const outcome = (id?: string) => api.reports.filter((r) => r.action === id).map((r) => r.outcome);
+    assert.deepEqual(outcome(done.actionId), ['completed'], 'the real outcome is delivered once the gateway recovers');
+    assert.deepEqual(outcome(broke.actionId), ['failed']);
+    assert.deepEqual(outcome(lost.actionId), ['unknown'], 'an action that never reported settles as unknown');
+    // Acknowledged outcomes are not reported again.
+    await ctx.settleOpen('session ended before the tool reported');
+    assert.equal(api.reports.length, 3);
+    await ctx.sink.close();
+  });
+});
+
 test('local hook sessions: tool events correlated; a launched session\'s hooks do not report a call twice', async () => {
   await withHome(async () => {
     const repo = tempRepo();

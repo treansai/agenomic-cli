@@ -1,4 +1,4 @@
-import type { RunnerApi } from './api.ts';
+import { ApiError, type RunnerApi } from './api.ts';
 import type { Capture, Mode } from './config.ts';
 import type { CodingEvent, EventSink } from './events.ts';
 import { clean } from './redact.ts';
@@ -52,8 +52,12 @@ export class SessionContext {
   private readonly verdicts = new Map<string, Verdict>();
   /** A call decided under another native request id (a Codex approval id). */
   private readonly aliases = new Map<string, string>();
-  /** Admitted actions whose outcome was not reported yet. */
-  private readonly open = new Set<string>();
+  /**
+   * Admitted actions whose outcome the gateway has not acknowledged yet,
+   * with the outcome observed for them when its report failed, so that
+   * settling them later delivers that outcome instead of a generic one.
+   */
+  private readonly open = new Map<string, Outcome | undefined>();
 
   readonly api: RunnerApi;
   readonly id: string;
@@ -193,7 +197,7 @@ export class SessionContext {
       ...key,
     };
     this.verdicts.set(a.nativeId, v);
-    if (v.decision !== 'deny' && v.actionId) this.open.add(v.actionId);
+    if (v.decision !== 'deny' && v.actionId && !this.open.has(v.actionId)) this.open.set(v.actionId, undefined);
     return v;
   }
 
@@ -213,34 +217,68 @@ export class SessionContext {
     return 'expired';
   }
 
-  async report(actionId: string | undefined, outcome: 'started' | 'completed' | 'failed' | 'unknown', detail: { exit_code?: number | null; duration_ms?: number; summary?: string } = {}): Promise<void> {
+  async report(actionId: string | undefined, outcome: OutcomeKind, detail: OutcomeDetail = {}): Promise<void> {
     if (!actionId) return;
-    if (outcome !== 'started') this.open.delete(actionId);
+    if (outcome === 'started') {
+      await this.send(actionId, outcome, detail);
+      return;
+    }
+    // An outcome is retained until the gateway acknowledges it: a report
+    // that fails (the gateway unavailable beyond the retry window) is
+    // delivered again when the turn or the session settles its actions.
+    const entry: Outcome = { outcome, detail };
+    this.open.set(actionId, entry);
+    entry.sending = this.send(actionId, outcome, detail).then((ok) => {
+      entry.sending = undefined;
+      if (ok && this.open.get(actionId) === entry) this.open.delete(actionId);
+    });
+    await entry.sending;
+  }
+
+  /** Whether the outcome is settled on the gateway (acknowledged, or refused for good). */
+  private async send(actionId: string, outcome: OutcomeKind, detail: OutcomeDetail): Promise<boolean> {
     try {
       await this.api.request('POST', `/v1/coding/runner/sessions/${this.id}/actions/${actionId}/report`, {
         body: { outcome, exit_code: detail.exit_code ?? undefined, duration_ms: detail.duration_ms, summary: detail.summary ? clean(detail.summary, 400) : undefined },
         retry: true,
         timeoutMs: 15000,
       });
+      return true;
     } catch (error) {
       log('warn', 'action report failed', { session: this.id, action: actionId, error: errorMessage(error) });
+      // A refusal of the report itself will not change on a retry.
+      return refused(error);
     }
   }
 
   /**
-   * Report every admitted action still without an outcome as `unknown`
-   * (an interrupted turn, a stopped process), so that the gateway settles
-   * them instead of leaving them pending.
+   * Report every admitted action still without an acknowledged outcome:
+   * the outcome observed for it when its report failed, otherwise
+   * `unknown` (an interrupted turn, a stopped process), so that the
+   * gateway settles them instead of leaving them pending. A report in
+   * flight is awaited rather than duplicated; an action whose report
+   * fails again stays open for the next settlement.
    */
   async settleOpen(summary: string): Promise<void> {
-    const ids = [...this.open];
-    this.open.clear();
-    await Promise.all(ids.map((id) => this.report(id, 'unknown', { summary })));
+    await Promise.all([...this.open].map(async ([id, retained]) => {
+      if (retained?.sending) await retained.sending;
+      if (!this.open.has(id) || this.open.get(id) !== retained) return;
+      await (retained ? this.report(id, retained.outcome, retained.detail) : this.report(id, 'unknown', { summary }));
+    }));
   }
 
   async state(update: Record<string, unknown>): Promise<any> {
     return this.api.request('POST', `/v1/coding/runner/sessions/${this.id}/state`, { body: update, retry: true, timeoutMs: 15000 });
   }
+}
+
+type OutcomeKind = 'started' | 'completed' | 'failed' | 'unknown';
+type OutcomeDetail = { exit_code?: number | null; duration_ms?: number; summary?: string };
+type Outcome = { outcome: OutcomeKind; detail: OutcomeDetail; sending?: Promise<void> };
+
+/** A report the gateway answered with a client error: retrying it cannot succeed. */
+function refused(error: unknown): boolean {
+  return error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
 }
 
 export function commandText(tool: string, input: unknown, secrets: string[] = []): string | undefined {
