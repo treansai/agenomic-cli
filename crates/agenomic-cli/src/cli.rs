@@ -2093,7 +2093,7 @@ pub struct KnowledgeExportArgs {
     pub kb_id: String,
     #[arg(
         long,
-        help = "Version: 3, v3, published or draft (default: the server's choice)"
+        help = "Version: 3, v3 or published; draft or no version exports the working set"
     )]
     pub version: Option<String>,
     #[arg(short = 'o', long = "output", help = "JSON file to write")]

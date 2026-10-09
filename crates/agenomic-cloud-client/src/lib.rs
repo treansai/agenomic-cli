@@ -10,6 +10,8 @@ use agenomic_core::{io_at, CliError, CliResult};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 
+const RETRY_BACKOFFS_MS: [u64; 3] = [200, 800, 3200];
+
 /// HTTP client for Agenomic Cloud.
 pub struct CloudClient {
     http: reqwest::Client,
@@ -409,12 +411,19 @@ impl CloudClient {
         .await
     }
 
-    async fn try_send_with_retry<F, Fut>(&self, mut build: F) -> CliResult<reqwest::Response>
+    async fn try_send_with_retry<F, Fut>(&self, build: F) -> CliResult<reqwest::Response>
     where
         F: FnMut() -> Fut,
         Fut: std::future::Future<Output = CliResult<reqwest::RequestBuilder>>,
     {
-        let backoffs = [200u64, 800, 3200];
+        self.try_send(&RETRY_BACKOFFS_MS, build).await
+    }
+
+    async fn try_send<F, Fut>(&self, backoffs: &[u64], mut build: F) -> CliResult<reqwest::Response>
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = CliResult<reqwest::RequestBuilder>>,
+    {
         let mut attempt = 0usize;
         loop {
             let req = build().await?;
@@ -1573,10 +1582,12 @@ impl CloudClient {
         path: &str,
         body: KnowledgeBody<'_>,
         if_match: Option<u64>,
+        retry: bool,
     ) -> CliResult<CloudResponse> {
         let url = self.url(path);
+        let backoffs: &[u64] = if retry { &RETRY_BACKOFFS_MS } else { &[] };
         let resp = self
-            .try_send_with_retry(|| {
+            .try_send(backoffs, || {
                 let method = method.clone();
                 let url = url.clone();
                 async move {
@@ -1640,7 +1651,7 @@ impl CloudClient {
         if_match: Option<u64>,
     ) -> CliResult<serde_json::Value> {
         let response = self
-            .knowledge_send(method.clone(), path, body, if_match)
+            .knowledge_send(method.clone(), path, body, if_match, true)
             .await?;
         json_body(&method, path, &response)
     }
@@ -1741,13 +1752,18 @@ impl CloudClient {
         kb_id: &str,
         body: &serde_json::Value,
     ) -> CliResult<serde_json::Value> {
-        self.knowledge_json(
-            reqwest::Method::POST,
-            &knowledge_path(kb_id, "/answer"),
-            KnowledgeBody::Json(body),
-            None,
-        )
-        .await
+        let path = knowledge_path(kb_id, "/answer");
+        let method = reqwest::Method::POST;
+        let response = self
+            .knowledge_send(
+                method.clone(),
+                &path,
+                KnowledgeBody::Json(body),
+                None,
+                false,
+            )
+            .await?;
+        json_body(&method, &path, &response)
     }
 
     pub async fn list_knowledge_versions(
@@ -1864,7 +1880,7 @@ impl CloudClient {
         let path = path_with_query(&knowledge_path(kb_id, "/export"), &pairs);
         let method = reqwest::Method::GET;
         let response = self
-            .knowledge_send(method.clone(), &path, KnowledgeBody::Empty, None)
+            .knowledge_send(method.clone(), &path, KnowledgeBody::Empty, None, true)
             .await?;
         let value = json_body(&method, &path, &response)?;
         Ok((value, response.bytes))
@@ -2058,6 +2074,75 @@ mod tests {
         let c = CloudClient::new(server.uri(), SecretString::new("bad".into()));
         let r = c.whoami().await;
         assert!(matches!(r, Err(CliError::AuthFailed)));
+    }
+
+    #[tokio::test]
+    async fn knowledge_answer_is_sent_once_on_ambiguous_failures() {
+        for status in [500u16, 502, 503, 504] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/v1/knowledge-bases/kb_x/answer"))
+                .respond_with(ResponseTemplate::new(status))
+                .expect(1)
+                .mount(&server)
+                .await;
+            let c = CloudClient::new(server.uri(), SecretString::new("s".into()));
+            let answered = c
+                .answer_knowledge("kb_x", &serde_json::json!({ "query": "refund?" }))
+                .await;
+            assert!(answered.is_err(), "{status}");
+            server.verify().await;
+        }
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/knowledge-bases/kb_x/answer"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(Duration::from_secs(2))
+                    .set_body_json(serde_json::json!({ "answer": "late" })),
+            )
+            .mount(&server)
+            .await;
+        let c = CloudClient {
+            http: reqwest::Client::builder()
+                .timeout(Duration::from_millis(200))
+                .build()
+                .unwrap(),
+            endpoint: server.uri(),
+            api_key: SecretString::new("s".into()),
+        };
+        let answered = c
+            .answer_knowledge("kb_x", &serde_json::json!({ "query": "refund?" }))
+            .await;
+        assert!(
+            matches!(answered, Err(CliError::Network(_))),
+            "{answered:?}"
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn knowledge_reads_still_retry() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/knowledge-bases/kb_x"))
+            .respond_with(ResponseTemplate::new(503).insert_header("retry-after", "0"))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/knowledge-bases/kb_x"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "knowledge_base": { "kb_id": "kb_x" } })),
+            )
+            .mount(&server)
+            .await;
+        let c = CloudClient::new(server.uri(), SecretString::new("s".into()));
+        let base = c.get_knowledge_base("kb_x").await.unwrap();
+        assert_eq!(base["knowledge_base"]["kb_id"], "kb_x");
+        assert_eq!(server.received_requests().await.unwrap().len(), 2);
     }
 
     #[tokio::test]

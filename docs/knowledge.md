@@ -121,7 +121,9 @@ agenomic knowledge answer kb_customer_support "How long is the refund window?"
   returned section.
 - `answer` (`POST .../answer`) prints the grounded answer, or
   `abstained: <reason>`, then the evidence with the cited items, the
-  conflicts the server detected and the invalid citations.
+  conflicts the server detected and the invalid citations. Each answer
+  runs and bills a model call, so the client sends it once: a network
+  error or a 5xx is reported (exit 6) and never retried.
 
 Scores are rank derived, not probabilities. Retrieved text is untrusted
 data: in human output every control character and invisible formatting
@@ -206,8 +208,11 @@ agenomic knowledge export kb_customer_support --version 3 -o kb.json
 agenomic knowledge import kb.json --kb-id kb_customer_support_copy --name "Customer Support (copy)"
 ```
 
-`export` reads `GET /v1/knowledge-bases/{kb_id}/export` (with
-`?version=` when `--version` is given). The server answers the
+`export` reads `GET /v1/knowledge-bases/{kb_id}/export`. `--version 3`
+(or `v3`) sends `?version=3` and `--version published` sends
+`?version=published`; without `--version`, or with `--version draft`,
+the command sends no `version` and the server exports the working set.
+The server answers the
 `agenomic.knowledge_export/v1` JSON document as an attachment; the
 command checks that it is a JSON object and writes the response body to
 the file byte for byte.
@@ -259,7 +264,7 @@ message and details, for example
 | 1 | Invalid argument (an import file above 17 MiB included), a failed or cancelled job with `--wait`, a failed `version verify`; a 400, 404 or 422 from the cloud |
 | 3 | A local file could not be read or written |
 | 5 | Missing credentials, a 401 or 403 from the cloud (for example `session_required`) |
-| 6 | Network error, a 5xx from the cloud after retries, a `--wait` timeout |
+| 6 | Network error, a 5xx from the cloud after retries (at once for `answer`), a `--wait` timeout |
 | 21 | A 409 from the cloud, for example `knowledge_publication_conflict` |
 
 ## Limits of this version

@@ -145,6 +145,13 @@ impl Selector {
             Self::Draft => "draft".to_string(),
         }
     }
+
+    fn export_param(self) -> Option<String> {
+        match self {
+            Self::Draft => None,
+            other => Some(other.param()),
+        }
+    }
 }
 
 fn parse_version(text: &str) -> CliResult<Selector> {
@@ -1479,7 +1486,7 @@ fn kb_export(
     let (document, bytes) = cloud.block(
         cloud
             .client
-            .export_knowledge_base(kb_id, selector.map(Selector::param).as_deref()),
+            .export_knowledge_base(kb_id, selector.and_then(Selector::export_param).as_deref()),
     )?;
     if !document.is_object() {
         return Err(CliError::Network(

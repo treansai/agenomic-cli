@@ -1320,6 +1320,45 @@ async fn export_then_import_round_trips_the_document() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn export_sends_published_and_maps_draft_to_the_working_set() {
+    let server = MockServer::start().await;
+    let env = Env::cloud(&server);
+    let export = json!({
+        "schema": "agenomic.knowledge_export/v1",
+        "knowledge_base": { "kb_id": KB, "name": "Customer Support" }
+    });
+    Mock::given(method("GET"))
+        .and(path(format!("{KB_PATH}/export")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(export))
+        .expect(3)
+        .mount(&server)
+        .await;
+    for (version, file) in [
+        (Some("published"), "published.json"),
+        (Some("draft"), "draft.json"),
+        (None, "working.json"),
+    ] {
+        let mut args = vec!["knowledge", "export", KB, "-o", file, "--json"];
+        if let Some(version) = version {
+            args.extend(["--version", version]);
+        }
+        let output = env.run(&args);
+        assert_exit(&output, 0);
+        assert_eq!(
+            json_out(&output)["version"],
+            version.map_or(Value::Null, Value::from)
+        );
+    }
+    server.verify().await;
+    let received = server.received_requests().await.unwrap();
+    let queries: Vec<Option<&str>> = requests_to(&received, &format!("{KB_PATH}/export"))
+        .iter()
+        .map(|request| request.url.query())
+        .collect();
+    assert_eq!(queries, vec![Some("version=published"), None, None]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn import_refuses_files_above_17_mib_before_sending() {
     let server = MockServer::start().await;
     let env = Env::cloud(&server);

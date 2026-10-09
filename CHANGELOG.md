@@ -61,8 +61,11 @@ All notable changes to `agenomic-cli` are documented here. Format follows
   polls the ingestion jobs and fails when one fails. `version create`
   sends `expected_draft_revision`; `publish` and `rollback` read the
   `publication_generation` first and send it in `If-Match`, and a 409
-  exits 21 with a hint. `export` writes the `agenomic.knowledge_export/v1`
-  document byte for byte and `import` sends a file back unchanged as the
+  exits 21 with a hint. `answer` is sent once and never retried, since
+  each call runs and bills a model call. `export` writes the
+  `agenomic.knowledge_export/v1` document byte for byte (`--version` sends
+  a number or `published`; `draft` or no `--version` exports the working
+  set) and `import` sends a file back unchanged as the
   request body (`kb_id` and `name` as query parameters), refusing files
   above the server's 17 MiB limit before sending. `--json` prints the raw
   responses. Retrieved text is printed without control or invisible

@@ -429,7 +429,8 @@ timeout.
 #### `agenomic knowledge import <FILE> [--kb-id KB_ID] [--name NAME]`
 
 `export` writes the `agenomic.knowledge_export/v1` document of
-`GET .../export[?version=N]` byte for byte. `import` sends the file's
+`GET .../export[?version=N|published]` byte for byte; `--version draft`
+or no `--version` exports the working set. `import` sends the file's
 bytes unchanged as the `application/json` body of
 `POST /v1/knowledge-bases/import[?kb_id=...&name=...]` and prints the
 new knowledge base with the counts of imported documents and enqueued
