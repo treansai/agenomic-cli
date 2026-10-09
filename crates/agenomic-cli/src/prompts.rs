@@ -23,20 +23,20 @@ use crate::commands::{cloud_client_from_profile, print_value};
 
 const MAX_PAGES: usize = 1000;
 
-struct Cloud {
-    client: CloudClient,
+pub(crate) struct Cloud {
+    pub(crate) client: CloudClient,
     runtime: tokio::runtime::Runtime,
 }
 
 impl Cloud {
-    fn connect(profile: Option<&str>) -> CliResult<Self> {
+    pub(crate) fn connect(profile: Option<&str>) -> CliResult<Self> {
         let client = cloud_client_from_profile(profile)?;
         let runtime =
             tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
         Ok(Self { client, runtime })
     }
 
-    fn block<T>(&self, future: impl Future<Output = CliResult<T>>) -> CliResult<T> {
+    pub(crate) fn block<T>(&self, future: impl Future<Output = CliResult<T>>) -> CliResult<T> {
         self.runtime.block_on(future)
     }
 
@@ -1310,7 +1310,7 @@ fn channels_hand_off(
     Ok(ExitCode::Success)
 }
 
-fn cell(value: Option<&Value>) -> String {
+pub(crate) fn cell(value: Option<&Value>) -> String {
     match value {
         None | Some(Value::Null) => "-".to_string(),
         Some(Value::String(text)) => text.clone(),
@@ -1318,11 +1318,11 @@ fn cell(value: Option<&Value>) -> String {
     }
 }
 
-fn compact(value: &Value) -> String {
+pub(crate) fn compact(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_default()
 }
 
-fn print_table(headers: &[&str], rows: &[Vec<String>]) {
+pub(crate) fn print_table(headers: &[&str], rows: &[Vec<String>]) {
     let mut widths: Vec<usize> = headers
         .iter()
         .map(|header| header.chars().count())

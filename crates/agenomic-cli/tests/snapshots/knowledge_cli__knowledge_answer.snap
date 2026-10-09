@@ -1,0 +1,13 @@
+---
+source: crates/agenomic-cli/tests/knowledge_cli.rs
+expression: stdout(&output)
+---
+Customers can request a refund within 14 days [e1].
+
+EVIDENCE  CITED  RISK    PATH                           HEADING
+e1        yes    low     faq/refunds-and-returns.md     Refunds and Returns / Refund Policy
+e2        -      medium  faq/legacy-loyalty-program.md  Legacy Loyalty Program / Points Refunds
+conflict numeric_mismatch between e1, e2: The evidence gives different refund windows: 14 days (e1) and 30 days (e2). (heuristic)
+invalid citations: e4
+model: support-model-1
+retrieval kret_01jb3m5q7s9v1x3z5b7d9f0003: kb_customer_support v3, hybrid

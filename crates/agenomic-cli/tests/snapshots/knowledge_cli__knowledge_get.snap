@@ -1,0 +1,14 @@
+---
+source: crates/agenomic-cli/tests/knowledge_cli.rs
+expression: stdout(&output)
+---
+kb_customer_support: Customer Support
+uri:         kb://0b6c2f1e-7a44-4c8e-9f1d-2a3b4c5d6e7f/kb_customer_support
+status:      active
+health:      review_required (version_awaiting_approval)
+published:   v3 (approved) sha256:3333333333333333333333333333333333333333333333333333333333333333
+latest:      v4
+draft:       revision 61
+publication: generation 4
+documents:   7 (41 sections, 14920 tokens)
+jobs:        1 pending, 0 failed

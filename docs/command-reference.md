@@ -29,12 +29,13 @@ Every `agenomic` command, their flags, and exit codes.
 | 16 | OsPolicyViolation | A Rego policy gate denied `run`/`policy eval`, or the Tool Boundary Gate blocked a tool call |
 | 18 | ToolBoundaryReviewRequired | `agenomic gate check` held a tool call for human review |
 | 19 | LedgerIntegrityFailed | `agenomic ledger verify` found tampering, a chain break, or a conflict |
-| 21 | CloudConflict | The cloud answered 409 (for example `prompt_version_conflict` on `agenomic prompts push`) |
+| 21 | CloudConflict | The cloud answered 409 (for example `prompt_version_conflict` on `agenomic prompts push`, `knowledge_publication_conflict` on `agenomic knowledge publish`) |
 
-On the `prompts` and `channels` commands, a refusal from the cloud maps
-by HTTP status: 409 gives 21, 401 and 403 give 5, 400, 404 and 422
-give 1, and any other status gives 6. The message names the error code
-of the cloud (`{"error": {"code", "message"}}`) when the body has one.
+On the `prompts`, `channels` and `knowledge` commands, a refusal from the
+cloud maps by HTTP status: 409 gives 21, 401 and 403 give 5, 400, 404
+and 422 give 1, and any other status gives 6. The message names the
+error code of the cloud (`{"error": {"code", "message"}}`) when the body
+has one; the `knowledge` commands also print the error `details`.
 
 ## Commands
 
@@ -354,6 +355,86 @@ They never move a channel: channel moves are session only and the CLI
 authenticates with an API key. `--format json` prints
 `{action, channel, moved: false, move_url, preview}` with the cloud's
 preview unchanged. An unknown release or channel exits 1.
+
+### Knowledge bases
+
+The `knowledge` commands are documented in [knowledge.md](knowledge.md).
+They all use the active cloud profile and send `x-api-key`. `--json`
+(anywhere after `knowledge`) is the same as `--format json` and prints
+the response unchanged. `VERSION` is `3`, `v3`, `published` or `draft`;
+`N` is a version number (`3` or `v3`).
+
+#### `agenomic knowledge list [--query Q] [--status S] [--tag T] [--limit N] [--cursor C]`
+
+`GET /v1/knowledge-bases`: id, status, health, published and latest
+versions, document count and name.
+
+#### `agenomic knowledge get <KB_ID>`
+
+`GET /v1/knowledge-bases/{kb_id}`: reference, status, health, published
+version and manifest digest, draft revision, publication generation,
+document and job counts.
+
+#### `agenomic knowledge create <KB_ID> --name NAME [--description D] [--tag T]...`
+
+`POST /v1/knowledge-bases`.
+
+#### `agenomic knowledge upload <KB_ID> <PATH>... [--glob P]... [--prefix P] [--collection C] [--tag T]... [--classification C] [--message M] [--content-type T] [--wait] [--timeout S]`
+
+Uploads every file, walking directories recursively (hidden entries,
+symbolic links and credential files skipped), one
+`POST .../documents/upload` per file with the raw bytes streamed and the
+percent-encoded `x-agenomic-*` headers. An upload of identical bytes is
+reported as `unchanged`. `--wait` polls the ingestion jobs and exits 1
+when one fails or is cancelled.
+
+#### `agenomic knowledge search <KB_ID> <QUERY> [--version VERSION] [--top-k K] [--mode keyword|semantic|hybrid|section|exact] [--context]`
+
+#### `agenomic knowledge query <KB_ID> <TEXT> [--version VERSION]`
+
+#### `agenomic knowledge answer <KB_ID> <QUESTION> [--version VERSION] [--top-k K]`
+
+`POST .../search`, `.../query` (text form, for example
+`get "Authentication" from "security.md"`) and `.../answer`. Retrieved
+text is printed with control and invisible formatting characters
+replaced by spaces.
+
+#### `agenomic knowledge versions <KB_ID> [--limit N] [--cursor C]`
+
+#### `agenomic knowledge version create <KB_ID> [--message M] [--expected-draft-revision R] [--wait] [--timeout S]`
+
+#### `agenomic knowledge version diff <KB_ID> <N> [--against N]`
+
+#### `agenomic knowledge version verify <KB_ID> <N>`
+
+`version create` sends the draft revision it read (or
+`--expected-draft-revision`) as `expected_draft_revision`. `version
+verify` exits 1 when a digest or the signature does not verify.
+
+#### `agenomic knowledge publish <KB_ID> <N> [--reason R]`
+
+#### `agenomic knowledge rollback <KB_ID> [--to N] --reason R`
+
+Read the knowledge base, then send its `publication_generation` in
+`If-Match`. A 409 exits 21 with the error code and a hint; nothing moved.
+
+#### `agenomic knowledge job <JOB_ID> [--wait] [--timeout S]`
+
+`GET /v1/knowledge-jobs/{job_id}`. `--wait` polls until `succeeded`,
+`failed` or `cancelled` and exits 1 unless the job succeeded, 6 on
+timeout.
+
+#### `agenomic knowledge export <KB_ID> [--version VERSION] -o FILE`
+
+#### `agenomic knowledge import <FILE> [--kb-id KB_ID] [--name NAME]`
+
+`export` writes the `agenomic.knowledge_export/v1` document of
+`GET .../export[?version=N]` byte for byte. `import` sends the file's
+bytes unchanged as the `application/json` body of
+`POST /v1/knowledge-bases/import[?kb_id=...&name=...]` and prints the
+new knowledge base with the counts of imported documents and enqueued
+jobs. A file above 17 MiB (the server's limit) or one that is not a JSON
+object is refused before sending, with exit 1.
 
 ### `agenomic bundle extract <ARCHIVE> <DIR>`
 

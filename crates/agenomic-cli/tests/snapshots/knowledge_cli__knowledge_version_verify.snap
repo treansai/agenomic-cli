@@ -1,0 +1,8 @@
+---
+source: crates/agenomic-cli/tests/knowledge_cli.rs
+expression: stdout(&output)
+---
+kb_customer_support v3: valid
+manifest:  sha256:3333333333333333333333333333333333333333333333333333333333333333 (digest valid)
+documents: 5 checked, 0 digest error(s)
+signature: valid (key key_7c1d)

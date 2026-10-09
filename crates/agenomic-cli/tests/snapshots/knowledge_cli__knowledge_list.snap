@@ -1,0 +1,8 @@
+---
+source: crates/agenomic-cli/tests/knowledge_cli.rs
+expression: stdout(&output)
+---
+KB ID                STATUS  HEALTH   PUBLISHED  LATEST  DOCUMENTS  NAME
+kb_customer_support  active  healthy  v3         v4      7          Customer Support
+kb_compliance        active  healthy  -          -       7          Compliance Policies
+next page: --cursor WyJrYl9jb21wbGlhbmNlIl0

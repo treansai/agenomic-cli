@@ -50,6 +50,33 @@ All notable changes to `agenomic-cli` are documented here. Format follows
   `prompt-manifest`, `prompt-artifact-set`, `prompt-file` and
   `prompt-bundle` schemas, and `SchemaKind` gains the five prompt
   document kinds.
+- **`agenomic knowledge`.** A command group for the knowledge bases of
+  Agenomic Cloud (RFC 0014): `list`, `get`, `create`, `upload`, `search`,
+  `query`, `answer`, `versions`, `version create|diff|verify`, `publish`,
+  `rollback`, `job`, `export` and `import`. `upload` takes files and
+  directories (walked recursively with `--glob` and `--prefix`, hidden
+  entries, symbolic links and credential files skipped), streams each
+  file as the raw request body with percent-encoded `x-agenomic-*`
+  headers, reports identical bytes as `unchanged` and, with `--wait`,
+  polls the ingestion jobs and fails when one fails. `version create`
+  sends `expected_draft_revision`; `publish` and `rollback` read the
+  `publication_generation` first and send it in `If-Match`, and a 409
+  exits 21 with a hint. `export` writes the `agenomic.knowledge_export/v1`
+  document byte for byte and `import` sends a file back unchanged as the
+  request body (`kb_id` and `name` as query parameters), refusing files
+  above the server's 17 MiB limit before sending. `--json` prints the raw
+  responses. Retrieved text is printed without control or invisible
+  formatting characters. Refusals print the error code and every member
+  of `details`. See `docs/knowledge.md`.
+- **`agenomic-cloud-client` knowledge methods.** `list_knowledge_bases`,
+  `get_knowledge_base`, `create_knowledge_base`,
+  `upload_knowledge_document` (streamed file body, `KnowledgeUpload`
+  headers), `search_knowledge`, `query_knowledge`, `answer_knowledge`,
+  `list_knowledge_versions`, `create_knowledge_version`,
+  `diff_knowledge_versions`, `verify_knowledge_version`,
+  `publish_knowledge_version`, `rollback_knowledge_base`,
+  `get_knowledge_job`, `export_knowledge_base` and
+  `import_knowledge_base`, plus `encode_document_path`.
 - **Coding connector** (`connector/`, `@agenomic/coding-connector` 0.1.0).
   Enrolls a machine with Agenomic, launches Claude Code (Agent SDK
   0.3.289) and Codex (App Server 0.160.1) sessions in dedicated worktrees
