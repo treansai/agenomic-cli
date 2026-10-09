@@ -111,6 +111,85 @@ New code for managed prompts carries no comments; the reasons live here.
   was quadratic in the number of findings
   (`many_findings_keep_exact_offsets_in_linear_time`).
 
+## Knowledge bases
+
+New code for `agenomic knowledge` (RFC 0014) carries no comments either;
+the reasons live here.
+
+- The group reuses the prompts plumbing (`prompts::Cloud`, `cell`,
+  `compact`, `print_table`) instead of a second client wrapper, so the
+  profile, the `x-api-key` header and the runtime are the same.
+- `CloudClient::knowledge_send` is the single request path of the
+  knowledge methods. A file body is streamed from `tokio::fs::File`
+  (no multipart, no buffering) with an explicit `content-length`, so the
+  upload is not sent chunked, and a per-request timeout of 60 s plus one
+  second per 64 KiB: the client's 60 s timeout covers the whole request
+  and would cut a large upload. `try_send_with_retry` takes a fallible
+  builder because every retry reopens the file; `send_with_retry` wraps
+  it, so the other methods keep their behaviour.
+- Knowledge refusals go through `refusal(.., true)`, which appends every
+  member of `details` besides `reason` to the message
+  (`knowledge_refusals_keep_every_detail`). The prompt commands keep
+  `refused`, which only appends `details.reason`, so their messages do
+  not change.
+- Every `x-agenomic-*` header value is percent-encoded UTF-8 with
+  `encode_component` (the unreserved set stays, as in the SDKs); the
+  document path keeps its `/` (`encode_document_path`), and the tags are
+  encoded one by one and joined with `,`, which is why a tag may not
+  hold a comma. The content type defaults to `application/octet-stream`
+  like the SDKs, so the server infers the format from the path extension.
+- Directory walks are sorted by file name so the upload order and the
+  output are stable. Hidden entries are pruned, symbolic links are
+  skipped and never followed, and credential files (`*.pem`, `*.key`,
+  `id_rsa`, `id_ed25519`, `.env*`) are skipped in walks and refused when
+  named on the command line, after the repository's security defaults.
+  `--glob` is matched against the `/` separated relative path before
+  those checks, so only matching entries are reported as skipped; `*`
+  crosses `/` (the `glob` crate default), so `*.md` matches at any depth.
+  Duplicate document paths are refused before the first upload.
+- `version create` sends the `draft_revision` it read as
+  `expected_draft_revision` unless `--expected-draft-revision` is given,
+  so the version is the working set the command saw, and an
+  `idempotency_key` in the body, as the Python SDK does, because the
+  client retries a POST after a 429, a 5xx or a network error.
+- `publish` and `rollback` read the knowledge base first and send its
+  `publication_generation` quoted in `If-Match`, like the SDKs. A 409
+  stays `CliError::CloudRefused` (exit 21) and `conflict_hint` prints
+  what to do on stderr first
+  (`rollback_conflict_exits_21_with_the_code_and_details`).
+- Text from the server is printed through `clean` (one line) or
+  `clean_block` (keeps newlines and tabs), which replace control
+  characters and the invisible formatting characters listed by RFC 0014
+  with spaces: retrieved text is untrusted, and an escape sequence in a
+  document must not drive the terminal
+  (`search_and_query_print_tables_and_neutralize_terminal_escapes`).
+  `--json` prints the response unchanged.
+- `--json` is a global argument of the group and maps to `--format json`
+  only when the format is `human`, so `--format json-pretty` and `yaml`
+  still apply. Commands that make several requests print one document:
+  `upload` prints `{kb_id, documents}` with each `job` replaced by the
+  finished job under `--wait`, and `export` prints a summary because the
+  exported document is in the file.
+- Jobs are polled after 250 ms, doubling up to 2 s, until `succeeded`,
+  `failed` or `cancelled`, within `--timeout` (600 s by default). A failed
+  or cancelled job fails the command with exit 1
+  (`agenomic::knowledge::job_failed`) after the output is printed; a
+  timeout is a `CliError::Network` (exit 6).
+- The subcommands with a `version` argument set `disable_version_flag`:
+  `propagate_version` gives every subcommand a `--version` flag whose id
+  and long name would collide with theirs, which clap's debug assertions
+  refuse at parse time.
+- `export` writes the response body byte for byte after checking that it
+  is a JSON object, and `import` sends the bytes read from the file as
+  the `application/json` body, with `kb_id` and `name` as optional query
+  parameters, so the exported document is never edited on the way
+  (`export_then_import_round_trips_the_document`). The server takes at
+  most 16 MiB of documents plus 1 MiB of envelope, so `read_export`
+  reads at most 17 MiB plus one byte and refuses a larger file before
+  connecting (`import_refuses_files_above_17_mib_before_sending`);
+  reading through `take` also bounds a file whose size the metadata
+  does not report.
+
 ## Coding connector (`connector/`, TypeScript)
 
 - The machine connector is a Node package, not a Rust crate: the Claude Agent SDK is the supported way to drive Claude Code programmatically and ships for TypeScript; `codex app-server` is spoken over stdio from the same process. It is optional and network bound by nature, so it lives outside the offline `agenomic` binary and does not change its invariants.

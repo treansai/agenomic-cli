@@ -1,0 +1,6 @@
+---
+source: crates/agenomic-cli/tests/knowledge_cli.rs
+expression: stdout(&output)
+---
+created kb_returns (Returns)
+uri: kb://0b6c2f1e-7a44-4c8e-9f1d-2a3b4c5d6e7f/kb_returns

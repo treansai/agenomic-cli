@@ -1,0 +1,13 @@
+---
+source: crates/agenomic-cli/tests/knowledge_cli.rs
+expression: stdout(&output)
+---
+MATCH  SCORE  PATH                        HEADING                              SECTION
+exact  1.0    faq/refunds-and-returns.md  Refunds and Returns / Refund Policy  sec_c41e8a5f2b9d7036
+retrieval kret_01jb3m5q7s9v1x3z5b7d9f0002: kb_customer_support v3, exact
+
+== Refunds and Returns / Refund Policy (sec_c41e8a5f2b9d7036)
+Customers can request a full refund within 14 days of delivery.
+
+- Original payment method
+- Five business days

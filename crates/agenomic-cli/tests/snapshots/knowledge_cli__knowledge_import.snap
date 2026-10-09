@@ -1,0 +1,8 @@
+---
+source: crates/agenomic-cli/tests/knowledge_cli.rs
+expression: stdout(&output)
+---
+imported kb_customer_support_copy (Customer Support (copy))
+uri:       kb://0b6c2f1e-7a44-4c8e-9f1d-2a3b4c5d6e7f/kb_customer_support_copy
+documents: 1
+jobs:      1 enqueued; `agenomic knowledge get kb_customer_support_copy` shows the pending ones

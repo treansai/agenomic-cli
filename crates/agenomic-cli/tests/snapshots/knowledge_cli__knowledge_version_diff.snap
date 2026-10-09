@@ -1,0 +1,18 @@
+---
+source: crates/agenomic-cli/tests/knowledge_cli.rs
+expression: stdout(&output)
+---
+kb_customer_support v3 -> v4
+documents: 1 added, 1 modified, 1 deleted, 1 moved
+  added     faq/international-shipping.md (r1)
+  modified  faq/refunds-and-returns.md (r6 -> r7)
+  deleted   faq/legacy-loyalty-program.md (r3)
+  moved     faq/new.md (from faq/old.md)
+sections: 1 changed
+  modified  faq/refunds-and-returns.md: Refunds and Returns / Refund Policy
+metadata: 1 changed
+  faq/refunds-and-returns.md tags: ["refunds"] -> ["refunds","returns"]
+configuration: index configuration, embedding changed
+affected agents: 2
+  Customer Support Agent (2b1e5c3a-8d4f-4e6a-9b0c-1d2e3f4a5b6c) pinned v3
+  Claims Processing Agent (6c2f8e1a-3b5d-4f7a-9c1e-2d4f6a8b0c1d) published
