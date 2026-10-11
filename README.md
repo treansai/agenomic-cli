@@ -36,6 +36,20 @@ agenomic cloud push-agent dist/my-agent.bundle.tar.zst --name "My Agent"
 agenomic attest dist/my-agent.bundle.tar.zst --output attestation.json
 ```
 
+Knowledge bases of Agenomic Cloud (RFC 0014) have their own command group,
+`agenomic knowledge` (see [docs/knowledge.md](docs/knowledge.md)):
+
+```bash
+agenomic knowledge list
+agenomic knowledge create kb_support --name "Support"
+agenomic knowledge upload kb_support ./docs --glob '*.md' --wait
+agenomic knowledge search kb_support "refund window" --top-k 5
+agenomic knowledge query kb_support 'get "Authentication" from "security.md"'
+agenomic knowledge version create kb_support --message "First version" --wait
+agenomic knowledge publish kb_support 1 --reason "First release"
+agenomic knowledge export kb_support --version 1 -o kb_support.json
+```
+
 `agenomic bundle compile-runtime` materializes deterministic
 `runtime/*.compiled` launch plans from `genome.yaml`. The MVP emits
 metadata + execution plans for `plain`, `langgraph`, `crewai`, and
@@ -80,6 +94,7 @@ write.
 - [Local replay](docs/replay-local.md)
 - [CI/CD integration](docs/ci-cd.md)
 - [Cloud integration](docs/cloud-integration.md)
+- [Knowledge bases](docs/knowledge.md)
 - [Security](docs/security.md)
 
 ## Examples

@@ -1,0 +1,7 @@
+---
+source: crates/agenomic-cli/tests/knowledge_cli.rs
+expression: stdout(&output)
+---
+kjob_01jb3m5q7s9v1x3z5b7d9f0047: build_version succeeded (attempt 1 of 5)
+kb:       kb_customer_support
+subject:  {}

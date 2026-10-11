@@ -4,6 +4,7 @@ mod cli;
 mod commands;
 mod enrich;
 pub mod huggingface;
+mod knowledge;
 mod ledger;
 mod prompts;
 mod provider;
@@ -81,6 +82,7 @@ pub fn run() -> i32 {
         Commands::Bucket(args) => commands::cmd_bucket(args, cli.profile.as_deref()),
         Commands::Prompts(args) => prompts::cmd_prompts(args, format, cli.profile.as_deref()),
         Commands::Channels(args) => prompts::cmd_channels(args, format, cli.profile.as_deref()),
+        Commands::Knowledge(args) => knowledge::cmd_knowledge(args, format, cli.profile.as_deref()),
         Commands::Bundle(args) => commands::cmd_bundle(args, format, no_color),
         Commands::Providers(args) => commands::cmd_providers(args, format, no_color),
         Commands::Doctor => commands::cmd_doctor(),

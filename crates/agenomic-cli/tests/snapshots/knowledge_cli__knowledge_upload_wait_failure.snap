@@ -1,0 +1,10 @@
+---
+source: crates/agenomic-cli/tests/knowledge_cli.rs
+expression: stdout(&output)
+---
+unchanged docs/faq.md (kdoc_01jb3m5q7s9v1x3z5b7d9f0001, revision 3)
+uploaded  docs/guides/setup.md (kdoc_01jb3m5q7s9v1x3z5b7d9f0003, revision 2, job kjob_01jb3m5q7s9v1x3z5b7d9f0042)
+uploaded  docs/guides/sécurité.md (kdoc_01jb3m5q7s9v1x3z5b7d9f0002, revision 1, job kjob_01jb3m5q7s9v1x3z5b7d9f0041)
+job kjob_01jb3m5q7s9v1x3z5b7d9f0042 failed: knowledge_parse_failed: the document has no text
+job kjob_01jb3m5q7s9v1x3z5b7d9f0041 succeeded
+2 uploaded, 1 unchanged

@@ -115,6 +115,7 @@ dependencies = [
  "directories",
  "ed25519-dalek",
  "git-version",
+ "glob",
  "hex",
  "insta",
  "miette",
@@ -130,6 +131,7 @@ dependencies = [
  "tracing-subscriber",
  "ulid",
  "uuid",
+ "walkdir",
  "wiremock",
 ]
 

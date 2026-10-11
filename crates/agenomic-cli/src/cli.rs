@@ -167,6 +167,10 @@ pub enum Commands {
     Prompts(PromptsCommand),
     #[command(about = "Release channels: list, history and the promotion hand-off")]
     Channels(ChannelsCommand),
+    #[command(
+        about = "Knowledge bases: documents, search, versions, publication, export and import"
+    )]
+    Knowledge(KnowledgeCommand),
     /// Bundle utilities (extract, manifest, runtime compilation).
     Bundle(BundleCommand),
     /// Model provider utilities (list providers, test connectivity).
@@ -1779,4 +1783,335 @@ pub enum ChannelsSub {
         )]
         web_url: Option<String>,
     },
+}
+
+#[derive(Debug, Parser)]
+pub struct KnowledgeCommand {
+    #[arg(
+        long,
+        global = true,
+        help = "Print the raw JSON response (same as --format json)"
+    )]
+    pub json: bool,
+    #[command(subcommand)]
+    pub command: KnowledgeSub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum KnowledgeSub {
+    #[command(about = "List the knowledge bases of the workspace")]
+    List(KnowledgeListArgs),
+    #[command(about = "Show one knowledge base with its statistics and health")]
+    Get {
+        #[arg(help = "Knowledge base id (kb_...)")]
+        kb_id: String,
+    },
+    #[command(about = "Create a knowledge base")]
+    Create(KnowledgeCreateArgs),
+    #[command(about = "Upload files and directories as documents of the working set")]
+    Upload(KnowledgeUploadArgs),
+    #[command(about = "Search a knowledge base", disable_version_flag = true)]
+    Search(KnowledgeSearchArgs),
+    #[command(
+        about = "Run a structured query, for example 'get \"Authentication\" from \"security.md\"'",
+        disable_version_flag = true
+    )]
+    Query(KnowledgeQueryArgs),
+    #[command(
+        about = "Answer a question from the evidence of a knowledge base",
+        disable_version_flag = true
+    )]
+    Answer(KnowledgeAnswerArgs),
+    #[command(about = "List the versions of a knowledge base")]
+    Versions(KnowledgeVersionsArgs),
+    #[command(about = "Create, diff and verify versions")]
+    Version(KnowledgeVersionCommand),
+    #[command(
+        about = "Publish a version (If-Match on the publication generation)",
+        disable_version_flag = true
+    )]
+    Publish(KnowledgePublishArgs),
+    #[command(about = "Move the published pointer back (If-Match on the publication generation)")]
+    Rollback(KnowledgeRollbackArgs),
+    #[command(about = "Show a knowledge job, or wait until it ends")]
+    Job(KnowledgeJobArgs),
+    #[command(
+        about = "Export a knowledge base to a JSON file",
+        disable_version_flag = true
+    )]
+    Export(KnowledgeExportArgs),
+    #[command(about = "Import a knowledge base from an exported JSON file")]
+    Import(KnowledgeImportArgs),
+}
+
+#[derive(Debug, Parser)]
+pub struct KnowledgeListArgs {
+    #[arg(long, help = "Substring over kb id, name and description")]
+    pub query: Option<String>,
+    #[arg(long, help = "Status filter, for example active or archived")]
+    pub status: Option<String>,
+    #[arg(long, help = "Tag filter")]
+    pub tag: Option<String>,
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..=200), help = "Page size (1 to 200)")]
+    pub limit: Option<u32>,
+    #[arg(long, help = "Cursor returned by a previous page")]
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Parser)]
+pub struct KnowledgeCreateArgs {
+    #[arg(help = "Knowledge base id, kb_ followed by lowercase letters, digits, _ and -")]
+    pub kb_id: String,
+    #[arg(long, help = "Display name")]
+    pub name: String,
+    #[arg(long, help = "Description")]
+    pub description: Option<String>,
+    #[arg(long = "tag", help = "Tag; repeat for several")]
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Parser)]
+pub struct KnowledgeUploadArgs {
+    #[arg(help = "Knowledge base id (kb_...)")]
+    pub kb_id: String,
+    #[arg(
+        required = true,
+        help = "Files or directories; directories are walked recursively"
+    )]
+    pub paths: Vec<PathBuf>,
+    #[arg(
+        long = "glob",
+        value_name = "PATTERN",
+        help = "Only upload directory entries whose relative path matches; repeat for several"
+    )]
+    pub globs: Vec<String>,
+    #[arg(long, help = "Document path prefix, for example guides")]
+    pub prefix: Option<String>,
+    #[arg(long, help = "Collection of the uploaded documents")]
+    pub collection: Option<String>,
+    #[arg(long = "tag", help = "Document tag; repeat for several")]
+    pub tags: Vec<String>,
+    #[arg(
+        long,
+        value_parser = ["public", "internal", "confidential", "restricted"],
+        help = "Classification of the uploaded documents"
+    )]
+    pub classification: Option<String>,
+    #[arg(long, help = "Change message of the new revisions")]
+    pub message: Option<String>,
+    #[arg(
+        long,
+        help = "Content type of every file (default application/octet-stream: the format follows the extension)"
+    )]
+    pub content_type: Option<String>,
+    #[arg(long, help = "Wait for the ingestion jobs and fail when one fails")]
+    pub wait: bool,
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        default_value_t = 600,
+        help = "Longest wait with --wait"
+    )]
+    pub timeout: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum KnowledgeMode {
+    Keyword,
+    Semantic,
+    Hybrid,
+    Section,
+    Exact,
+}
+
+impl KnowledgeMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Keyword => "keyword",
+            Self::Semantic => "semantic",
+            Self::Hybrid => "hybrid",
+            Self::Section => "section",
+            Self::Exact => "exact",
+        }
+    }
+}
+
+#[derive(Debug, Parser)]
+pub struct KnowledgeSearchArgs {
+    #[arg(help = "Knowledge base id (kb_...)")]
+    pub kb_id: String,
+    #[arg(help = "Search text")]
+    pub query: String,
+    #[arg(long, help = "Version: 3, v3, published or draft (default: published)")]
+    pub version: Option<String>,
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..=50), help = "Number of results (1 to 50)")]
+    pub top_k: Option<u32>,
+    #[arg(long, value_enum, help = "Retrieval mode (default hybrid)")]
+    pub mode: Option<KnowledgeMode>,
+    #[arg(long, help = "Also print the delimited evidence rendered for a model")]
+    pub context: bool,
+}
+
+#[derive(Debug, Parser)]
+pub struct KnowledgeQueryArgs {
+    #[arg(help = "Knowledge base id (kb_...)")]
+    pub kb_id: String,
+    #[arg(help = "Query in text form, for example 'get \"Authentication\" from \"security.md\"'")]
+    pub query: String,
+    #[arg(long, help = "Version: 3, v3, published or draft (default: published)")]
+    pub version: Option<String>,
+}
+
+#[derive(Debug, Parser)]
+pub struct KnowledgeAnswerArgs {
+    #[arg(help = "Knowledge base id (kb_...)")]
+    pub kb_id: String,
+    #[arg(help = "Question")]
+    pub question: String,
+    #[arg(long, help = "Version: 3, v3, published or draft (default: published)")]
+    pub version: Option<String>,
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..=50), help = "Number of evidence items (1 to 50)")]
+    pub top_k: Option<u32>,
+}
+
+#[derive(Debug, Parser)]
+pub struct KnowledgeVersionsArgs {
+    #[arg(help = "Knowledge base id (kb_...)")]
+    pub kb_id: String,
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..=200), help = "Page size (1 to 200)")]
+    pub limit: Option<u32>,
+    #[arg(long, help = "Cursor returned by a previous page")]
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Parser)]
+pub struct KnowledgeVersionCommand {
+    #[command(subcommand)]
+    pub command: KnowledgeVersionSub,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum KnowledgeVersionSub {
+    #[command(about = "Snapshot the working set into a new immutable version")]
+    Create(KnowledgeVersionCreateArgs),
+    #[command(
+        about = "Compare a version with its parent or another version",
+        disable_version_flag = true
+    )]
+    Diff(KnowledgeVersionDiffArgs),
+    #[command(
+        about = "Recompute the digests of a version on the server",
+        disable_version_flag = true
+    )]
+    Verify(KnowledgeVersionVerifyArgs),
+}
+
+#[derive(Debug, Parser)]
+pub struct KnowledgeVersionCreateArgs {
+    #[arg(help = "Knowledge base id (kb_...)")]
+    pub kb_id: String,
+    #[arg(long, help = "Change message of the version")]
+    pub message: Option<String>,
+    #[arg(
+        long,
+        help = "Draft revision the version must snapshot (default: the one read from the knowledge base)"
+    )]
+    pub expected_draft_revision: Option<u64>,
+    #[arg(long, help = "Wait for the build job and fail when it fails")]
+    pub wait: bool,
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        default_value_t = 600,
+        help = "Longest wait with --wait"
+    )]
+    pub timeout: u64,
+}
+
+#[derive(Debug, Parser)]
+pub struct KnowledgeVersionDiffArgs {
+    #[arg(help = "Knowledge base id (kb_...)")]
+    pub kb_id: String,
+    #[arg(help = "Version number: 3 or v3")]
+    pub version: String,
+    #[arg(long, help = "Version to compare with (default: the parent version)")]
+    pub against: Option<String>,
+}
+
+#[derive(Debug, Parser)]
+pub struct KnowledgeVersionVerifyArgs {
+    #[arg(help = "Knowledge base id (kb_...)")]
+    pub kb_id: String,
+    #[arg(help = "Version number: 3 or v3")]
+    pub version: String,
+}
+
+#[derive(Debug, Parser)]
+pub struct KnowledgePublishArgs {
+    #[arg(help = "Knowledge base id (kb_...)")]
+    pub kb_id: String,
+    #[arg(help = "Version number to publish: 3 or v3")]
+    pub version: String,
+    #[arg(long, help = "Reason recorded with the publication")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Parser)]
+pub struct KnowledgeRollbackArgs {
+    #[arg(help = "Knowledge base id (kb_...)")]
+    pub kb_id: String,
+    #[arg(
+        long = "to",
+        help = "Version to return to (default: the previously published one)"
+    )]
+    pub to: Option<String>,
+    #[arg(long, help = "Reason recorded with the rollback")]
+    pub reason: String,
+}
+
+#[derive(Debug, Parser)]
+pub struct KnowledgeJobArgs {
+    #[arg(help = "Job id (kjob_...)")]
+    pub job_id: String,
+    #[arg(
+        long,
+        help = "Poll until the job succeeds, fails or is cancelled; fail unless it succeeds"
+    )]
+    pub wait: bool,
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        default_value_t = 600,
+        help = "Longest wait with --wait"
+    )]
+    pub timeout: u64,
+}
+
+#[derive(Debug, Parser)]
+pub struct KnowledgeExportArgs {
+    #[arg(help = "Knowledge base id (kb_...)")]
+    pub kb_id: String,
+    #[arg(
+        long,
+        help = "Version: 3, v3 or published; draft or no version exports the working set"
+    )]
+    pub version: Option<String>,
+    #[arg(short = 'o', long = "output", help = "JSON file to write")]
+    pub output: PathBuf,
+}
+
+#[derive(Debug, Parser)]
+pub struct KnowledgeImportArgs {
+    #[arg(help = "JSON file written by `agenomic knowledge export`")]
+    pub file: PathBuf,
+    #[arg(
+        long,
+        help = "Id of the new knowledge base (default: the exported one)"
+    )]
+    pub kb_id: Option<String>,
+    #[arg(
+        long,
+        help = "Name of the new knowledge base (default: the exported one)"
+    )]
+    pub name: Option<String>,
 }

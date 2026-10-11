@@ -1,0 +1,5 @@
+---
+source: crates/agenomic-cli/tests/knowledge_cli.rs
+expression: stdout(&output)
+---
+published v4 of kb_customer_support (previously v3, publication generation 5)

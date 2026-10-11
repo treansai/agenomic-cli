@@ -6,9 +6,11 @@
 use std::path::Path;
 use std::time::Duration;
 
-use agenomic_core::{CliError, CliResult};
+use agenomic_core::{io_at, CliError, CliResult};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
+
+const RETRY_BACKOFFS_MS: [u64; 3] = [200, 800, 3200];
 
 /// HTTP client for Agenomic Cloud.
 pub struct CloudClient {
@@ -402,10 +404,29 @@ impl CloudClient {
         F: FnMut() -> Fut,
         Fut: std::future::Future<Output = reqwest::RequestBuilder>,
     {
-        let backoffs = [200u64, 800, 3200];
+        self.try_send_with_retry(|| {
+            let request = build();
+            async move { Ok(request.await) }
+        })
+        .await
+    }
+
+    async fn try_send_with_retry<F, Fut>(&self, build: F) -> CliResult<reqwest::Response>
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = CliResult<reqwest::RequestBuilder>>,
+    {
+        self.try_send(&RETRY_BACKOFFS_MS, build).await
+    }
+
+    async fn try_send<F, Fut>(&self, backoffs: &[u64], mut build: F) -> CliResult<reqwest::Response>
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = CliResult<reqwest::RequestBuilder>>,
+    {
         let mut attempt = 0usize;
         loop {
-            let req = build().await;
+            let req = build().await?;
             let result = req.send().await;
             match result {
                 Ok(resp) => {
@@ -1126,6 +1147,74 @@ pub struct CloudResponse {
     pub bytes: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KnowledgeListQuery {
+    pub query: Option<String>,
+    pub status: Option<String>,
+    pub tag: Option<String>,
+    pub limit: Option<u32>,
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnowledgeUpload {
+    pub document_path: String,
+    pub content_type: String,
+    pub collection: Option<String>,
+    pub tags: Vec<String>,
+    pub classification: Option<String>,
+    pub change_message: Option<String>,
+}
+
+impl KnowledgeUpload {
+    pub fn headers(&self) -> Vec<(&'static str, String)> {
+        let mut headers = vec![(
+            "x-agenomic-document-path",
+            encode_document_path(&self.document_path),
+        )];
+        if let Some(collection) = &self.collection {
+            headers.push(("x-agenomic-collection", encode_component(collection)));
+        }
+        if !self.tags.is_empty() {
+            let tags: Vec<String> = self.tags.iter().map(|tag| encode_component(tag)).collect();
+            headers.push(("x-agenomic-tags", tags.join(",")));
+        }
+        if let Some(classification) = &self.classification {
+            headers.push((
+                "x-agenomic-classification",
+                encode_component(classification),
+            ));
+        }
+        if let Some(message) = &self.change_message {
+            headers.push(("x-agenomic-change-message", encode_component(message)));
+        }
+        headers
+    }
+}
+
+pub fn encode_document_path(path: &str) -> String {
+    path.split('/')
+        .map(encode_component)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+#[derive(Clone, Copy)]
+enum KnowledgeBody<'a> {
+    Empty,
+    Json(&'a serde_json::Value),
+    Raw(&'a [u8], &'a str),
+    File(&'a Path, &'a KnowledgeUpload),
+}
+
+fn knowledge_path(kb_id: &str, rest: &str) -> String {
+    format!("/v1/knowledge-bases/{}{rest}", encode_component(kb_id))
+}
+
+fn upload_timeout(length: u64) -> Duration {
+    Duration::from_secs(60 + length / 65_536)
+}
+
 pub fn encode_component(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for byte in value.bytes() {
@@ -1150,6 +1239,10 @@ pub fn path_with_query(path: &str, pairs: &[(&str, String)]) -> String {
 }
 
 fn refused(status: reqwest::StatusCode, body: &[u8]) -> CliError {
+    refusal(status, body, false)
+}
+
+fn refusal(status: reqwest::StatusCode, body: &[u8], with_details: bool) -> CliError {
     let parsed: Option<serde_json::Value> = serde_json::from_slice(body).ok();
     let envelope = parsed.as_ref().and_then(|value| value.get("error"));
     match envelope
@@ -1169,6 +1262,19 @@ fn refused(status: reqwest::StatusCode, body: &[u8]) -> CliError {
             {
                 message.push_str(&format!(" [reason: {reason}]"));
             }
+            if with_details {
+                let rest: serde_json::Map<String, serde_json::Value> = envelope
+                    .and_then(|error| error.get("details"))
+                    .and_then(|details| details.as_object())
+                    .into_iter()
+                    .flatten()
+                    .filter(|(key, _)| key.as_str() != "reason")
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect();
+                if !rest.is_empty() {
+                    message.push_str(&format!(" [details: {}]", serde_json::Value::Object(rest)));
+                }
+            }
             CliError::CloudRefused {
                 code: code.to_string(),
                 status: status.as_u16(),
@@ -1184,6 +1290,24 @@ fn refused(status: reqwest::StatusCode, body: &[u8]) -> CliError {
             }
         }
     }
+}
+
+fn json_body(
+    method: &reqwest::Method,
+    path: &str,
+    response: &CloudResponse,
+) -> CliResult<serde_json::Value> {
+    if response.bytes.is_empty() {
+        return Ok(serde_json::Value::Null);
+    }
+    serde_json::from_slice(&response.bytes).map_err(|e| {
+        let text = String::from_utf8_lossy(&response.bytes);
+        CliError::Network(format!(
+            "{method} {path} parse: {e} (body: {}){}",
+            excerpt(&text),
+            endpoint_hint(response.status, &text)
+        ))
+    })
 }
 
 fn excerpt(text: &str) -> String {
@@ -1259,18 +1383,7 @@ impl CloudClient {
         let response = self
             .send_bytes(method.clone(), path, body, if_match, idempotency_key)
             .await?;
-        let value = if response.bytes.is_empty() {
-            serde_json::Value::Null
-        } else {
-            serde_json::from_slice(&response.bytes).map_err(|e| {
-                let text = String::from_utf8_lossy(&response.bytes);
-                CliError::Network(format!(
-                    "{method} {path} parse: {e} (body: {}){}",
-                    excerpt(&text),
-                    endpoint_hint(response.status, &text)
-                ))
-            })?
-        };
+        let value = json_body(&method, path, &response)?;
         Ok((response.status, response.headers, value))
     }
 
@@ -1462,6 +1575,341 @@ impl CloudClient {
     }
 }
 
+impl CloudClient {
+    async fn knowledge_send(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: KnowledgeBody<'_>,
+        if_match: Option<u64>,
+        retry: bool,
+    ) -> CliResult<CloudResponse> {
+        let url = self.url(path);
+        let backoffs: &[u64] = if retry { &RETRY_BACKOFFS_MS } else { &[] };
+        let resp = self
+            .try_send(backoffs, || {
+                let method = method.clone();
+                let url = url.clone();
+                async move {
+                    let mut request = self
+                        .http
+                        .request(method, &url)
+                        .header("x-api-key", self.api_key_header())
+                        .header("accept", "application/json");
+                    if let Some(generation) = if_match {
+                        request = request.header("if-match", format!("\"{generation}\""));
+                    }
+                    match body {
+                        KnowledgeBody::Empty => {}
+                        KnowledgeBody::Json(value) => request = request.json(value),
+                        KnowledgeBody::Raw(bytes, content_type) => {
+                            request = request
+                                .header("content-type", content_type)
+                                .body(bytes.to_vec());
+                        }
+                        KnowledgeBody::File(file, upload) => {
+                            let handle = tokio::fs::File::open(file)
+                                .await
+                                .map_err(|e| io_at(file, e))?;
+                            let length = handle.metadata().await.map_err(|e| io_at(file, e))?.len();
+                            request = request
+                                .header("content-type", upload.content_type.as_str())
+                                .header("content-length", length)
+                                .timeout(upload_timeout(length));
+                            for (name, value) in upload.headers() {
+                                request = request.header(name, value);
+                            }
+                            request = request.body(reqwest::Body::from(handle));
+                        }
+                    }
+                    Ok(request)
+                }
+            })
+            .await?;
+        let status = resp.status();
+        let headers = resp.headers().clone();
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| CliError::Network(format!("{method} {path} read: {e}")))?
+            .to_vec();
+        if !status.is_success() {
+            return Err(refusal(status, &bytes, true));
+        }
+        Ok(CloudResponse {
+            status,
+            headers,
+            bytes,
+        })
+    }
+
+    async fn knowledge_json(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: KnowledgeBody<'_>,
+        if_match: Option<u64>,
+    ) -> CliResult<serde_json::Value> {
+        let response = self
+            .knowledge_send(method.clone(), path, body, if_match, true)
+            .await?;
+        json_body(&method, path, &response)
+    }
+
+    pub async fn list_knowledge_bases(
+        &self,
+        query: &KnowledgeListQuery,
+    ) -> CliResult<serde_json::Value> {
+        let mut pairs = Vec::new();
+        if let Some(text) = &query.query {
+            pairs.push(("q", text.clone()));
+        }
+        if let Some(status) = &query.status {
+            pairs.push(("status", status.clone()));
+        }
+        if let Some(tag) = &query.tag {
+            pairs.push(("tag", tag.clone()));
+        }
+        if let Some(limit) = query.limit {
+            pairs.push(("limit", limit.to_string()));
+        }
+        if let Some(cursor) = &query.cursor {
+            pairs.push(("cursor", cursor.clone()));
+        }
+        let path = path_with_query("/v1/knowledge-bases", &pairs);
+        self.knowledge_json(reqwest::Method::GET, &path, KnowledgeBody::Empty, None)
+            .await
+    }
+
+    pub async fn get_knowledge_base(&self, kb_id: &str) -> CliResult<serde_json::Value> {
+        self.knowledge_json(
+            reqwest::Method::GET,
+            &knowledge_path(kb_id, ""),
+            KnowledgeBody::Empty,
+            None,
+        )
+        .await
+    }
+
+    pub async fn create_knowledge_base(
+        &self,
+        body: &serde_json::Value,
+    ) -> CliResult<serde_json::Value> {
+        self.knowledge_json(
+            reqwest::Method::POST,
+            "/v1/knowledge-bases",
+            KnowledgeBody::Json(body),
+            None,
+        )
+        .await
+    }
+
+    pub async fn upload_knowledge_document(
+        &self,
+        kb_id: &str,
+        file: &Path,
+        upload: &KnowledgeUpload,
+    ) -> CliResult<serde_json::Value> {
+        self.knowledge_json(
+            reqwest::Method::POST,
+            &knowledge_path(kb_id, "/documents/upload"),
+            KnowledgeBody::File(file, upload),
+            None,
+        )
+        .await
+    }
+
+    pub async fn search_knowledge(
+        &self,
+        kb_id: &str,
+        body: &serde_json::Value,
+    ) -> CliResult<serde_json::Value> {
+        self.knowledge_json(
+            reqwest::Method::POST,
+            &knowledge_path(kb_id, "/search"),
+            KnowledgeBody::Json(body),
+            None,
+        )
+        .await
+    }
+
+    pub async fn query_knowledge(
+        &self,
+        kb_id: &str,
+        body: &serde_json::Value,
+    ) -> CliResult<serde_json::Value> {
+        self.knowledge_json(
+            reqwest::Method::POST,
+            &knowledge_path(kb_id, "/query"),
+            KnowledgeBody::Json(body),
+            None,
+        )
+        .await
+    }
+
+    pub async fn answer_knowledge(
+        &self,
+        kb_id: &str,
+        body: &serde_json::Value,
+    ) -> CliResult<serde_json::Value> {
+        let path = knowledge_path(kb_id, "/answer");
+        let method = reqwest::Method::POST;
+        let response = self
+            .knowledge_send(
+                method.clone(),
+                &path,
+                KnowledgeBody::Json(body),
+                None,
+                false,
+            )
+            .await?;
+        json_body(&method, &path, &response)
+    }
+
+    pub async fn list_knowledge_versions(
+        &self,
+        kb_id: &str,
+        limit: Option<u32>,
+        cursor: Option<&str>,
+    ) -> CliResult<serde_json::Value> {
+        let mut pairs = Vec::new();
+        if let Some(limit) = limit {
+            pairs.push(("limit", limit.to_string()));
+        }
+        if let Some(cursor) = cursor {
+            pairs.push(("cursor", cursor.to_string()));
+        }
+        let path = path_with_query(&knowledge_path(kb_id, "/versions"), &pairs);
+        self.knowledge_json(reqwest::Method::GET, &path, KnowledgeBody::Empty, None)
+            .await
+    }
+
+    pub async fn create_knowledge_version(
+        &self,
+        kb_id: &str,
+        body: &serde_json::Value,
+    ) -> CliResult<serde_json::Value> {
+        self.knowledge_json(
+            reqwest::Method::POST,
+            &knowledge_path(kb_id, "/versions"),
+            KnowledgeBody::Json(body),
+            None,
+        )
+        .await
+    }
+
+    pub async fn diff_knowledge_versions(
+        &self,
+        kb_id: &str,
+        version: u32,
+        against: Option<u32>,
+    ) -> CliResult<serde_json::Value> {
+        let pairs: Vec<(&str, String)> = against
+            .map(|against| vec![("against", against.to_string())])
+            .unwrap_or_default();
+        let path = path_with_query(
+            &knowledge_path(kb_id, &format!("/versions/{version}/diff")),
+            &pairs,
+        );
+        self.knowledge_json(reqwest::Method::GET, &path, KnowledgeBody::Empty, None)
+            .await
+    }
+
+    pub async fn verify_knowledge_version(
+        &self,
+        kb_id: &str,
+        version: u32,
+    ) -> CliResult<serde_json::Value> {
+        self.knowledge_json(
+            reqwest::Method::GET,
+            &knowledge_path(kb_id, &format!("/versions/{version}/verify")),
+            KnowledgeBody::Empty,
+            None,
+        )
+        .await
+    }
+
+    pub async fn publish_knowledge_version(
+        &self,
+        kb_id: &str,
+        body: &serde_json::Value,
+        publication_generation: u64,
+    ) -> CliResult<serde_json::Value> {
+        self.knowledge_json(
+            reqwest::Method::POST,
+            &knowledge_path(kb_id, "/publish"),
+            KnowledgeBody::Json(body),
+            Some(publication_generation),
+        )
+        .await
+    }
+
+    pub async fn rollback_knowledge_base(
+        &self,
+        kb_id: &str,
+        body: &serde_json::Value,
+        publication_generation: u64,
+    ) -> CliResult<serde_json::Value> {
+        self.knowledge_json(
+            reqwest::Method::POST,
+            &knowledge_path(kb_id, "/rollback"),
+            KnowledgeBody::Json(body),
+            Some(publication_generation),
+        )
+        .await
+    }
+
+    pub async fn get_knowledge_job(&self, job_id: &str) -> CliResult<serde_json::Value> {
+        self.knowledge_json(
+            reqwest::Method::GET,
+            &format!("/v1/knowledge-jobs/{}", encode_component(job_id)),
+            KnowledgeBody::Empty,
+            None,
+        )
+        .await
+    }
+
+    pub async fn export_knowledge_base(
+        &self,
+        kb_id: &str,
+        version: Option<&str>,
+    ) -> CliResult<(serde_json::Value, Vec<u8>)> {
+        let pairs: Vec<(&str, String)> = version
+            .map(|version| vec![("version", version.to_string())])
+            .unwrap_or_default();
+        let path = path_with_query(&knowledge_path(kb_id, "/export"), &pairs);
+        let method = reqwest::Method::GET;
+        let response = self
+            .knowledge_send(method.clone(), &path, KnowledgeBody::Empty, None, true)
+            .await?;
+        let value = json_body(&method, &path, &response)?;
+        Ok((value, response.bytes))
+    }
+
+    pub async fn import_knowledge_base(
+        &self,
+        export: &[u8],
+        kb_id: Option<&str>,
+        name: Option<&str>,
+    ) -> CliResult<serde_json::Value> {
+        let mut pairs = Vec::new();
+        if let Some(kb_id) = kb_id {
+            pairs.push(("kb_id", kb_id.to_string()));
+        }
+        if let Some(name) = name {
+            pairs.push(("name", name.to_string()));
+        }
+        let path = path_with_query("/v1/knowledge-bases/import", &pairs);
+        self.knowledge_json(
+            reqwest::Method::POST,
+            &path,
+            KnowledgeBody::Raw(export, "application/json"),
+            None,
+        )
+        .await
+    }
+}
+
 /// Trim long bodies for inclusion in error strings. We keep enough to
 /// identify the response shape (HTML doctype, JSON error envelope, plain
 /// text), but not so much that a streamed HTML login page floods the
@@ -1629,6 +2077,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn knowledge_answer_is_sent_once_on_ambiguous_failures() {
+        for status in [500u16, 502, 503, 504] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/v1/knowledge-bases/kb_x/answer"))
+                .respond_with(ResponseTemplate::new(status))
+                .expect(1)
+                .mount(&server)
+                .await;
+            let c = CloudClient::new(server.uri(), SecretString::new("s".into()));
+            let answered = c
+                .answer_knowledge("kb_x", &serde_json::json!({ "query": "refund?" }))
+                .await;
+            assert!(answered.is_err(), "{status}");
+            server.verify().await;
+        }
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/knowledge-bases/kb_x/answer"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(Duration::from_secs(2))
+                    .set_body_json(serde_json::json!({ "answer": "late" })),
+            )
+            .mount(&server)
+            .await;
+        let c = CloudClient {
+            http: reqwest::Client::builder()
+                .timeout(Duration::from_millis(200))
+                .build()
+                .unwrap(),
+            endpoint: server.uri(),
+            api_key: SecretString::new("s".into()),
+        };
+        let answered = c
+            .answer_knowledge("kb_x", &serde_json::json!({ "query": "refund?" }))
+            .await;
+        assert!(
+            matches!(answered, Err(CliError::Network(_))),
+            "{answered:?}"
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn knowledge_reads_still_retry() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/knowledge-bases/kb_x"))
+            .respond_with(ResponseTemplate::new(503).insert_header("retry-after", "0"))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/knowledge-bases/kb_x"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "knowledge_base": { "kb_id": "kb_x" } })),
+            )
+            .mount(&server)
+            .await;
+        let c = CloudClient::new(server.uri(), SecretString::new("s".into()));
+        let base = c.get_knowledge_base("kb_x").await.unwrap();
+        assert_eq!(base["knowledge_base"]["kb_id"], "kb_x");
+        assert_eq!(server.received_requests().await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
     async fn create_release_unwraps_envelope() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -1772,5 +2289,67 @@ mod tests {
             "/v1/prompts?q=a%20b%26c&tags=x%2Cy"
         );
         assert_eq!(path_with_query("/v1/prompts", &[]), "/v1/prompts");
+    }
+
+    #[test]
+    fn knowledge_upload_headers_are_percent_encoded_utf8() {
+        let upload = KnowledgeUpload {
+            document_path: "guides/sécurité v2.md".into(),
+            content_type: "application/octet-stream".into(),
+            collection: Some("faq".into()),
+            tags: vec!["gift cards".into(), "réduction".into()],
+            classification: Some("public".into()),
+            change_message: Some("Révision: 50% / v2".into()),
+        };
+        assert_eq!(
+            upload.headers(),
+            vec![
+                (
+                    "x-agenomic-document-path",
+                    "guides/s%C3%A9curit%C3%A9%20v2.md".to_string()
+                ),
+                ("x-agenomic-collection", "faq".to_string()),
+                ("x-agenomic-tags", "gift%20cards,r%C3%A9duction".to_string()),
+                ("x-agenomic-classification", "public".to_string()),
+                (
+                    "x-agenomic-change-message",
+                    "R%C3%A9vision%3A%2050%25%20%2F%20v2".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn knowledge_refusals_keep_every_detail() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/knowledge-bases/kb_x/publish"))
+            .and(header("if-match", "\"4\""))
+            .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
+                "error": {
+                    "code": "knowledge_publication_conflict",
+                    "message": "the publication generation moved",
+                    "details": { "reason": "generation_mismatch", "current_generation": 5 }
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let c = CloudClient::new(server.uri(), SecretString::new("s".into()));
+        let error = c
+            .publish_knowledge_version("kb_x", &serde_json::json!({ "version": 4 }), 4)
+            .await
+            .unwrap_err();
+        match &error {
+            CliError::CloudRefused { code, message, .. } => {
+                assert_eq!(code, "knowledge_publication_conflict");
+                assert_eq!(
+                    message,
+                    "the publication generation moved [reason: generation_mismatch] [details: {\"current_generation\":5}]"
+                );
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        assert_eq!(error.exit_code().as_i32(), 21);
     }
 }
