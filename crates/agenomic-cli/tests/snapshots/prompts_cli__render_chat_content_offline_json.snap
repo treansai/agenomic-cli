@@ -1,0 +1,21 @@
+---
+source: crates/agenomic-cli/tests/prompts_cli.rs
+expression: stdout(&output)
+---
+{
+  "content_digest": "sha256:8dc4422b149417092ad97deaacd5e801bcdfceedcdec8d31ca52da36533faafc",
+  "kind": "chat",
+  "messages": [
+    {
+      "content": "You plan support work for locale en.",
+      "role": "system"
+    },
+    {
+      "content": "Where is my parcel?",
+      "role": "user"
+    }
+  ],
+  "rendered_hash": "sha256:e1e8ba46c49db44a426a1d265b44d9c7f8d8116f4fe64e829231f42a8d35263a",
+  "text": null,
+  "warnings": []
+}

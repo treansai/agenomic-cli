@@ -1,0 +1,5 @@
+---
+source: crates/agenomic-cli/tests/prompts_cli.rs
+expression: env.redact(&stdout(&output))
+---
+wrote prm_planner:7 (sha256:99ea3dc16c0a1dd123859b33edc862985903eda23ffc569453d9871560e29d3a) to planner.json

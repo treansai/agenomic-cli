@@ -39,6 +39,7 @@ pub struct Signature {
     pub signer: String,
 }
 
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait AgentResolver: Send + Sync {
     async fn resolve(&self, reference: &AgentReference) -> OsResult<ResolvedAgent>;

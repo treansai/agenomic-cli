@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agenomic.dev/spec/v0.4/prompt-manifest.schema.json",
+  "title": "Agenomic prompt manifest (v0.4)",
+  "description": "The prompt manifest of one agent version, `agenomic.prompt_manifest/v1` (RFC 0012). It is hashed whole. Slots pin immutable prompt versions by content digest; aliases never appear. Children pin child agent releases. The empty manifest (no slots, no children) is a well-defined document with its own digest, used for legacy releases on every execution-side document.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "agent_id", "slots", "children"],
+  "properties": {
+    "schema": { "const": "agenomic.prompt_manifest/v1" },
+    "agent_id": { "$ref": "prompt-common.schema.json#/$defs/uuidLower" },
+    "slots": {
+      "type": "object",
+      "maxProperties": 256,
+      "propertyNames": { "$ref": "prompt-common.schema.json#/$defs/slotPath" },
+      "additionalProperties": { "$ref": "prompt-common.schema.json#/$defs/contentPin" }
+    },
+    "children": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": { "$ref": "prompt-common.schema.json#/$defs/uuidLower" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["release_id", "genome_version"],
+        "properties": {
+          "release_id": { "$ref": "prompt-common.schema.json#/$defs/uuidLower" },
+          "genome_version": {
+            "anyOf": [
+              { "$ref": "prompt-common.schema.json#/$defs/sha256Digest" },
+              { "type": "null" }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

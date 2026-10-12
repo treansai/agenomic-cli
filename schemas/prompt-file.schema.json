@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agenomic.dev/spec/v0.4/prompt-file.schema.json",
+  "title": "Agenomic prompt file (v0.4)",
+  "description": "The local single-prompt file `agenomic.prompt_file/v1` (RFC 0012), read and written by command line tools to push, pull, render and digest one prompt. It is not hashed; `content` is the full hashed `agenomic.prompt_content/v1` document. `kind` is the prompt-level kind and must agree with `content.kind`. `version` and `content_digest` are written when a version is pulled and are read-only: a tool refuses to push a file whose `content_digest` differs from the digest it recomputes, and ignores `version`, which the server allocates. YAML files follow the `agenomic-yaml/1` profile.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "prompt_id", "kind", "content"],
+  "properties": {
+    "schema": { "const": "agenomic.prompt_file/v1" },
+    "prompt_id": { "$ref": "prompt-common.schema.json#/$defs/promptId" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "description": { "type": "string", "maxLength": 2000 },
+    "tags": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+    },
+    "kind": { "$ref": "prompt-common.schema.json#/$defs/promptKind" },
+    "content": { "$ref": "prompt-content.schema.json" },
+    "parent_version": {
+      "anyOf": [{ "$ref": "prompt-common.schema.json#/$defs/versionNumber" }, { "type": "null" }]
+    },
+    "change_message": { "type": "string", "maxLength": 2000 },
+    "version": { "$ref": "prompt-common.schema.json#/$defs/versionNumber" },
+    "content_digest": { "$ref": "prompt-common.schema.json#/$defs/sha256Digest" }
+  },
+  "dependentRequired": { "version": ["content_digest"] },
+  "if": {
+    "required": ["kind"],
+    "properties": { "kind": { "const": "chat" } }
+  },
+  "then": { "properties": { "content": { "properties": { "kind": { "const": "chat" } } } } },
+  "else": { "properties": { "content": { "properties": { "kind": { "const": "text" } } } } }
+}

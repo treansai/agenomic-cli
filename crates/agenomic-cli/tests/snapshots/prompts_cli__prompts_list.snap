@@ -1,0 +1,8 @@
+---
+source: crates/agenomic-cli/tests/prompts_cli.rs
+expression: stdout(&output)
+---
+PROMPT ID    KIND      LATEST  STATUS  NAME
+prm_planner  text      7       active  Support planner
+prm_safety   fragment  2       active  Support planner
+next page: --cursor WyJ4Il0

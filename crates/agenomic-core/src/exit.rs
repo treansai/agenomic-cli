@@ -41,6 +41,7 @@ pub enum ExitCode {
     /// error codes). Distinct from auth (5) and transport (6): the request
     /// was understood and the caller is who they claim to be.
     CapabilityUnavailable = 20,
+    CloudConflict = 21,
 }
 
 impl ExitCode {
@@ -85,5 +86,6 @@ mod tests {
         assert_eq!(ExitCode::ToolBoundaryReviewRequired.as_i32(), 18);
         assert_eq!(ExitCode::LedgerIntegrityFailed.as_i32(), 19);
         assert_eq!(ExitCode::CapabilityUnavailable.as_i32(), 20);
+        assert_eq!(ExitCode::CloudConflict.as_i32(), 21);
     }
 }

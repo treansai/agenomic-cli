@@ -1,0 +1,40 @@
+---
+source: crates/agenomic-cli/tests/prompts_cli.rs
+expression: written
+---
+{
+  "change_message": "Ask for the order id first",
+  "content": {
+    "body": "Plan the next step for {question}.\n{>safety}",
+    "fragments": {
+      "safety": {
+        "content_digest": "sha256:a2872f182adfd75526c1f6a8eb91424c907e42b500f38c24edd759575e7f239d",
+        "prompt_id": "prm_safety",
+        "version": 2
+      }
+    },
+    "kind": "text",
+    "output_contract": null,
+    "partials": {},
+    "renderer_version": "1",
+    "schema": "agenomic.prompt_content/v1",
+    "template_format": "agenomic-fstring/v1",
+    "variables": {
+      "question": {
+        "required": true,
+        "type": "string"
+      }
+    }
+  },
+  "content_digest": "sha256:99ea3dc16c0a1dd123859b33edc862985903eda23ffc569453d9871560e29d3a",
+  "description": "Plans the next support step.",
+  "kind": "text",
+  "name": "Support planner",
+  "parent_version": 6,
+  "prompt_id": "prm_planner",
+  "schema": "agenomic.prompt_file/v1",
+  "tags": [
+    "support"
+  ],
+  "version": 7
+}

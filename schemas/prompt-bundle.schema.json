@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agenomic.dev/spec/v0.4/prompt-bundle.schema.json",
+  "title": "Agenomic prompt bundle (v0.4)",
+  "description": "The `agenomic.prompt_bundle/v1` document (RFC 0012): the exact prompt closure of one agent version. The online resolution answer is the same document unsigned (no `governance`, `issuer` or `signature`, `expires_at` null). An exported bundle carries the signed `governance` member, an `issuer`, a `signature` and a non-null `expires_at`. The signature is ed25519 over BLAKE3 of the canonical JSON of the document without `signature`; `prompt_bundle_digest` is the sha256 digest of the `agenomic.prompt_artifact_set/v1` projection.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "workspace_id",
+    "agent_id",
+    "source",
+    "release",
+    "prompt_manifest_digest",
+    "manifest",
+    "children",
+    "prompts",
+    "prompt_bundle_digest",
+    "exported_at",
+    "expires_at"
+  ],
+  "properties": {
+    "schema": { "const": "agenomic.prompt_bundle/v1" },
+    "workspace_id": { "$ref": "prompt-common.schema.json#/$defs/uuidLower" },
+    "agent_id": { "$ref": "prompt-common.schema.json#/$defs/uuidLower" },
+    "source": {
+      "type": "object",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "required": ["channel", "channel_generation"],
+          "properties": {
+            "channel": { "$ref": "prompt-common.schema.json#/$defs/channelName" },
+            "channel_generation": { "type": "integer", "minimum": 0 }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["release_id"],
+          "properties": {
+            "release_id": { "$ref": "prompt-common.schema.json#/$defs/uuidLower" }
+          }
+        }
+      ]
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["release_id", "release_name", "genome_version", "bundle_id", "bundle_hash", "legacy"],
+      "properties": {
+        "release_id": { "$ref": "prompt-common.schema.json#/$defs/uuidLower" },
+        "release_name": { "type": "string", "minLength": 1 },
+        "genome_version": {
+          "anyOf": [
+            { "$ref": "prompt-common.schema.json#/$defs/sha256Digest" },
+            { "type": "null" }
+          ]
+        },
+        "bundle_id": { "$ref": "prompt-common.schema.json#/$defs/uuidLower" },
+        "bundle_hash": { "$ref": "prompt-common.schema.json#/$defs/bundleHash" },
+        "legacy": { "type": "boolean" }
+      }
+    },
+    "prompt_manifest_digest": { "$ref": "prompt-common.schema.json#/$defs/sha256Digest" },
+    "manifest": { "$ref": "prompt-manifest.schema.json" },
+    "children": { "$ref": "prompt-artifact-set.schema.json#/$defs/children" },
+    "prompts": { "$ref": "prompt-artifact-set.schema.json#/$defs/prompts" },
+    "prompt_bundle_digest": { "$ref": "prompt-common.schema.json#/$defs/sha256Digest" },
+    "governance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["release_status", "channel", "channel_protected", "approved"],
+      "properties": {
+        "release_status": { "$ref": "prompt-common.schema.json#/$defs/releaseStatus" },
+        "channel": {
+          "anyOf": [
+            { "$ref": "prompt-common.schema.json#/$defs/channelName" },
+            { "type": "null" }
+          ]
+        },
+        "channel_protected": { "type": "boolean" },
+        "approved": { "type": "boolean" }
+      }
+    },
+    "exported_at": { "$ref": "prompt-common.schema.json#/$defs/timestamp" },
+    "expires_at": {
+      "anyOf": [
+        { "$ref": "prompt-common.schema.json#/$defs/timestamp" },
+        { "type": "null" }
+      ]
+    },
+    "issuer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key_id", "algorithm"],
+      "properties": {
+        "key_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "algorithm": { "const": "ed25519" }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "value", "public_key_pem"],
+      "properties": {
+        "algorithm": { "const": "ed25519" },
+        "value": { "type": "string", "pattern": "^[A-Za-z0-9+/]{86}==$" },
+        "public_key_pem": {
+          "type": "string",
+          "pattern": "^-----BEGIN PUBLIC KEY-----\\n[A-Za-z0-9+/=\\n]+-----END PUBLIC KEY-----\\n?$"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "required": ["issuer"] },
+      "then": {
+        "required": ["signature", "governance"],
+        "properties": { "expires_at": { "type": "string" } }
+      }
+    },
+    {
+      "if": { "required": ["signature"] },
+      "then": {
+        "required": ["issuer", "governance"],
+        "properties": { "expires_at": { "type": "string" } }
+      }
+    },
+    {
+      "if": { "required": ["governance"] },
+      "then": { "required": ["signature"] }
+    }
+  ]
+}

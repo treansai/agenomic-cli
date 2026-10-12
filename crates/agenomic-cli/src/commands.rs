@@ -741,7 +741,7 @@ fn os_inspect(args: &InspectArgs, format: OutputFormat, no_color: bool) -> CliRe
     Ok(ExitCode::Success)
 }
 
-fn print_value(value: &serde_json::Value, format: OutputFormat) -> CliResult<()> {
+pub(crate) fn print_value(value: &serde_json::Value, format: OutputFormat) -> CliResult<()> {
     use std::io::Write;
     let mut out = std::io::stdout().lock();
     match format {
@@ -2064,6 +2064,75 @@ fn cmd_provider_test(
 
 const DEFAULT_BUCKET_SLUG: &str = "default";
 
+/// `agenomic admin billing …` — Stripe billing administration against the
+/// cloud API. Authorization (workspace owner) is enforced server-side;
+/// `--workspace` defaults to the API key's own workspace via `whoami`.
+pub fn cmd_admin(args: &AdminCommand, profile: Option<&str>) -> CliResult<ExitCode> {
+    let client = cloud_client_from_profile(profile)?;
+    let rt = tokio::runtime::Runtime::new().map_err(|e| CliError::Internal(format!("{e}")))?;
+    let resolve_workspace = |workspace: &Option<String>| -> CliResult<String> {
+        match workspace {
+            Some(id) => Ok(id.clone()),
+            None => Ok(rt.block_on(client.whoami())?.org_id),
+        }
+    };
+    match &args.command {
+        AdminSub::Billing(billing) => match &billing.command {
+            AdminBillingSub::Reconcile { workspace } => {
+                let org_id = resolve_workspace(workspace)?;
+                let report = rt.block_on(client.billing_reconcile(&org_id))?;
+                println!("workspace: {org_id}");
+                println!("subscriptions checked: {}", report.subscriptions_checked);
+                println!("events reprocessed: {}", report.events_reprocessed);
+                if report.corrections.is_empty() {
+                    println!("corrections: none (projection in sync)");
+                } else {
+                    println!("corrections:");
+                    for correction in &report.corrections {
+                        println!("  - {correction}");
+                    }
+                }
+                Ok(ExitCode::Success)
+            }
+            AdminBillingSub::Event(event) => match &event.command {
+                AdminBillingEventSub::Inspect {
+                    stripe_event_id,
+                    workspace,
+                } => {
+                    let org_id = resolve_workspace(workspace)?;
+                    let record = rt.block_on(client.billing_event(&org_id, stripe_event_id))?;
+                    println!("event:      {}", record.stripe_event_id);
+                    println!("type:       {}", record.event_type);
+                    println!("status:     {}", record.processing_status);
+                    println!("attempts:   {}", record.processing_attempts);
+                    if let Some(created) = &record.stripe_created_at {
+                        println!("created:    {created}");
+                    }
+                    if let Some(processed) = &record.processed_at {
+                        println!("processed:  {processed}");
+                    }
+                    if let Some(code) = &record.error_code {
+                        println!("error code: {code}");
+                    }
+                    if let Some(message) = &record.error_message {
+                        println!("error:      {message}");
+                    }
+                    Ok(ExitCode::Success)
+                }
+                AdminBillingEventSub::Retry {
+                    stripe_event_id,
+                    workspace,
+                } => {
+                    let org_id = resolve_workspace(workspace)?;
+                    rt.block_on(client.billing_event_retry(&org_id, stripe_event_id))?;
+                    println!("event {stripe_event_id} queued for reprocessing");
+                    Ok(ExitCode::Success)
+                }
+            },
+        },
+    }
+}
+
 pub fn cmd_bucket(args: &BucketCommand, profile: Option<&str>) -> CliResult<ExitCode> {
     match &args.command {
         BucketSub::Use { name } => {
@@ -2289,7 +2358,7 @@ pub fn cmd_cloud(args: &CloudCommand, profile: Option<&str>) -> CliResult<ExitCo
 /// canonical error if no key is configured. The endpoint falls back to
 /// the hosted cloud (`agenomic_config::DEFAULT_ENDPOINT`) so pushes work
 /// without ever specifying a URL.
-fn cloud_client_from_profile(
+pub(crate) fn cloud_client_from_profile(
     profile: Option<&str>,
 ) -> CliResult<agenomic_cloud_client::CloudClient> {
     let cfg = agenomic_config::load(profile)?;

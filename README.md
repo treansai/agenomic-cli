@@ -1,7 +1,7 @@
 # agenomic-cli
 
 [![ci](https://github.com/treansai/agenomic-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/treansai/agenomic-cli/actions/workflows/ci.yml)
-[![Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
 [![crates.io](https://img.shields.io/crates/v/agenomic-cli.svg)](https://crates.io/crates/agenomic-cli)
 
 `agenomic` is the public, open-source Rust CLI for the Agenomic platform.
@@ -34,6 +34,20 @@ agenomic cloud login --api-key <KEY>   # endpoint defaults to https://api.agenom
 agenomic bucket use --name default
 agenomic cloud push-agent dist/my-agent.bundle.tar.zst --name "My Agent"
 agenomic attest dist/my-agent.bundle.tar.zst --output attestation.json
+```
+
+Knowledge bases of Agenomic Cloud (RFC 0014) have their own command group,
+`agenomic knowledge` (see [docs/knowledge.md](docs/knowledge.md)):
+
+```bash
+agenomic knowledge list
+agenomic knowledge create kb_support --name "Support"
+agenomic knowledge upload kb_support ./docs --glob '*.md' --wait
+agenomic knowledge search kb_support "refund window" --top-k 5
+agenomic knowledge query kb_support 'get "Authentication" from "security.md"'
+agenomic knowledge version create kb_support --message "First version" --wait
+agenomic knowledge publish kb_support 1 --reason "First release"
+agenomic knowledge export kb_support --version 1 -o kb_support.json
 ```
 
 `agenomic bundle compile-runtime` materializes deterministic
@@ -80,6 +94,7 @@ write.
 - [Local replay](docs/replay-local.md)
 - [CI/CD integration](docs/ci-cd.md)
 - [Cloud integration](docs/cloud-integration.md)
+- [Knowledge bases](docs/knowledge.md)
 - [Security](docs/security.md)
 
 ## Examples
@@ -89,4 +104,9 @@ exercised by the smoke test (`scripts/smoke.sh`).
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+Copyright (C) 2026 Agenomic Contributors. GNU Affero General Public License
+v3.0 (`AGPL-3.0-only`). See [LICENSE](LICENSE).
+
+This repository is part of the Agenomic Community edition. Agenomic Cloud and
+Enterprise components live in separate, private repositories and are not
+covered by this license.

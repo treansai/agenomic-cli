@@ -42,6 +42,11 @@ pub enum SchemaKind {
     AtepEvent,
     Workflow,
     System,
+    PromptContent,
+    PromptManifest,
+    PromptArtifactSet,
+    PromptFile,
+    PromptBundle,
 }
 
 impl SchemaKind {
@@ -56,11 +61,27 @@ impl SchemaKind {
             Self::AtepEvent => "atep-event",
             Self::Workflow => "workflow",
             Self::System => "system",
+            Self::PromptContent => "prompt-content",
+            Self::PromptManifest => "prompt-manifest",
+            Self::PromptArtifactSet => "prompt-artifact-set",
+            Self::PromptFile => "prompt-file",
+            Self::PromptBundle => "prompt-bundle",
         }
     }
 
+    pub fn is_prompt(self) -> bool {
+        matches!(
+            self,
+            Self::PromptContent
+                | Self::PromptManifest
+                | Self::PromptArtifactSet
+                | Self::PromptFile
+                | Self::PromptBundle
+        )
+    }
+
     /// All embedded schema kinds.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 14] = [
         Self::Genome,
         Self::Agenomic,
         Self::BehaviorContract,
@@ -70,6 +91,11 @@ impl SchemaKind {
         Self::AtepEvent,
         Self::Workflow,
         Self::System,
+        Self::PromptContent,
+        Self::PromptManifest,
+        Self::PromptArtifactSet,
+        Self::PromptFile,
+        Self::PromptBundle,
     ];
 }
 
@@ -84,6 +110,22 @@ const RELEASE_ATTESTATION_SCHEMA: &str =
 const ATEP_EVENT_SCHEMA: &str = include_str!("../../../schemas/atep-event.schema.json");
 const WORKFLOW_SCHEMA: &str = include_str!("../../../schemas/workflow.schema.json");
 const SYSTEM_SCHEMA: &str = include_str!("../../../schemas/system.schema.json");
+const PROMPT_COMMON_SCHEMA: &str = include_str!("../../../schemas/prompt-common.schema.json");
+const PROMPT_CONTENT_SCHEMA: &str = include_str!("../../../schemas/prompt-content.schema.json");
+const PROMPT_MANIFEST_SCHEMA: &str = include_str!("../../../schemas/prompt-manifest.schema.json");
+const PROMPT_ARTIFACT_SET_SCHEMA: &str =
+    include_str!("../../../schemas/prompt-artifact-set.schema.json");
+const PROMPT_FILE_SCHEMA: &str = include_str!("../../../schemas/prompt-file.schema.json");
+const PROMPT_BUNDLE_SCHEMA: &str = include_str!("../../../schemas/prompt-bundle.schema.json");
+
+const PROMPT_SCHEMA_DOCUMENTS: [&str; 6] = [
+    PROMPT_COMMON_SCHEMA,
+    PROMPT_CONTENT_SCHEMA,
+    PROMPT_MANIFEST_SCHEMA,
+    PROMPT_ARTIFACT_SET_SCHEMA,
+    PROMPT_FILE_SCHEMA,
+    PROMPT_BUNDLE_SCHEMA,
+];
 
 /// Return the raw JSON text of an embedded schema.
 ///
@@ -102,6 +144,11 @@ pub fn embedded_schema(kind: SchemaKind) -> &'static str {
         SchemaKind::AtepEvent => ATEP_EVENT_SCHEMA,
         SchemaKind::Workflow => WORKFLOW_SCHEMA,
         SchemaKind::System => SYSTEM_SCHEMA,
+        SchemaKind::PromptContent => PROMPT_CONTENT_SCHEMA,
+        SchemaKind::PromptManifest => PROMPT_MANIFEST_SCHEMA,
+        SchemaKind::PromptArtifactSet => PROMPT_ARTIFACT_SET_SCHEMA,
+        SchemaKind::PromptFile => PROMPT_FILE_SCHEMA,
+        SchemaKind::PromptBundle => PROMPT_BUNDLE_SCHEMA,
     }
 }
 
@@ -114,8 +161,21 @@ pub fn validator(kind: SchemaKind) -> CliResult<jsonschema::JSONSchema> {
     let raw = embedded_schema(kind);
     let value: serde_json::Value =
         serde_json::from_str(raw).map_err(|e| CliError::Schema(format!("schema parse: {e}")))?;
-    jsonschema::JSONSchema::options()
-        .with_draft(jsonschema::Draft::Draft202012)
+    let mut options = jsonschema::JSONSchema::options();
+    options.with_draft(jsonschema::Draft::Draft202012);
+    if kind.is_prompt() {
+        for raw in PROMPT_SCHEMA_DOCUMENTS {
+            let document: serde_json::Value = serde_json::from_str(raw)
+                .map_err(|e| CliError::Schema(format!("schema parse: {e}")))?;
+            let id = document
+                .get("$id")
+                .and_then(|id| id.as_str())
+                .map(str::to_string)
+                .ok_or_else(|| CliError::Schema("prompt schema without $id".into()))?;
+            options.with_document(id, document);
+        }
+    }
+    options
         .compile(&value)
         .map_err(|e| CliError::Schema(format!("schema compile: {e}")))
 }
@@ -156,6 +216,39 @@ mod tests {
             let _ = validator(kind)
                 .unwrap_or_else(|e| panic!("compile failed for {}: {e}", kind.label()));
         }
+    }
+
+    #[test]
+    fn prompt_file_schema_resolves_the_shared_definitions() {
+        let v = validator(SchemaKind::PromptFile).unwrap();
+        let mut file = serde_json::json!({
+            "schema": "agenomic.prompt_file/v1",
+            "prompt_id": "prm_support_planner",
+            "kind": "text",
+            "content": {
+                "schema": "agenomic.prompt_content/v1",
+                "template_format": "agenomic-fstring/v1",
+                "renderer_version": "1",
+                "kind": "text",
+                "body": "Plan {question}",
+                "variables": { "question": { "type": "string", "required": true } },
+                "partials": {},
+                "output_contract": null,
+                "fragments": {}
+            },
+            "parent_version": null
+        });
+        assert!(v.validate(&file).is_ok());
+        file["version"] = serde_json::json!(3);
+        assert!(v.validate(&file).is_err());
+        file["content_digest"] = serde_json::json!(format!("sha256:{}", "a".repeat(64)));
+        assert!(v.validate(&file).is_ok());
+        file["kind"] = serde_json::json!("chat");
+        assert!(v.validate(&file).is_err());
+        file["kind"] = serde_json::json!("text");
+        file["content"]["output_contract"] =
+            serde_json::json!({ "type": "json_schema", "json_schema": { "minimum": 0.5 } });
+        assert!(v.validate(&file).is_err());
     }
 
     #[test]

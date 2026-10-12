@@ -1,0 +1,8 @@
+---
+source: crates/agenomic-cli/tests/knowledge_cli.rs
+expression: stdout(&output)
+---
+created v4 of kb_customer_support from draft revision 61 (indexing)
+manifest: sha256:4444444444444444444444444444444444444444444444444444444444444444
+job: kjob_01jb3m5q7s9v1x3z5b7d9f0047 (pending)
+job kjob_01jb3m5q7s9v1x3z5b7d9f0047 succeeded
