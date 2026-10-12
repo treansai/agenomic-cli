@@ -382,6 +382,16 @@ impl CloudClient {
                     if status == reqwest::StatusCode::UNAUTHORIZED {
                         return Err(CliError::AuthFailed);
                     }
+                    if status == reqwest::StatusCode::FORBIDDEN {
+                        let body = resp.text().await.unwrap_or_default();
+                        return Err(match capability_denial(&body) {
+                            Some(err) => err,
+                            None => CliError::Network(format!(
+                                "HTTP {status} — {}",
+                                truncate_for_error(&body)
+                            )),
+                        });
+                    }
                     if (status == reqwest::StatusCode::TOO_MANY_REQUESTS
                         || status.is_server_error())
                         && attempt < backoffs.len()
@@ -455,6 +465,31 @@ impl CloudClient {
                 body = truncate_for_error(&String::from_utf8_lossy(&bytes)),
             ))
         })
+    }
+
+    /// `GET /v1/capabilities` — what the authenticated organization may use.
+    pub async fn capabilities(&self) -> CliResult<CapabilitiesResponse> {
+        let url = self.url("/v1/capabilities");
+        let resp = self
+            .send_with_retry(|| async {
+                self.http
+                    .get(&url)
+                    .header("x-api-key", self.api_key_header())
+                    .header("accept", "application/json")
+            })
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            let hint = endpoint_hint(status, &body);
+            return Err(CliError::Network(format!(
+                "capabilities: HTTP {status} — {body}{hint}",
+                body = truncate_for_error(&body)
+            )));
+        }
+        resp.json::<CapabilitiesResponse>()
+            .await
+            .map_err(|e| CliError::Network(format!("capabilities parse: {e}")))
     }
 
     /// `GET /v1/buckets`
@@ -1009,6 +1044,70 @@ fn endpoint_hint(status: reqwest::StatusCode, body: &str) -> String {
     }
 }
 
+/// One capability entry of `GET /v1/capabilities`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilityState {
+    pub enabled: bool,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub visibility: String,
+    #[serde(default)]
+    pub required_plan: Option<String>,
+}
+
+/// `GET /v1/capabilities` response: the edition the cloud runs as and the
+/// per-capability state for the caller's organization.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilitiesResponse {
+    pub edition: String,
+    pub capabilities: std::collections::BTreeMap<String, CapabilityState>,
+}
+
+impl CapabilitiesResponse {
+    pub fn has(&self, capability: &str) -> bool {
+        self.capabilities
+            .get(capability)
+            .map(|state| state.enabled)
+            .unwrap_or(false)
+    }
+}
+
+/// The gateway's `capability_*` error envelope, turned into a dedicated
+/// error so a refused commercial call reads as "not available in this
+/// edition/plan" rather than as a transport failure.
+fn capability_denial(body: &str) -> Option<CliError> {
+    #[derive(Deserialize)]
+    struct Envelope {
+        error: Inner,
+    }
+    #[derive(Deserialize)]
+    struct Inner {
+        code: String,
+        #[serde(default)]
+        message: String,
+        #[serde(default)]
+        capability: Option<String>,
+    }
+    let envelope: Envelope = serde_json::from_str(body).ok()?;
+    if !envelope.error.code.starts_with("capability_") {
+        return None;
+    }
+    let capability = envelope
+        .error
+        .capability
+        .unwrap_or_else(|| "capability".to_string());
+    let message = if envelope.error.message.is_empty() {
+        format!("{capability} is not available in this Agenomic edition")
+    } else {
+        envelope.error.message
+    };
+    Some(CliError::CapabilityUnavailable {
+        capability,
+        message,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1170,5 +1269,36 @@ mod tests {
             .unwrap();
         assert_eq!(r.version, "v1");
         assert_eq!(r.status, "pending_approval");
+    }
+
+    #[test]
+    fn capability_denials_map_to_a_dedicated_error() {
+        let body = r#"{"error":{"code":"capability_not_entitled","message":"rmp.review is not included in the current plan (requires starter)","capability":"rmp.review","reason":"not_entitled","required_plan":"starter"}}"#;
+        match capability_denial(body) {
+            Some(CliError::CapabilityUnavailable { capability, message }) => {
+                assert_eq!(capability, "rmp.review");
+                assert!(message.contains("requires starter"));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(capability_denial(r#"{"error":{"code":"forbidden","message":"x"}}"#).is_none());
+        assert!(capability_denial("<html>").is_none());
+    }
+
+    #[tokio::test]
+    async fn forbidden_capability_response_exits_with_capability_code() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/whoami"))
+            .respond_with(ResponseTemplate::new(403).set_body_raw(
+                r#"{"error":{"code":"capability_not_in_edition","message":"agm.assistant is not available in this Agenomic edition","capability":"agm.assistant","reason":"not_in_edition"}}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+        let client = CloudClient::new(server.uri(), SecretString::new("k".into()));
+        let err = client.whoami().await.unwrap_err();
+        assert_eq!(err.exit_code(), agenomic_core::ExitCode::CapabilityUnavailable);
+        assert!(err.to_string().contains("agm.assistant"));
     }
 }

@@ -36,6 +36,11 @@ pub enum ExitCode {
     /// `docs/plans/atep-ledger-plan.md`. Distinct from ATEP integrity (10):
     /// the ledger is the cross-producer event chain, not the ATEP stream.
     LedgerIntegrityFailed = 19,
+    /// Agenomic Cloud refused the call because the capability is not part
+    /// of the deployment's edition or the organization's plan (`capability_*`
+    /// error codes). Distinct from auth (5) and transport (6): the request
+    /// was understood and the caller is who they claim to be.
+    CapabilityUnavailable = 20,
 }
 
 impl ExitCode {
@@ -79,5 +84,6 @@ mod tests {
         assert_eq!(ExitCode::OsPortFailed.as_i32(), 17);
         assert_eq!(ExitCode::ToolBoundaryReviewRequired.as_i32(), 18);
         assert_eq!(ExitCode::LedgerIntegrityFailed.as_i32(), 19);
+        assert_eq!(ExitCode::CapabilityUnavailable.as_i32(), 20);
     }
 }

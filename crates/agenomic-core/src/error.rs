@@ -89,6 +89,13 @@ pub enum CliError {
     #[diagnostic(code(agenomic::cloud::auth_failed))]
     AuthFailed,
 
+    #[error("{message}")]
+    #[diagnostic(
+        code(agenomic::cloud::capability_unavailable),
+        help("`{capability}` is not available in this Agenomic edition or plan. Run `agenomic cloud capabilities` to see what your organization can use, or contact your workspace owner about upgrading.")
+    )]
+    CapabilityUnavailable { capability: String, message: String },
+
     #[error("attestation verification failed: {0}")]
     #[diagnostic(code(agenomic::attestation::verification_failed))]
     AttestationVerificationFailed(String),
@@ -205,6 +212,7 @@ impl CliError {
             Self::Io { .. } | Self::Schema(_) | Self::Internal(_) => ExitCode::InternalError,
             Self::Network(_) => ExitCode::NetworkError,
             Self::AuthFailed => ExitCode::CloudAuthFailed,
+            Self::CapabilityUnavailable { .. } => ExitCode::CapabilityUnavailable,
             Self::AttestationVerificationFailed(_) => ExitCode::AttestationVerificationFailed,
             Self::ContractFailed(_) => ExitCode::ContractFailed,
             Self::DiffRiskExceeded(_) => ExitCode::DiffRiskExceeded,

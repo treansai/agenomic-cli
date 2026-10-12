@@ -2113,6 +2113,22 @@ pub fn cmd_cloud(args: &CloudCommand, profile: Option<&str>) -> CliResult<ExitCo
             println!("{s}");
             Ok(ExitCode::Success)
         }
+        CloudSub::Capabilities => {
+            let client = cloud_client_from_profile(profile)?;
+            let resp = tokio::runtime::Runtime::new()
+                .map_err(|e| CliError::Internal(format!("{e}")))?
+                .block_on(client.capabilities())?;
+            println!("edition: {}", resp.edition);
+            for (id, state) in &resp.capabilities {
+                let detail = match (state.enabled, state.required_plan.as_deref()) {
+                    (true, _) => "enabled".to_string(),
+                    (false, Some(plan)) => format!("{} (requires {plan})", state.reason),
+                    (false, None) => state.reason.clone(),
+                };
+                println!("{id:<28} {detail}");
+            }
+            Ok(ExitCode::Success)
+        }
         CloudSub::Logout => {
             let profile_name = resolved_profile_name(profile)?;
             agenomic_config::delete_credentials(&profile_name)?;
