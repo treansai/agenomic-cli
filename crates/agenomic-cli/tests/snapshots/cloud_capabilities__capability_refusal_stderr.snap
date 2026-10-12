@@ -1,0 +1,6 @@
+---
+source: crates/agenomic-cli/tests/cloud_capabilities.rs
+expression: "String::from_utf8_lossy(&output.stderr)"
+---
+error: rmp.review is not included in the current plan (requires starter)
+       help: `rmp.review` is not available in this Agenomic edition or plan. Run `agenomic cloud capabilities` to see what your organization can use, or contact your workspace owner about upgrading.

@@ -141,6 +141,7 @@ version = "0.3.0-alpha.0"
 dependencies = [
  "agenomic-core",
  "async-trait",
+ "http",
  "reqwest",
  "secrecy",
  "serde",

@@ -80,3 +80,38 @@ async fn capabilities_honor_json_format() {
     );
     assert_eq!(value["capabilities"]["agm.assistant"]["enabled"], true);
 }
+
+#[tokio::test]
+async fn capability_refusal_diagnostic() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/capabilities"))
+        .respond_with(ResponseTemplate::new(403).set_body_json(json!({
+            "error": {
+                "code": "capability_not_entitled",
+                "message": "rmp.review is not included in the current plan (requires starter)",
+                "capability": "rmp.review",
+                "reason": "not_entitled",
+                "required_plan": "starter"
+            }
+        })))
+        .mount(&server)
+        .await;
+    let home = tempdir().unwrap();
+    let output = Command::cargo_bin("agenomic")
+        .expect("binary built")
+        .args(["cloud", "capabilities"])
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path().join("xdg-config"))
+        .env_remove("AGENOMIC_PROFILE")
+        .env_remove("AGENOMIC_FORMAT")
+        .env("AGENOMIC_ENDPOINT", server.uri())
+        .env("AGENOMIC_API_KEY", KEY)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(20));
+    insta::assert_snapshot!(
+        "capability_refusal_stderr",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

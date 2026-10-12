@@ -437,9 +437,18 @@ impl CloudClient {
                         return Err(CliError::AuthFailed);
                     }
                     if status == reqwest::StatusCode::FORBIDDEN {
+                        // Only capability refusals are handled here; any other
+                        // 403 goes back to the endpoint, which owns its error
+                        // shape (e.g. knowledge refusals keep their details).
+                        let headers = resp.headers().clone();
                         let body = resp.bytes().await.unwrap_or_default();
-                        return Err(capability_denial(&String::from_utf8_lossy(&body))
-                            .unwrap_or_else(|| refused(status, &body)));
+                        if let Some(err) = capability_denial(&String::from_utf8_lossy(&body)) {
+                            return Err(err);
+                        }
+                        let mut rebuilt = http::Response::new(body);
+                        *rebuilt.status_mut() = status;
+                        *rebuilt.headers_mut() = headers;
+                        return Ok(reqwest::Response::from(rebuilt));
                     }
                     if (status == reqwest::StatusCode::TOO_MANY_REQUESTS
                         || status.is_server_error())
@@ -2479,6 +2488,44 @@ mod tests {
             other => panic!("unexpected {other:?}"),
         }
         assert_eq!(error.exit_code().as_i32(), 21);
+    }
+
+    #[tokio::test]
+    async fn non_capability_forbidden_reaches_the_endpoint_handler() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/knowledge-bases/kb_x/publish"))
+            .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
+                "error": {
+                    "code": "knowledge_forbidden",
+                    "message": "publishing needs the editor role",
+                    "details": { "reason": "role", "required_role": "editor" }
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let c = CloudClient::new(server.uri(), SecretString::new("s".into()));
+        let error = c
+            .publish_knowledge_version("kb_x", &serde_json::json!({ "version": 4 }), 4)
+            .await
+            .unwrap_err();
+        match &error {
+            CliError::CloudRefused {
+                code,
+                status,
+                message,
+            } => {
+                assert_eq!(code, "knowledge_forbidden");
+                assert_eq!(*status, 403);
+                assert_eq!(
+                    message,
+                    "publishing needs the editor role [reason: role] [details: {\"required_role\":\"editor\"}]"
+                );
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        assert_eq!(error.exit_code().as_i32(), 5);
     }
 
     #[test]

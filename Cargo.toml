@@ -116,6 +116,7 @@ jsonschema = { version = "0.18", default-features = false, features = ["draft201
 regorus = { version = "0.10", default-features = false, features = ["std", "arc", "regex"] }
 
 # HTTP
+http = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "multipart"] }
 
 # Errors / diagnostics
