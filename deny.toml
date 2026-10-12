@@ -4,7 +4,12 @@
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "warn"
-ignore = []
+ignore = [
+    # unsafe-libyaml (via serde_yaml) is archived upstream; no maintained
+    # release exists. Unmaintained, not a known vulnerability. Drop this once
+    # serde_yaml is replaced by a safe-Rust YAML parser across the workspace.
+    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml unmaintained; no upgrade; serde_yaml replacement tracked separately" },
+]
 
 [licenses]
 allow = [
