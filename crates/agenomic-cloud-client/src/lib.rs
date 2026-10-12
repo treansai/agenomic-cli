@@ -285,7 +285,9 @@ pub struct BucketRecord {
     pub slug: String,
     pub name: String,
     pub description: Option<String>,
+    #[serde(default)]
     pub visibility: String,
+    #[serde(default)]
     pub content_version: i64,
     pub created_at: String,
     pub updated_at: String,
