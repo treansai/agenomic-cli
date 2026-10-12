@@ -2152,7 +2152,41 @@ pub fn cmd_bucket(args: &BucketCommand, profile: Option<&str>) -> CliResult<Exit
     }
 }
 
-pub fn cmd_cloud(args: &CloudCommand, profile: Option<&str>) -> CliResult<ExitCode> {
+/// Render `GET /v1/capabilities` in the requested output format: a padded
+/// table for humans, the response itself for JSON and YAML.
+fn render_capabilities(
+    resp: &agenomic_cloud_client::CapabilitiesResponse,
+    format: OutputFormat,
+) -> CliResult<String> {
+    let structured = |e: &dyn std::fmt::Display| CliError::Internal(format!("{e}"));
+    match format {
+        OutputFormat::Human => {
+            let mut out = format!("edition: {}\n", resp.edition);
+            for (id, state) in &resp.capabilities {
+                let detail = match (state.enabled, state.required_plan.as_deref()) {
+                    (true, _) => "enabled".to_string(),
+                    (false, Some(plan)) => format!("{} (requires {plan})", state.reason),
+                    (false, None) => state.reason.clone(),
+                };
+                out.push_str(&format!("{id:<28} {detail}\n"));
+            }
+            Ok(out)
+        }
+        OutputFormat::Json => serde_json::to_string(resp)
+            .map(|s| s + "\n")
+            .map_err(|e| structured(&e)),
+        OutputFormat::JsonPretty => serde_json::to_string_pretty(resp)
+            .map(|s| s + "\n")
+            .map_err(|e| structured(&e)),
+        OutputFormat::Yaml => serde_yaml::to_string(resp).map_err(|e| structured(&e)),
+    }
+}
+
+pub fn cmd_cloud(
+    args: &CloudCommand,
+    format: OutputFormat,
+    profile: Option<&str>,
+) -> CliResult<ExitCode> {
     use secrecy::SecretString;
     match &args.command {
         CloudSub::Login { endpoint, api_key } => {
@@ -2180,6 +2214,14 @@ pub fn cmd_cloud(args: &CloudCommand, profile: Option<&str>) -> CliResult<ExitCo
             let s = serde_json::to_string_pretty(&resp)
                 .map_err(|e| CliError::Internal(format!("{e}")))?;
             println!("{s}");
+            Ok(ExitCode::Success)
+        }
+        CloudSub::Capabilities => {
+            let client = cloud_client_from_profile(profile)?;
+            let resp = tokio::runtime::Runtime::new()
+                .map_err(|e| CliError::Internal(format!("{e}")))?
+                .block_on(client.capabilities())?;
+            print!("{}", render_capabilities(&resp, format)?);
             Ok(ExitCode::Success)
         }
         CloudSub::Logout => {

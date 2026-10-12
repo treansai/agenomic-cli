@@ -741,6 +741,9 @@ pub enum CloudSub {
         api_key: String,
     },
     Whoami,
+    /// List the capabilities the authenticated organization can use on the
+    /// configured cloud (edition, entitlement and rollout state).
+    Capabilities,
     Logout,
     /// Push an agent and its bundle to Agenomic Cloud.
     ///

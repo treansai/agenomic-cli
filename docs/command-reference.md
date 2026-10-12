@@ -29,6 +29,7 @@ Every `agenomic` command, their flags, and exit codes.
 | 16 | OsPolicyViolation | A Rego policy gate denied `run`/`policy eval`, or the Tool Boundary Gate blocked a tool call |
 | 18 | ToolBoundaryReviewRequired | `agenomic gate check` held a tool call for human review |
 | 19 | LedgerIntegrityFailed | `agenomic ledger verify` found tampering, a chain break, or a conflict |
+| 20 | CapabilityUnavailable | Agenomic Cloud refused a call because the capability is not in the deployment's edition or the organization's plan (`capability_*` error codes) |
 | 21 | CloudConflict | The cloud answered 409 (for example `prompt_version_conflict` on `agenomic prompts push`, `knowledge_publication_conflict` on `agenomic knowledge publish`) |
 
 On the `prompts`, `channels` and `knowledge` commands, a refusal from the
@@ -243,6 +244,14 @@ host, not the dashboard (`app.agenomic.io`), which 404s on `/v1/*`.
 ### `agenomic cloud whoami`
 
 Call `/v1/whoami` against the configured profile.
+
+### `agenomic cloud capabilities`
+
+Call `/v1/capabilities` against the configured profile and print, for every
+capability the cloud knows, whether the organization can use it and why not
+(`not_in_edition`, `not_entitled` with the required plan, `disabled`,
+`beta_restricted`). A commercial command refused by the cloud exits with
+code 20 and the same explanation instead of a transport error.
 
 ### `agenomic cloud logout`
 
