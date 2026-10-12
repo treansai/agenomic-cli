@@ -1,0 +1,9 @@
+---
+source: crates/agenomic-cli/tests/cloud_capabilities.rs
+expression: "String::from_utf8_lossy(&output.stdout)"
+---
+edition: cloud
+agm.assistant                enabled
+ledger.cloud_sync            not_in_edition
+rmp.review                   not_entitled (requires starter)
+track.export                 beta_restricted

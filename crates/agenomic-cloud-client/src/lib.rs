@@ -614,6 +614,22 @@ impl CloudClient {
     }
 
     /// `GET /v1/capabilities` — what the authenticated organization may use.
+    ///
+    /// ```no_run
+    /// # use agenomic_cloud_client::CloudClient;
+    /// # use secrecy::SecretString;
+    /// # async fn demo() -> agenomic_core::CliResult<()> {
+    /// let client = CloudClient::new(
+    ///     "https://api.agenomic.io".into(),
+    ///     SecretString::new("k".into()),
+    /// );
+    /// let caps = client.capabilities().await?;
+    /// if !caps.has("rmp.review") {
+    ///     println!("rmp.review is not available on {}", caps.edition);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn capabilities(&self) -> CliResult<CapabilitiesResponse> {
         let url = self.url("/v1/capabilities");
         let resp = self
@@ -2005,6 +2021,22 @@ pub struct CapabilitiesResponse {
 }
 
 impl CapabilitiesResponse {
+    /// Whether `capability` is enabled for the organization. A capability
+    /// the cloud does not list counts as unavailable.
+    ///
+    /// ```
+    /// # use agenomic_cloud_client::CapabilitiesResponse;
+    /// let caps: CapabilitiesResponse = serde_json::from_str(
+    ///     r#"{"edition":"cloud","capabilities":{
+    ///         "agm.assistant":{"enabled":true},
+    ///         "rmp.review":{"enabled":false,"reason":"not_entitled","required_plan":"starter"}
+    ///     }}"#,
+    /// )
+    /// .unwrap();
+    /// assert!(caps.has("agm.assistant"));
+    /// assert!(!caps.has("rmp.review"));
+    /// assert!(!caps.has("not.listed"));
+    /// ```
     pub fn has(&self, capability: &str) -> bool {
         self.capabilities
             .get(capability)
@@ -2453,7 +2485,10 @@ mod tests {
     fn capability_denials_map_to_a_dedicated_error() {
         let body = r#"{"error":{"code":"capability_not_entitled","message":"rmp.review is not included in the current plan (requires starter)","capability":"rmp.review","reason":"not_entitled","required_plan":"starter"}}"#;
         match capability_denial(body) {
-            Some(CliError::CapabilityUnavailable { capability, message }) => {
+            Some(CliError::CapabilityUnavailable {
+                capability,
+                message,
+            }) => {
                 assert_eq!(capability, "rmp.review");
                 assert!(message.contains("requires starter"));
             }
@@ -2476,7 +2511,10 @@ mod tests {
             .await;
         let client = CloudClient::new(server.uri(), SecretString::new("k".into()));
         let err = client.whoami().await.unwrap_err();
-        assert_eq!(err.exit_code(), agenomic_core::ExitCode::CapabilityUnavailable);
+        assert_eq!(
+            err.exit_code(),
+            agenomic_core::ExitCode::CapabilityUnavailable
+        );
         assert!(err.to_string().contains("agm.assistant"));
     }
 }
